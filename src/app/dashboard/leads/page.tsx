@@ -9,12 +9,18 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconLeads } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
+import { takesLeads, type EmployeeRole } from '@/lib/employee-role';
 import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { PLATFORM_LABELS } from '@/lib/labels';
 import type { FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
-import { getCreativeOptions, getLeadStats, getLeads } from '@/lib/queries';
-import { AddLeadButton, LeadRowActions, LeadStatusSelect } from './lead-controls';
+import { getAssignableEmployees, getCreativeOptions, getLeadStats, getLeads } from '@/lib/queries';
+import {
+  AddLeadButton,
+  LeadOwnerSelect,
+  LeadRowActions,
+  LeadStatusSelect,
+} from './lead-controls';
 import { StatusBreakdown } from './status-breakdown';
 
 /** Лид без первого касания дольше суток — уже потерянные деньги. */
@@ -27,6 +33,7 @@ const COLUMNS = [
   { key: 'phone', label: 'Телефон' },
   { key: 'source', label: 'Источник' },
   { key: 'creative', label: 'Креатив' },
+  { key: 'owner', label: 'Ответственный' },
   { key: 'created', label: 'Получен' },
   { key: 'status', label: 'Статус' },
   { key: 'actions', label: 'Действия', align: 'right' as const },
@@ -41,11 +48,17 @@ export default async function LeadsPage({
   const range = resolveRange(await searchParams);
   const funnelType = company.funnel_type as FunnelType;
 
-  const [leads, stats, creatives] = await Promise.all([
+  const [leads, stats, creatives, employees] = await Promise.all([
     getLeads(company.id, range.from, range.to),
     getLeadStats(company.id, range.from, range.to),
     getCreativeOptions(company.id),
+    getAssignableEmployees(company.id),
   ]);
+
+  // Лиды раздаются менеджерам: РОП руководит, продажник подключается на пробном.
+  const owners = employees
+    .filter((employee) => takesLeads(employee.role as EmployeeRole))
+    .map((employee) => ({ id: employee.id, name: employee.name }));
 
   const share = (value: number) => (stats.total ? (value / stats.total) * 100 : 0);
 
@@ -124,7 +137,7 @@ export default async function LeadsPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1020}>
+            <TableShell columns={COLUMNS} minWidth={1240}>
               {leads.map((lead) => (
                 <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
@@ -137,6 +150,13 @@ export default async function LeadsPage({
                       : (lead.source ?? '—')}
                   </Td>
                   <Td className="text-ink-soft">{lead.creativeName ?? '—'}</Td>
+                  <Td>
+                    <LeadOwnerSelect
+                      leadId={lead.id}
+                      assignedTo={lead.assignedTo}
+                      employees={owners}
+                    />
+                  </Td>
                   <Td className="tabular text-muted">{formatDateTime(lead.created_at)}</Td>
                   <Td>
                     <LeadStatusSelect

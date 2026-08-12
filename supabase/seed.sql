@@ -539,3 +539,57 @@ begin
   raise notice 'Демо-компания с прямой продажей загружена: %', v_company;
 end;
 $$;
+
+-- =============================================================================
+-- Сотрудники демо-компаний и раздача лидов
+--
+-- Отдельным блоком: команда не зависит от рекламных данных, а лиды на неё
+-- распределяются уже после того, как обе компании загружены.
+-- Раздача детерминированная — прогон дважды даёт тот же результат.
+-- =============================================================================
+do $$
+declare
+  v_company uuid;
+  v_managers uuid[];
+begin
+  for v_company in
+    select id from public.companies where name in ('Demo Company', 'Demo Parfum')
+  loop
+    if exists (select 1 from public.employees where company_id = v_company) then
+      continue;
+    end if;
+
+    if (select funnel_type from public.companies where id = v_company) = 'trial' then
+      insert into public.employees (company_id, full_name, role, phone, hired_at)
+      values
+        (v_company, 'Ерлан Тулеуов',     'rop',         '+7 701 411 22 33', now() - interval '8 months'),
+        (v_company, 'Айгерим Сериковна', 'manager',     '+7 707 512 33 44', now() - interval '6 months'),
+        (v_company, 'Данияр Ахметов',    'manager',     '+7 747 613 44 55', now() - interval '3 months'),
+        (v_company, 'Мадина Оспанова',   'salesperson', '+7 705 714 55 66', now() - interval '5 months');
+    else
+      insert into public.employees (company_id, full_name, role, phone, hired_at)
+      values
+        (v_company, 'Жанна Ибраева',  'rop',     '+7 701 815 66 77', now() - interval '7 months'),
+        (v_company, 'Асем Калиева',   'manager', '+7 708 916 77 88', now() - interval '4 months'),
+        (v_company, 'Нурбек Садыков', 'manager', '+7 775 017 88 99', now() - interval '2 months');
+    end if;
+
+    -- Лиды раздаются только менеджерам: РОП руководит, продажник ведёт пробные.
+    select array_agg(id order by full_name)
+      into v_managers
+      from public.employees
+     where company_id = v_company and role = 'manager' and status = 'active';
+
+    update public.leads l
+       set assigned_to = v_managers[
+             1 + (('x' || substr(md5(l.id::text || 'owner'), 1, 8))::bit(32)::bigint
+                  % array_length(v_managers, 1))
+           ],
+           assigned_at = l.created_at + interval '4 minutes'
+     where l.company_id = v_company
+       -- часть лидов намеренно остаётся без ответственного: так видно,
+       -- что раздача пока ручная и кто-то остался без внимания
+       and (('x' || substr(md5(l.id::text || 'skip'), 1, 8))::bit(32)::bigint) % 100 >= 12;
+  end loop;
+end;
+$$;

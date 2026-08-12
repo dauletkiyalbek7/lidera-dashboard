@@ -4,6 +4,7 @@
  *   npx supabase gen types typescript --project-id xnfqsoruxkjhekdklxot > src/lib/supabase/database.types.ts
  */
 
+import type { EmployeeRole } from '@/lib/employee-role';
 import type { LeadStatus as LeadStatusValue } from '@/lib/lead-status';
 
 export type Json =
@@ -147,6 +148,22 @@ export type LeadRow = Timestamps & {
   utm_content: string | null;
   utm_term: string | null;
   status: LeadStatus;
+  assigned_to: string | null;
+  assigned_at: string | null;
+}
+
+/** Сотрудник компании. Входа в кабинет у него нет — только Telegram-бот. */
+export type EmployeeRow = Timestamps & {
+  id: string;
+  company_id: string;
+  full_name: string;
+  role: EmployeeRole;
+  phone: string | null;
+  telegram_user_id: number | null;
+  telegram_username: string | null;
+  status: 'active' | 'fired';
+  hired_at: string;
+  fired_at: string | null;
 }
 
 export type TrialRow = Timestamps & {
@@ -225,6 +242,7 @@ export type Database = {
       creatives: TableDef<CreativeRow, 'company_id' | 'name' | 'platform'>;
       ad_metrics: TableDef<AdMetricRow, 'company_id' | 'date'>;
       leads: TableDef<LeadRow, 'company_id'>;
+      employees: TableDef<EmployeeRow, 'company_id' | 'full_name' | 'role'>;
       trials: TableDef<TrialRow, 'company_id'>;
       sales: TableDef<SaleRow, 'company_id'>;
       receipts: TableDef<ReceiptRow, 'company_id'>;

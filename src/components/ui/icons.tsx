@@ -56,6 +56,15 @@ export const IconLeads = (p: IconProps) => (
   </Icon>
 );
 
+export const IconTeam = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M15 20v-1.5a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4V20" />
+    <circle cx="8.5" cy="7" r="3.5" />
+    <path d="M22 20v-1.5a4 4 0 0 0-3-3.87" />
+    <path d="M16 3.63a4 4 0 0 1 0 6.74" />
+  </Icon>
+);
+
 export const IconTrials = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3" y="5" width="18" height="16" rx="3" />

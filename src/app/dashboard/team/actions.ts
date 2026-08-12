@@ -1,0 +1,166 @@
+'use server';
+
+import { revalidatePath } from 'next/cache';
+import { z } from 'zod';
+
+import { requireCompanySession } from '@/lib/auth';
+import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER } from '@/lib/employee-role';
+import { createServerSupabase } from '@/lib/supabase/server';
+
+/**
+ * Сотрудники компании и назначение ответственного за лида.
+ *
+ * company_id всегда из сессии: кто может писать, решает RLS, а какой компании
+ * принадлежит запись — сервер. Из формы приходят только данные человека.
+ */
+
+export type TeamState = { error?: string; success?: string };
+
+const employeeSchema = z.object({
+  fullName: z.string().trim().min(2, 'Укажите имя сотрудника').max(120),
+  role: z.enum(EMPLOYEE_ROLE_ORDER),
+  phone: z
+    .string()
+    .trim()
+    .max(40)
+    .optional()
+    .transform((value) => (value ? value : null)),
+});
+
+export async function createEmployee(
+  _prevState: TeamState,
+  formData: FormData,
+): Promise<TeamState> {
+  const { company } = await requireCompanySession();
+
+  const parsed = employeeSchema.safeParse({
+    fullName: formData.get('fullName'),
+    role: formData.get('role'),
+    phone: formData.get('phone'),
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  // Продажник существует только там, где есть пробные занятия.
+  if (
+    EMPLOYEE_ROLE[parsed.data.role].onlyTrialFunnel &&
+    company.funnel_type !== 'trial'
+  ) {
+    return { error: 'Эта роль доступна только компаниям с пробными занятиями.' };
+  }
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from('employees').insert({
+    company_id: company.id,
+    full_name: parsed.data.fullName,
+    role: parsed.data.role,
+    phone: parsed.data.phone,
+  });
+
+  if (error) return { error: 'Не удалось добавить сотрудника.' };
+
+  revalidateTeam();
+  return { success: 'Сотрудник добавлен.' };
+}
+
+/**
+ * Увольнение мягкое: строка остаётся, лиды и продажи прошлых периодов
+ * продолжают считаться за этим человеком. Открытые лиды освобождаются —
+ * иначе они зависнут на том, кто уже не работает.
+ */
+export async function fireEmployee(employeeId: string): Promise<TeamState> {
+  const { company } = await requireCompanySession();
+
+  const parsed = z.string().uuid().safeParse(employeeId);
+  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase
+    .from('employees')
+    .update({ status: 'fired', fired_at: new Date().toISOString() })
+    .eq('id', parsed.data)
+    .eq('company_id', company.id);
+
+  if (error) return { error: 'Не удалось уволить сотрудника.' };
+
+  await supabase
+    .from('leads')
+    .update({ assigned_to: null, assigned_at: null })
+    .eq('company_id', company.id)
+    .eq('assigned_to', parsed.data)
+    .in('status', ['new', 'no_answer', 'contacted', 'in_progress', 'thinking']);
+
+  revalidateTeam();
+  return { success: 'Сотрудник уволен, его активные лиды освобождены.' };
+}
+
+/** Возврат сотрудника — бывает и такое, повторно заводить карточку не нужно. */
+export async function rehireEmployee(employeeId: string): Promise<TeamState> {
+  const { company } = await requireCompanySession();
+
+  const parsed = z.string().uuid().safeParse(employeeId);
+  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase
+    .from('employees')
+    .update({ status: 'active', fired_at: null })
+    .eq('id', parsed.data)
+    .eq('company_id', company.id);
+
+  if (error) return { error: 'Не удалось вернуть сотрудника.' };
+
+  revalidateTeam();
+  return { success: 'Сотрудник снова активен.' };
+}
+
+/** Назначить ответственного за лида. Пустая строка снимает ответственного. */
+export async function assignLead(
+  leadId: string,
+  employeeId: string,
+): Promise<TeamState> {
+  const { company } = await requireCompanySession();
+
+  const parsed = z
+    .object({
+      leadId: z.string().uuid(),
+      employeeId: z.string().uuid().or(z.literal('')),
+    })
+    .safeParse({ leadId, employeeId });
+
+  if (!parsed.success) return { error: 'Некорректные данные.' };
+
+  const supabase = await createServerSupabase();
+
+  // Сотрудник должен быть из этой же компании и не уволен. RLS не отличает
+  // «чужого сотрудника» от «своего», поэтому проверяем явно.
+  if (parsed.data.employeeId) {
+    const { data: employee } = await supabase
+      .from('employees')
+      .select('id')
+      .eq('id', parsed.data.employeeId)
+      .eq('company_id', company.id)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    if (!employee) return { error: 'Сотрудник не найден или уже уволен.' };
+  }
+
+  const { error } = await supabase
+    .from('leads')
+    .update({
+      assigned_to: parsed.data.employeeId || null,
+      assigned_at: parsed.data.employeeId ? new Date().toISOString() : null,
+    })
+    .eq('id', parsed.data.leadId)
+    .eq('company_id', company.id);
+
+  if (error) return { error: 'Не удалось назначить ответственного.' };
+
+  revalidateTeam();
+  return { success: 'Ответственный назначен.' };
+}
+
+function revalidateTeam() {
+  revalidatePath('/dashboard', 'layout');
+}

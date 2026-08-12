@@ -221,6 +221,8 @@ export type LeadListItem = {
   status: string;
   created_at: string;
   creativeName: string | null;
+  assignedTo: string | null;
+  assignedName: string | null;
 };
 
 export type LeadStats = {
@@ -272,19 +274,23 @@ export async function getLeads(
 ): Promise<LeadListItem[]> {
   const supabase = await createServerSupabase();
 
-  const [{ data: leads }, { data: creatives }] = await Promise.all([
+  const [{ data: leads }, { data: creatives }, { data: employees }] = await Promise.all([
     supabase
       .from('leads')
-      .select('id, name, phone, source, platform, status, created_at, creative_id')
+      .select(
+        'id, name, phone, source, platform, status, created_at, creative_id, assigned_to',
+      )
       .eq('company_id', companyId)
       .gte('created_at', `${from}T00:00:00Z`)
       .lte('created_at', `${to}T23:59:59Z`)
       .order('created_at', { ascending: false })
       .limit(LIST_LIMIT),
     supabase.from('creatives').select('id, name').eq('company_id', companyId),
+    supabase.from('employees').select('id, full_name').eq('company_id', companyId),
   ]);
 
   const creativeNames = new Map((creatives ?? []).map((row) => [row.id, row.name]));
+  const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
 
   return (leads ?? []).map((lead) => ({
     id: lead.id,
@@ -295,6 +301,121 @@ export async function getLeads(
     status: lead.status,
     created_at: lead.created_at,
     creativeName: lead.creative_id ? (creativeNames.get(lead.creative_id) ?? null) : null,
+    assignedTo: lead.assigned_to,
+    assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
+  }));
+}
+
+export type TeamMember = {
+  id: string;
+  fullName: string;
+  role: string;
+  phone: string | null;
+  status: string;
+  hiredAt: string;
+  firedAt: string | null;
+  telegramUsername: string | null;
+  telegramLinked: boolean;
+  /** Показатели за выбранный период. */
+  leads: number;
+  reached: number;
+  won: number;
+  revenue: number;
+};
+
+/**
+ * Команда компании с показателями за период.
+ *
+ * Уволенные не исчезают: их лиды и продажи остались в отчётах прошлых месяцев,
+ * поэтому строка сохраняется со статусом «уволен».
+ */
+export async function getTeam(
+  companyId: string,
+  from: string,
+  to: string,
+): Promise<TeamMember[]> {
+  const supabase = await createServerSupabase();
+
+  const [{ data: employees }, { data: leads }, { data: sales }] = await Promise.all([
+    supabase
+      .from('employees')
+      .select('*')
+      .eq('company_id', companyId)
+      .order('status')
+      .order('full_name'),
+    supabase
+      .from('leads')
+      .select('id, status, assigned_to')
+      .eq('company_id', companyId)
+      .not('assigned_to', 'is', null)
+      .gte('created_at', `${from}T00:00:00Z`)
+      .lte('created_at', `${to}T23:59:59Z`),
+    supabase
+      .from('sales')
+      .select('amount, lead_id')
+      .eq('company_id', companyId)
+      .eq('status', 'paid')
+      .gte('sale_date', from)
+      .lte('sale_date', to),
+  ]);
+
+  // Продажа привязана к лиду, а лид — к сотруднику: выручка идёт тому,
+  // кто вёл клиента, даже если продажу занесли позже.
+  const leadOwner = new Map((leads ?? []).map((lead) => [lead.id, lead.assigned_to]));
+
+  const stats = new Map<string, { leads: number; reached: number; won: number; revenue: number }>();
+  const bucket = (id: string) => {
+    let value = stats.get(id);
+    if (!value) {
+      value = { leads: 0, reached: 0, won: 0, revenue: 0 };
+      stats.set(id, value);
+    }
+    return value;
+  };
+
+  for (const lead of leads ?? []) {
+    if (!lead.assigned_to) continue;
+    const target = bucket(lead.assigned_to);
+    target.leads += 1;
+    if (isReached(lead.status)) target.reached += 1;
+    if (leadStage(lead.status) === 'won') target.won += 1;
+  }
+
+  for (const sale of sales ?? []) {
+    const ownerId = sale.lead_id ? leadOwner.get(sale.lead_id) : null;
+    if (ownerId) bucket(ownerId).revenue += Number(sale.amount);
+  }
+
+  return (employees ?? []).map((employee) => {
+    const value = stats.get(employee.id) ?? { leads: 0, reached: 0, won: 0, revenue: 0 };
+    return {
+      id: employee.id,
+      fullName: employee.full_name,
+      role: employee.role,
+      phone: employee.phone,
+      status: employee.status,
+      hiredAt: employee.hired_at,
+      firedAt: employee.fired_at,
+      telegramUsername: employee.telegram_username,
+      telegramLinked: employee.telegram_user_id !== null,
+      ...value,
+    };
+  });
+}
+
+/** Активные сотрудники для выпадающих списков назначения. */
+export async function getAssignableEmployees(companyId: string) {
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from('employees')
+    .select('id, full_name, role')
+    .eq('company_id', companyId)
+    .eq('status', 'active')
+    .order('full_name');
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.full_name,
+    role: row.role,
   }));
 }
 

@@ -10,6 +10,7 @@ import {
   updateLeadStatus,
   type CrmState,
 } from '@/app/dashboard/actions';
+import { assignLead } from '@/app/dashboard/team/actions';
 import { Field, FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import { IconCheck, IconPlus } from '@/components/ui/icons';
@@ -99,6 +100,57 @@ export function AddLeadButton({
         )}
       </Modal>
     </>
+  );
+}
+
+/**
+ * Ответственный менеджер прямо в строке. Пока лидов раздаёт директор руками;
+ * когда появится авто-раздача, это же поле будет показывать её результат.
+ */
+export function LeadOwnerSelect({
+  leadId,
+  assignedTo,
+  employees,
+}: {
+  leadId: string;
+  assignedTo: string | null;
+  employees: { id: string; name: string }[];
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const change = (next: string) => {
+    setError(null);
+    startTransition(async () => {
+      const result = await assignLead(leadId, next);
+      if (result.error) setError(result.error);
+    });
+  };
+
+  if (employees.length === 0) {
+    return <span className="text-[12.5px] text-faint">нет сотрудников</span>;
+  }
+
+  return (
+    <div>
+      <select
+        value={assignedTo ?? ''}
+        disabled={pending}
+        onChange={(event) => change(event.target.value)}
+        aria-label="Ответственный менеджер"
+        className={`h-8 max-w-[160px] rounded-control border bg-surface-2 px-2 text-[12.5px] text-ink transition-colors focus:outline-none ${
+          error ? 'border-negative' : 'border-line hover:border-line-strong'
+        } ${pending ? 'opacity-60' : ''}`}
+      >
+        <option value="">Не назначен</option>
+        {employees.map((employee) => (
+          <option key={employee.id} value={employee.id}>
+            {employee.name}
+          </option>
+        ))}
+      </select>
+      {error ? <p className="mt-1 text-[11px] text-negative">{error}</p> : null}
+    </div>
   );
 }
 

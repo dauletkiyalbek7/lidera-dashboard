@@ -4,9 +4,13 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireSuperAdmin } from '@/lib/auth';
-import { createAdminSupabase } from '@/lib/supabase/admin';
+import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 
 export type AdminState = { error?: string; success?: string };
+
+const MISSING_KEY_ERROR =
+  'Не задан SUPABASE_SERVICE_ROLE_KEY. Добавьте ключ в переменные окружения — ' +
+  'без него платформа не может создавать учётные записи.';
 
 const createCompanySchema = z.object({
   name: z.string().trim().min(2, 'Укажите название компании').max(120),
@@ -30,6 +34,7 @@ export async function createCompany(
   formData: FormData,
 ): Promise<AdminState> {
   const admin = await requireSuperAdmin();
+  if (!isAdminConfigured()) return { error: MISSING_KEY_ERROR };
 
   const parsed = createCompanySchema.safeParse({
     name: formData.get('name'),
@@ -124,6 +129,7 @@ export async function updateCompany(
   formData: FormData,
 ): Promise<AdminState> {
   const admin = await requireSuperAdmin();
+  if (!isAdminConfigured()) return { error: MISSING_KEY_ERROR };
 
   const parsed = updateCompanySchema.safeParse({
     companyId: formData.get('companyId'),
@@ -170,6 +176,7 @@ export async function setCompanyStatus(
   formData: FormData,
 ): Promise<AdminState> {
   const admin = await requireSuperAdmin();
+  if (!isAdminConfigured()) return { error: MISSING_KEY_ERROR };
 
   const parsed = z
     .object({
@@ -219,6 +226,7 @@ export async function createDirector(
   formData: FormData,
 ): Promise<AdminState> {
   const admin = await requireSuperAdmin();
+  if (!isAdminConfigured()) return { error: MISSING_KEY_ERROR };
 
   const parsed = directorSchema.safeParse({
     companyId: formData.get('companyId'),

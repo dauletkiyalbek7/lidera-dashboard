@@ -20,3 +20,8 @@ export function createAdminSupabase() {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 }
+
+/** Настроен ли сервисный ключ. Позволяет показать понятную ошибку вместо падения. */
+export function isAdminConfigured(): boolean {
+  return Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+}

@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireCompanySession } from '@/lib/auth';
+import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /**
@@ -17,7 +18,7 @@ import { createServerSupabase } from '@/lib/supabase/server';
 
 export type CrmState = { error?: string; success?: string };
 
-const LEAD_STATUSES = ['new', 'in_progress', 'qualified', 'trial', 'sale', 'rejected'] as const;
+const LEAD_STATUSES = LEAD_STATUS_ORDER;
 const TRIAL_STATUSES = ['scheduled', 'completed', 'no_show', 'canceled'] as const;
 const SALE_STATUSES = ['pending', 'paid', 'refunded', 'canceled'] as const;
 
@@ -54,6 +55,9 @@ export async function createLead(
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+  if (!allowsStatus(company.funnel_type, parsed.data.status)) {
+    return { error: 'В вашей компании продажа идёт без пробных занятий.' };
+  }
 
   const supabase = await createServerSupabase();
   const { error } = await supabase.from('leads').insert({
@@ -83,6 +87,9 @@ export async function updateLeadStatus(
     .safeParse({ leadId, status });
 
   if (!parsed.success) return { error: 'Некорректный статус.' };
+  if (!allowsStatus(company.funnel_type, parsed.data.status)) {
+    return { error: 'В вашей компании продажа идёт без пробных занятий.' };
+  }
 
   const supabase = await createServerSupabase();
   const { error } = await supabase
@@ -247,6 +254,14 @@ export async function updateTrialStatus(
 /** Цифры на дашборде зависят от этих записей, поэтому обновляем весь кабинет. */
 function revalidateCabinet() {
   revalidatePath('/dashboard', 'layout');
+}
+
+/**
+ * Шаг «пробный» существует не у всех: товарному бизнесу его нельзя выставить
+ * даже подделанным запросом, поэтому проверка стоит на сервере, а не в форме.
+ */
+function allowsStatus(funnelType: string, status: LeadStatus): boolean {
+  return status !== 'trial' || funnelType === 'trial';
 }
 
 function emptyToUndefined(value: FormDataEntryValue | null): string | undefined {

@@ -9,12 +9,16 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconLeads } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
-import { formatDateTime, formatNumber } from '@/lib/format';
+import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { PLATFORM_LABELS } from '@/lib/labels';
 import type { FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
-import { getCreativeOptions, getLeads } from '@/lib/queries';
+import { getCreativeOptions, getLeadStats, getLeads } from '@/lib/queries';
 import { AddLeadButton, LeadRowActions, LeadStatusSelect } from './lead-controls';
+import { StatusBreakdown } from './status-breakdown';
+
+/** Лид без первого касания дольше суток — уже потерянные деньги. */
+const UNTOUCHED_HOURS = 24;
 
 export const metadata: Metadata = { title: 'Лиды' };
 
@@ -37,13 +41,13 @@ export default async function LeadsPage({
   const range = resolveRange(await searchParams);
   const funnelType = company.funnel_type as FunnelType;
 
-  const [leads, creatives] = await Promise.all([
+  const [leads, stats, creatives] = await Promise.all([
     getLeads(company.id, range.from, range.to),
+    getLeadStats(company.id, range.from, range.to),
     getCreativeOptions(company.id),
   ]);
 
-  const attributed = leads.filter((lead) => lead.creativeName).length;
-  const converted = leads.filter((lead) => lead.status === 'sale').length;
+  const share = (value: number) => (stats.total ? (value / stats.total) * 100 : 0);
 
   return (
     <>
@@ -59,20 +63,52 @@ export default async function LeadsPage({
       />
 
       <PageBody>
-        <div className="grid gap-3 sm:grid-cols-3">
-          <StatTile label="Всего лидов" value={formatNumber(leads.length)} />
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatTile
-            label="С привязкой к креативу"
-            value={formatNumber(attributed)}
-            hint="Только такие лиды участвуют в сквозной аналитике"
+            label="Всего лидов"
+            value={formatNumber(stats.total)}
+            hint={`${formatNumber(stats.attributed)} с привязкой к креативу`}
           />
-          <StatTile label="Дошли до продажи" value={formatNumber(converted)} accent />
+          <StatTile
+            label="Дозвонились"
+            value={formatNumber(stats.reached)}
+            hint={`${formatPercent(share(stats.reached))} лидов — живой контакт`}
+          />
+          <StatTile
+            label="Купили"
+            value={formatNumber(stats.won)}
+            hint={`Конверсия ${formatPercent(share(stats.won))}`}
+            accent
+          />
+          <StatTile
+            label="Ждут первого касания"
+            value={formatNumber(stats.untouched)}
+            hint={`Новые лиды старше ${UNTOUCHED_HOURS} часов — их никто не взял`}
+          />
         </div>
+
+        {stats.total > 0 ? (
+          <Card className="mt-4">
+            <CardHeader
+              title="Разбор по статусам"
+              subtitle="Как менеджеры отработали лидов за выбранный период"
+            />
+            <StatusBreakdown
+              counts={stats.counts}
+              total={stats.total}
+              funnelType={funnelType}
+            />
+          </Card>
+        ) : null}
 
         <Card className="mt-4">
           <CardHeader
             title="Список лидов"
-            subtitle={`Показаны последние ${formatNumber(leads.length)} за ${range.label}`}
+            subtitle={
+              stats.total > leads.length
+                ? `Показаны последние ${formatNumber(leads.length)} из ${formatNumber(stats.total)} за ${range.label}`
+                : `Показаны все ${formatNumber(leads.length)} за ${range.label}`
+            }
           />
           {leads.length === 0 ? (
             <div className="p-5 sm:p-6">

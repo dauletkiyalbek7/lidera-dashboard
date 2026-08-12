@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { TrendPoint } from '@/components/charts/trend-chart';
+import { countUntouched, isReached, leadStage } from '@/lib/lead-status';
 import { eachDay } from '@/lib/period';
 import {
   emptyPerformance,
@@ -81,16 +82,15 @@ export async function getDashboardData(
   // Лид → креатив: связь, ради которой существует вся платформа.
   const leadToCreative = new Map(leads.map((lead) => [lead.id, lead.creative_id]));
 
-  // Лид считается обработанным, как только менеджер сдвинул его с «нового».
-  const isProcessed = (status: string) => status !== 'new' && status !== 'rejected';
-
+  // «Обработан» = с человеком реально поговорили. Отказ тоже обработан,
+  // а недозвон и нецелевой — нет: см. lib/lead-status.ts.
   const totals = summarize({
     spend: sum(metrics, (row) => Number(row.spend)),
     impressions: sum(metrics, (row) => Number(row.impressions)),
     clicks: sum(metrics, (row) => Number(row.clicks)),
     leads: leads.length,
     trials: trials.filter((trial) => trial.status === 'completed').length,
-    processed: leads.filter((lead) => isProcessed(lead.status)).length,
+    processed: leads.filter((lead) => isReached(lead.status)).length,
     sales: sales.length,
     revenue: sum(sales, (row) => Number(row.amount)),
   });
@@ -138,7 +138,7 @@ export async function getDashboardData(
     if (!lead.creative_id) continue;
     const target = bucket(lead.creative_id);
     target.leads += 1;
-    if (isProcessed(lead.status)) target.processed += 1;
+    if (isReached(lead.status)) target.processed += 1;
   }
 
   for (const trial of trials) {
@@ -222,6 +222,48 @@ export type LeadListItem = {
   created_at: string;
   creativeName: string | null;
 };
+
+export type LeadStats = {
+  total: number;
+  attributed: number;
+  reached: number;
+  won: number;
+  untouched: number;
+  counts: Record<string, number>;
+};
+
+/**
+ * Сводка по лидам за период. Считается отдельным запросом, а не по видимым
+ * строкам: таблица показывает последние 200, а плитки обязаны отвечать за
+ * весь период — иначе директор увидит заниженные цифры и не заметит подмены.
+ */
+export async function getLeadStats(
+  companyId: string,
+  from: string,
+  to: string,
+): Promise<LeadStats> {
+  const supabase = await createServerSupabase();
+
+  const { data } = await supabase
+    .from('leads')
+    .select('status, created_at, creative_id')
+    .eq('company_id', companyId)
+    .gte('created_at', `${from}T00:00:00Z`)
+    .lte('created_at', `${to}T23:59:59Z`);
+
+  const leads = data ?? [];
+  const counts: Record<string, number> = {};
+  for (const lead of leads) counts[lead.status] = (counts[lead.status] ?? 0) + 1;
+
+  return {
+    total: leads.length,
+    attributed: leads.filter((lead) => lead.creative_id).length,
+    reached: leads.filter((lead) => isReached(lead.status)).length,
+    won: leads.filter((lead) => leadStage(lead.status) === 'won').length,
+    untouched: countUntouched(leads),
+    counts,
+  };
+}
 
 export async function getLeads(
   companyId: string,

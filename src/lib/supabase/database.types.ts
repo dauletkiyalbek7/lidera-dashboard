@@ -4,6 +4,8 @@
  *   npx supabase gen types typescript --project-id xnfqsoruxkjhekdklxot > src/lib/supabase/database.types.ts
  */
 
+import type { LeadStatus as LeadStatusValue } from '@/lib/lead-status';
+
 export type Json =
   | string
   | number
@@ -17,13 +19,8 @@ export type CompanyStatus = 'active' | 'inactive' | 'trial';
 /** trial — воронка с пробным занятием, direct — прямая продажа. */
 export type FunnelType = 'trial' | 'direct';
 export type AdPlatform = 'meta' | 'tiktok' | 'google' | 'other';
-export type LeadStatus =
-  | 'new'
-  | 'in_progress'
-  | 'qualified'
-  | 'trial'
-  | 'sale'
-  | 'rejected';
+/** Набор статусов лида ведётся в lib/lead-status.ts — там же их смысл и стадии. */
+export type LeadStatus = LeadStatusValue;
 export type TrialStatus = 'scheduled' | 'completed' | 'no_show' | 'canceled';
 export type SaleStatus = 'pending' | 'paid' | 'refunded' | 'canceled';
 export type IntegrationStatus = 'connected' | 'disconnected' | 'error' | 'pending';

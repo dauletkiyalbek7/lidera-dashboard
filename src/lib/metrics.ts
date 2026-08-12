@@ -46,7 +46,7 @@ export type PerformanceInput = {
   leads: number;
   /** Промежуточный шаг воронки trial: проведённые пробные занятия. */
   trials: number;
-  /** Промежуточный шаг воронки direct: лиды, взятые в работу. */
+  /** Промежуточный шаг воронки direct: лиды, с которыми состоялся контакт. */
   processed: number;
   sales: number;
   revenue: number;
@@ -112,9 +112,9 @@ export const FUNNEL_LABELS: Record<FunnelType, {
     hint: 'С пробным занятием — для онлайн-школ и услуг',
   },
   direct: {
-    title: 'Лид → Обработан → Продажа',
-    middleStep: 'Взято в работу',
-    middleColumn: 'В работе',
+    title: 'Лид → Контакт → Продажа',
+    middleStep: 'Состоялся контакт',
+    middleColumn: 'Дозвон',
     hint: 'Без пробного — для товарного бизнеса и прямых продаж',
   },
 };

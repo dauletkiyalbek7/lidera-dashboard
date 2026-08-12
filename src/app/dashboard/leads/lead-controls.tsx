@@ -14,18 +14,16 @@ import { Field, FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import { IconCheck, IconPlus } from '@/components/ui/icons';
 import { Modal, Select } from '@/components/ui/modal';
-import { LEAD_STATUS } from '@/lib/labels';
+import { LEAD_STATUS, leadStatusesFor } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
 import { toIsoDate } from '@/lib/period';
 
-/**
- * Статус «пробный» существует только в воронке с пробным занятием —
- * товарному бизнесу его предлагать нельзя.
- */
+/** Порядок и состав статусов — из общего справочника, а не из локального списка. */
 function leadStatusOptions(funnelType: FunnelType) {
-  return Object.entries(LEAD_STATUS)
-    .filter(([value]) => funnelType === 'trial' || value !== 'trial')
-    .map(([value, meta]) => ({ value, label: meta.label }));
+  return leadStatusesFor(funnelType).map((value) => ({
+    value,
+    label: LEAD_STATUS[value].label,
+  }));
 }
 
 const PLATFORM_OPTIONS = [

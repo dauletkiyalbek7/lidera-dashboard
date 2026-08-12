@@ -312,15 +312,20 @@ begin
    where l.company_id = v_company
      and exists (select 1 from public.sales s where s.lead_id = l.id);
 
-  -- Часть лидов без пробного — в работе или отказ, чтобы воронка выглядела живой
+  -- Лиды без пробного расходятся по результату контакта: часть не берёт трубку,
+  -- часть отказала, часть думает. Демо должно показывать реальную картину отдела.
   update public.leads
      set status = case
-       when pg_temp.rnd(id::text || 'residual') < 0.35 then 'rejected'
+       when pg_temp.rnd(id::text || 'residual') < 0.24 then 'no_answer'
+       when pg_temp.rnd(id::text || 'residual') < 0.34 then 'invalid'
+       when pg_temp.rnd(id::text || 'residual') < 0.56 then 'rejected'
+       when pg_temp.rnd(id::text || 'residual') < 0.74 then 'contacted'
+       when pg_temp.rnd(id::text || 'residual') < 0.88 then 'thinking'
        else 'in_progress'
      end
    where company_id = v_company
      and status = 'new'
-     and pg_temp.rnd(id::text || 'touched') < 0.55;
+     and pg_temp.rnd(id::text || 'touched') < 0.82;
 
   -- ---------------------------------------------------------------------
   -- 8. Интеграции и журнал
@@ -504,7 +509,9 @@ begin
 
   update public.leads l
      set status = case
-       when pg_temp.rnd(l.id::text || 'stage') < 0.55 then 'qualified'
+       when pg_temp.rnd(l.id::text || 'stage') < 0.34 then 'contacted'
+       when pg_temp.rnd(l.id::text || 'stage') < 0.62 then 'qualified'
+       when pg_temp.rnd(l.id::text || 'stage') < 0.80 then 'thinking'
        else 'in_progress' end
    from _pf_creative c
    where c.id = l.creative_id
@@ -512,9 +519,15 @@ begin
      and l.status = 'new'
      and pg_temp.rnd(l.id::text || 'processed') < c.processed_rate;
 
-  update public.leads set status = 'rejected'
+  -- Остаток: не дозвонились, отказали или номер оказался нецелевым.
+  update public.leads
+     set status = case
+       when pg_temp.rnd(id::text || 'reject') < 0.20 then 'no_answer'
+       when pg_temp.rnd(id::text || 'reject') < 0.30 then 'invalid'
+       else 'rejected'
+     end
    where company_id = v_company and status = 'new'
-     and pg_temp.rnd(id::text || 'reject') < 0.45;
+     and pg_temp.rnd(id::text || 'reject') < 0.62;
 
   insert into public.integrations (company_id, platform, status, account_id, last_sync_at)
   values

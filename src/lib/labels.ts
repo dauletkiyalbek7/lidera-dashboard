@@ -1,13 +1,7 @@
 /** Человекочитаемые подписи статусов. Одно место для всего интерфейса. */
 
-export const LEAD_STATUS: Record<string, { label: string; tone: Tone }> = {
-  new: { label: 'Новый', tone: 'neutral' },
-  in_progress: { label: 'В работе', tone: 'warning' },
-  qualified: { label: 'Квалифицирован', tone: 'lime' },
-  trial: { label: 'Пробный', tone: 'lime' },
-  sale: { label: 'Продажа', tone: 'positive' },
-  rejected: { label: 'Отказ', tone: 'negative' },
-};
+// Статусы лида живут отдельно — у них есть стадии и правила воронки:
+// см. lib/lead-status.ts.
 
 export const TRIAL_STATUS: Record<string, { label: string; tone: Tone }> = {
   scheduled: { label: 'Запланирован', tone: 'neutral' },

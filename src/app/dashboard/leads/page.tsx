@@ -1,9 +1,8 @@
 import type { Metadata } from 'next';
 
-import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
+import { PageBody, PageHeader } from '@/components/app/page-header';
 import { Td, TableShell } from '@/components/app/table';
-import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -11,9 +10,11 @@ import { IconLeads } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatDateTime, formatNumber } from '@/lib/format';
-import { LEAD_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
+import { PLATFORM_LABELS } from '@/lib/labels';
+import type { FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
-import { getLeads } from '@/lib/queries';
+import { getCreativeOptions, getLeads } from '@/lib/queries';
+import { AddLeadButton, LeadRowActions, LeadStatusSelect } from './lead-controls';
 
 export const metadata: Metadata = { title: 'Лиды' };
 
@@ -22,8 +23,9 @@ const COLUMNS = [
   { key: 'phone', label: 'Телефон' },
   { key: 'source', label: 'Источник' },
   { key: 'creative', label: 'Креатив' },
+  { key: 'created', label: 'Получен' },
   { key: 'status', label: 'Статус' },
-  { key: 'created', label: 'Получен', align: 'right' as const },
+  { key: 'actions', label: 'Действия', align: 'right' as const },
 ];
 
 export default async function LeadsPage({
@@ -33,7 +35,12 @@ export default async function LeadsPage({
 }) {
   const { company } = await requireCompanySession();
   const range = resolveRange(await searchParams);
-  const leads = await getLeads(company.id, range.from, range.to);
+  const funnelType = company.funnel_type as FunnelType;
+
+  const [leads, creatives] = await Promise.all([
+    getLeads(company.id, range.from, range.to),
+    getCreativeOptions(company.id),
+  ]);
 
   const attributed = leads.filter((lead) => lead.creativeName).length;
   const converted = leads.filter((lead) => lead.status === 'sale').length;
@@ -43,7 +50,12 @@ export default async function LeadsPage({
       <PageHeader
         title="Лиды"
         description="Каждый лид хранит источник, площадку и креатив — это и есть основа сквозной аналитики."
-        action={<DateRangePicker range={range} />}
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            <DateRangePicker range={range} />
+            <AddLeadButton creatives={creatives} funnelType={funnelType} />
+          </div>
+        }
       />
 
       <PageBody>
@@ -67,7 +79,7 @@ export default async function LeadsPage({
               <EmptyState
                 icon={<IconLeads className="size-5" />}
                 title="Лидов за этот период нет"
-                description="Лиды появятся автоматически после подключения рекламных кабинетов и форм заявок."
+                description="Добавьте лид вручную или подключите рекламные кабинеты — тогда заявки будут приходить автоматически."
                 action={
                   <ButtonLink href="/dashboard/integrations" variant="secondary">
                     Настроить интеграции
@@ -76,30 +88,36 @@ export default async function LeadsPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={860}>
-              {leads.map((lead) => {
-                const status = statusOf(LEAD_STATUS, lead.status);
-                return (
-                  <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
-                    <Td first className="font-medium text-ink">
-                      {lead.name || 'Без имени'}
-                    </Td>
-                    <Td className="tabular text-ink-soft">{lead.phone ?? '—'}</Td>
-                    <Td className="text-ink-soft">
-                      {lead.platform
-                        ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
-                        : (lead.source ?? '—')}
-                    </Td>
-                    <Td className="text-ink-soft">{lead.creativeName ?? '—'}</Td>
-                    <Td>
-                      <Badge tone={status.tone}>{status.label}</Badge>
-                    </Td>
-                    <Td last align="right" className="tabular text-muted">
-                      {formatDateTime(lead.created_at)}
-                    </Td>
-                  </tr>
-                );
-              })}
+            <TableShell columns={COLUMNS} minWidth={1020}>
+              {leads.map((lead) => (
+                <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
+                  <Td first className="font-medium text-ink">
+                    {lead.name || 'Без имени'}
+                  </Td>
+                  <Td className="tabular text-ink-soft">{lead.phone ?? '—'}</Td>
+                  <Td className="text-ink-soft">
+                    {lead.platform
+                      ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
+                      : (lead.source ?? '—')}
+                  </Td>
+                  <Td className="text-ink-soft">{lead.creativeName ?? '—'}</Td>
+                  <Td className="tabular text-muted">{formatDateTime(lead.created_at)}</Td>
+                  <Td>
+                    <LeadStatusSelect
+                      leadId={lead.id}
+                      status={lead.status}
+                      funnelType={funnelType}
+                    />
+                  </Td>
+                  <Td last align="right">
+                    <LeadRowActions
+                      leadId={lead.id}
+                      leadName={lead.name}
+                      funnelType={funnelType}
+                    />
+                  </Td>
+                </tr>
+              ))}
             </TableShell>
           )}
         </Card>

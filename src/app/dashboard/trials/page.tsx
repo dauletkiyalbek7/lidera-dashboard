@@ -4,17 +4,16 @@ import { redirect } from 'next/navigation';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell } from '@/components/app/table';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconTrials } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatDate, formatNumber, formatPercent } from '@/lib/format';
-import { statusOf, TRIAL_STATUS } from '@/lib/labels';
 import { safeDivide } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
 import { getTrials } from '@/lib/queries';
+import { TrialStatusSelect } from './trial-controls';
 
 export const metadata: Metadata = { title: 'Пробные' };
 
@@ -68,26 +67,23 @@ export default async function TrialsPage({
               <EmptyState
                 icon={<IconTrials className="size-5" />}
                 title="Пробных за этот период нет"
-                description="Записи появятся, когда менеджеры начнут переводить лиды на пробное занятие."
+                description="Записать лид на пробное можно кнопкой «Пробный» в разделе «Лиды»."
               />
             </div>
           ) : (
             <TableShell columns={COLUMNS}>
-              {trials.map((trial) => {
-                const status = statusOf(TRIAL_STATUS, trial.status);
-                return (
-                  <tr key={trial.id} className="transition-colors hover:bg-surface-2/60">
-                    <Td first className="font-medium text-ink">
-                      {trial.leadName ?? 'Без имени'}
-                    </Td>
-                    <Td className="tabular text-ink-soft">{trial.leadPhone ?? '—'}</Td>
-                    <Td className="tabular text-ink-soft">{formatDate(trial.date)}</Td>
-                    <Td last>
-                      <Badge tone={status.tone}>{status.label}</Badge>
-                    </Td>
-                  </tr>
-                );
-              })}
+              {trials.map((trial) => (
+                <tr key={trial.id} className="transition-colors hover:bg-surface-2/60">
+                  <Td first className="font-medium text-ink">
+                    {trial.leadName ?? 'Без имени'}
+                  </Td>
+                  <Td className="tabular text-ink-soft">{trial.leadPhone ?? '—'}</Td>
+                  <Td className="tabular text-ink-soft">{formatDate(trial.date)}</Td>
+                  <Td last>
+                    <TrialStatusSelect trialId={trial.id} status={trial.status} />
+                  </Td>
+                </tr>
+              ))}
             </TableShell>
           )}
         </Card>

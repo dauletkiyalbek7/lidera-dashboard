@@ -3,17 +3,16 @@ import type { Metadata } from 'next';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell } from '@/components/app/table';
-import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconSales } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
-import { SALE_STATUS, statusOf } from '@/lib/labels';
 import { averageCheck } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
-import { getSales } from '@/lib/queries';
+import { getLeads, getSales } from '@/lib/queries';
+import { AddSaleButton, SaleStatusSelect } from './sale-controls';
 
 export const metadata: Metadata = { title: 'Продажи' };
 
@@ -32,7 +31,17 @@ export default async function SalesPage({
 }) {
   const { company } = await requireCompanySession();
   const range = resolveRange(await searchParams);
-  const sales = await getSales(company.id, range.from, range.to);
+
+  const [sales, leads] = await Promise.all([
+    getSales(company.id, range.from, range.to),
+    getLeads(company.id, range.from, range.to),
+  ]);
+
+  // Подпись лида в выпадающем списке: по имени и телефону его легко узнать.
+  const leadOptions = leads.map((lead) => ({
+    id: lead.id,
+    label: [lead.name || 'Без имени', lead.phone].filter(Boolean).join(' · '),
+  }));
 
   const paid = sales.filter((sale) => sale.status === 'paid');
   const revenue = paid.reduce((total, sale) => total + sale.amount, 0);
@@ -42,7 +51,12 @@ export default async function SalesPage({
       <PageHeader
         title="Продажи"
         description="Закрытая часть цепочки: именно эти деньги превращают лиды в ROAS."
-        action={<DateRangePicker range={range} />}
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            <DateRangePicker range={range} />
+            <AddSaleButton leads={leadOptions} />
+          </div>
+        }
       />
 
       <PageBody>
@@ -62,29 +76,26 @@ export default async function SalesPage({
               <EmptyState
                 icon={<IconSales className="size-5" />}
                 title="Продаж за этот период нет"
-                description="Продажи можно заводить вручную или получать из CRM и Telegram-бота — интеграции подключаются в настройках."
+                description="Запишите продажу вручную или оформите её прямо из карточки лида в разделе «Лиды»."
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={780}>
-              {sales.map((sale) => {
-                const status = statusOf(SALE_STATUS, sale.status);
-                return (
-                  <tr key={sale.id} className="transition-colors hover:bg-surface-2/60">
-                    <Td first className="font-medium text-ink">
-                      {sale.leadName ?? 'Без имени'}
-                    </Td>
-                    <Td className="text-ink-soft">{sale.product ?? '—'}</Td>
-                    <Td className="tabular text-ink-soft">{formatDate(sale.sale_date)}</Td>
-                    <Td>
-                      <Badge tone={status.tone}>{status.label}</Badge>
-                    </Td>
-                    <Td last align="right" className="tabular font-medium text-ink">
-                      {formatMoney(sale.amount)}
-                    </Td>
-                  </tr>
-                );
-              })}
+            <TableShell columns={COLUMNS} minWidth={820}>
+              {sales.map((sale) => (
+                <tr key={sale.id} className="transition-colors hover:bg-surface-2/60">
+                  <Td first className="font-medium text-ink">
+                    {sale.leadName ?? 'Без привязки'}
+                  </Td>
+                  <Td className="text-ink-soft">{sale.product ?? '—'}</Td>
+                  <Td className="tabular text-ink-soft">{formatDate(sale.sale_date)}</Td>
+                  <Td>
+                    <SaleStatusSelect saleId={sale.id} status={sale.status} />
+                  </Td>
+                  <Td last align="right" className="tabular font-medium text-ink">
+                    {formatMoney(sale.amount)}
+                  </Td>
+                </tr>
+              ))}
             </TableShell>
           )}
         </Card>

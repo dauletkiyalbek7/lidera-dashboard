@@ -178,6 +178,18 @@ export async function getDashboardData(
   };
 }
 
+/** Креативы для выпадающих списков в формах. */
+export async function getCreativeOptions(companyId: string) {
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from('creatives')
+    .select('id, name')
+    .eq('company_id', companyId)
+    .eq('status', 'active')
+    .order('name');
+  return data ?? [];
+}
+
 export async function getAdAccounts(companyId: string) {
   const supabase = await createServerSupabase();
   const { data } = await supabase

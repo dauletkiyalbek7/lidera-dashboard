@@ -1,0 +1,110 @@
+/**
+ * Производные рекламные и финансовые метрики.
+ * Единственное место, где они считаются — дублировать формулы нельзя.
+ */
+
+/** Деление, безопасное к нулевому знаменателю. */
+export function safeDivide(numerator: number, denominator: number): number {
+  if (!denominator) return 0;
+  return numerator / denominator;
+}
+
+/** Цена лида. */
+export const costPerLead = (spend: number, leads: number) => safeDivide(spend, leads);
+
+/** Цена привлечения клиента. */
+export const costPerAcquisition = (spend: number, sales: number) =>
+  safeDivide(spend, sales);
+
+/** Возврат на рекламные расходы: сколько тенге выручки на тенге расхода. */
+export const roas = (revenue: number, spend: number) => safeDivide(revenue, spend);
+
+/** Рентабельность инвестиций в рекламу, %. */
+export const roi = (revenue: number, spend: number) =>
+  safeDivide(revenue - spend, spend) * 100;
+
+/** Конверсия из лида в продажу, %. */
+export const conversionRate = (sales: number, leads: number) =>
+  safeDivide(sales, leads) * 100;
+
+/** Кликабельность, %. */
+export const clickThroughRate = (clicks: number, impressions: number) =>
+  safeDivide(clicks, impressions) * 100;
+
+export const costPerClick = (spend: number, clicks: number) => safeDivide(spend, clicks);
+
+export const costPerMille = (spend: number, impressions: number) =>
+  safeDivide(spend, impressions) * 1000;
+
+/** Средний чек. */
+export const averageCheck = (revenue: number, sales: number) => safeDivide(revenue, sales);
+
+export type PerformanceInput = {
+  spend: number;
+  impressions: number;
+  clicks: number;
+  leads: number;
+  trials: number;
+  sales: number;
+  revenue: number;
+};
+
+export type PerformanceSummary = PerformanceInput & {
+  cpl: number;
+  cac: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  roas: number;
+  roi: number;
+  conversion: number;
+  averageCheck: number;
+  profit: number;
+};
+
+/** Полный набор показателей для карточек и таблиц. */
+export function summarize(input: PerformanceInput): PerformanceSummary {
+  return {
+    ...input,
+    cpl: costPerLead(input.spend, input.leads),
+    cac: costPerAcquisition(input.spend, input.sales),
+    ctr: clickThroughRate(input.clicks, input.impressions),
+    cpc: costPerClick(input.spend, input.clicks),
+    cpm: costPerMille(input.spend, input.impressions),
+    roas: roas(input.revenue, input.spend),
+    roi: roi(input.revenue, input.spend),
+    conversion: conversionRate(input.sales, input.leads),
+    averageCheck: averageCheck(input.revenue, input.sales),
+    profit: input.revenue - input.spend,
+  };
+}
+
+export const emptyPerformance: PerformanceInput = {
+  spend: 0,
+  impressions: 0,
+  clicks: 0,
+  leads: 0,
+  trials: 0,
+  sales: 0,
+  revenue: 0,
+};
+
+/**
+ * Оценка креатива по ROAS. Именно она отвечает на главный вопрос платформы:
+ * дешёвый лид ещё не значит хорошая реклама.
+ */
+export type CreativeVerdict = 'excellent' | 'good' | 'weak' | 'bad';
+
+export function verdictByRoas(value: number): CreativeVerdict {
+  if (value >= 4) return 'excellent';
+  if (value >= 2) return 'good';
+  if (value >= 1) return 'weak';
+  return 'bad';
+}
+
+export const verdictLabels: Record<CreativeVerdict, string> = {
+  excellent: 'Отличный',
+  good: 'Хороший',
+  weak: 'Слабый',
+  bad: 'Убыточный',
+};

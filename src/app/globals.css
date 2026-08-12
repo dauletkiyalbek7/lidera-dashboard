@@ -1,26 +1,167 @@
 @import "tailwindcss";
 
+/* =============================================================================
+   Lidera — дизайн-система
+   Premium SaaS / Fintech: глубокий чёрный, графит, белый, лаймовый акцент.
+   Все цвета и радиусы объявлены токенами и превращаются Tailwind v4
+   в утилиты (bg-surface, text-muted, rounded-card и т.д.).
+   ========================================================================== */
+
+@theme {
+  /* Фоны */
+  --color-base: #08090a;
+  --color-surface: #0e1012;
+  --color-surface-2: #14171a;
+  --color-surface-3: #1b1f23;
+
+  /* Границы и разделители */
+  --color-line: #212629;
+  --color-line-strong: #2d3338;
+
+  /* Текст */
+  --color-ink: #f4f6f7;
+  --color-ink-soft: #b6bec4;
+  --color-muted: #7d868d;
+  --color-faint: #545c62;
+
+  /* Акценты */
+  --color-lime: #c6f24e;
+  --color-lime-strong: #b0e128;
+  --color-lime-dim: #7f9c22;
+  --color-on-lime: #0a0f02;
+
+  /* Семантика (статус: всегда сопровождается текстом или иконкой) */
+  --color-positive: #3dd68c;
+  --color-warning: #f5c451;
+  --color-negative: #ff6b57;
+
+  /*
+   * Цвета серий графиков. Отделены от акцента интерфейса намеренно:
+   * шаги подобраны под тёмную поверхность #0e1012 и проверены на
+   * различимость при дальтонизме (ΔE ≥ 8 OKLab, контраст ≥ 3:1).
+   */
+  --color-series-revenue: #7b9e1f;
+  --color-series-spend: #3987e5;
+
+  /* Типографика */
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  /* Скругления */
+  --radius-card: 20px;
+  --radius-panel: 16px;
+  --radius-control: 12px;
+
+  /* Плавные переходы контейнеров */
+  --spacing-shell: 1440px;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-base);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Цифры в таблицах и KPI не должны «прыгать» при обновлении */
+.tabular {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+::selection {
+  background: var(--color-lime);
+  color: var(--color-on-lime);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-lime);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Тонкий скроллбар в тёмной теме */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line-strong) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-line-strong);
+  border-radius: 999px;
+}
+
+/* -----------------------------------------------------------------------------
+   Фирменные утилиты
+   -------------------------------------------------------------------------- */
+
+/* Мягкое лаймовое свечение под hero и ключевыми карточками */
+.glow-lime {
+  background-image: radial-gradient(
+    60% 60% at 50% 0%,
+    rgba(198, 242, 78, 0.16) 0%,
+    rgba(198, 242, 78, 0) 70%
+  );
+}
+
+/* Сетка на фоне — «технологичность» без шума */
+.grid-bg {
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.035) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: radial-gradient(70% 60% at 50% 30%, #000 0%, transparent 100%);
+}
+
+/* Тонкая светлая кромка сверху у карточек — эффект «стекла» */
+.edge-top {
+  position: relative;
+}
+.edge-top::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(
+    to right,
+    transparent,
+    rgba(255, 255, 255, 0.14),
+    transparent
+  );
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.6s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .animate-rise {
+    animation: none;
+  }
 }

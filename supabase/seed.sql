@@ -316,11 +316,10 @@ begin
   -- часть отказала, часть думает. Демо должно показывать реальную картину отдела.
   update public.leads
      set status = case
-       when pg_temp.rnd(id::text || 'residual') < 0.24 then 'no_answer'
-       when pg_temp.rnd(id::text || 'residual') < 0.34 then 'invalid'
+       when pg_temp.rnd(id::text || 'residual') < 0.26 then 'no_answer'
        when pg_temp.rnd(id::text || 'residual') < 0.56 then 'rejected'
-       when pg_temp.rnd(id::text || 'residual') < 0.74 then 'contacted'
-       when pg_temp.rnd(id::text || 'residual') < 0.88 then 'thinking'
+       when pg_temp.rnd(id::text || 'residual') < 0.76 then 'contacted'
+       when pg_temp.rnd(id::text || 'residual') < 0.90 then 'thinking'
        else 'in_progress'
      end
    where company_id = v_company
@@ -509,9 +508,8 @@ begin
 
   update public.leads l
      set status = case
-       when pg_temp.rnd(l.id::text || 'stage') < 0.34 then 'contacted'
-       when pg_temp.rnd(l.id::text || 'stage') < 0.62 then 'qualified'
-       when pg_temp.rnd(l.id::text || 'stage') < 0.80 then 'thinking'
+       when pg_temp.rnd(l.id::text || 'stage') < 0.48 then 'contacted'
+       when pg_temp.rnd(l.id::text || 'stage') < 0.74 then 'thinking'
        else 'in_progress' end
    from _pf_creative c
    where c.id = l.creative_id
@@ -519,11 +517,10 @@ begin
      and l.status = 'new'
      and pg_temp.rnd(l.id::text || 'processed') < c.processed_rate;
 
-  -- Остаток: не дозвонились, отказали или номер оказался нецелевым.
+  -- Остаток: либо не отвечают, либо отказали.
   update public.leads
      set status = case
-       when pg_temp.rnd(id::text || 'reject') < 0.20 then 'no_answer'
-       when pg_temp.rnd(id::text || 'reject') < 0.30 then 'invalid'
+       when pg_temp.rnd(id::text || 'reject') < 0.30 then 'no_answer'
        else 'rejected'
      end
    where company_id = v_company and status = 'new'

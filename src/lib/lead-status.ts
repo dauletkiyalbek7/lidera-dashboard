@@ -14,12 +14,10 @@ export const LEAD_STATUS_ORDER = [
   'no_answer',
   'contacted',
   'in_progress',
-  'qualified',
   'thinking',
   'trial',
   'sale',
   'rejected',
-  'invalid',
 ] as const;
 
 export type LeadStatus = (typeof LEAD_STATUS_ORDER)[number];
@@ -53,14 +51,14 @@ export const LEAD_STATUS: Record<LeadStatus, LeadStatusMeta> = {
     hint: 'Заявка пришла, менеджер её ещё не трогал',
   },
   no_answer: {
-    label: 'Недозвон',
+    label: 'Игнор',
     tone: 'warning',
     stage: 'unreached',
     reached: false,
-    hint: 'Трубку не берут — нужны повторные попытки',
+    hint: 'Не отвечает — нужны повторные попытки',
   },
   contacted: {
-    label: 'Дозвонились',
+    label: 'Дозвон',
     tone: 'lime',
     stage: 'working',
     reached: true,
@@ -72,13 +70,6 @@ export const LEAD_STATUS: Record<LeadStatus, LeadStatusMeta> = {
     stage: 'working',
     reached: true,
     hint: 'Переписка или переговоры продолжаются',
-  },
-  qualified: {
-    label: 'Целевой',
-    tone: 'lime',
-    stage: 'working',
-    reached: true,
-    hint: 'Подходит по запросу и бюджету — готов двигаться дальше',
   },
   thinking: {
     label: 'Думает',
@@ -109,18 +100,11 @@ export const LEAD_STATUS: Record<LeadStatus, LeadStatusMeta> = {
     reached: true,
     hint: 'Поговорили — покупать не будет',
   },
-  invalid: {
-    label: 'Нецелевой',
-    tone: 'neutral',
-    stage: 'lost',
-    reached: false,
-    hint: 'Чужой город, ошибочный номер или спам',
-  },
 };
 
 export const LEAD_STAGE_LABELS: Record<LeadStage, string> = {
   new: 'Новые',
-  unreached: 'Недозвон',
+  unreached: 'Игнор',
   working: 'В работе',
   won: 'Купили',
   lost: 'Потеряны',

@@ -1,5 +1,6 @@
 'use client';
 
+import type { FunnelType } from '@/lib/metrics';
 import {
   IconAds,
   IconCompanies,
@@ -20,6 +21,8 @@ export type NavItem = {
   icon: (props: React.SVGProps<SVGSVGElement>) => React.ReactElement;
   /** Раздел уже есть в интерфейсе, но наполняется на следующем этапе. */
   soon?: boolean;
+  /** Раздел показывается только компаниям с такой воронкой. */
+  onlyFunnel?: FunnelType;
 };
 
 export type NavGroup = {
@@ -46,7 +49,7 @@ const COMPANY_NAV: NavGroup[] = [
     title: 'Продажи',
     items: [
       { href: '/dashboard/leads', label: 'Лиды', icon: IconLeads },
-      { href: '/dashboard/trials', label: 'Пробные', icon: IconTrials },
+      { href: '/dashboard/trials', label: 'Пробные', icon: IconTrials, onlyFunnel: 'trial' },
       { href: '/dashboard/sales', label: 'Продажи', icon: IconSales },
     ],
   },
@@ -82,7 +85,19 @@ const ADMIN_NAV: NavGroup[] = [
  * иконки-компоненты, а функции нельзя передать из серверного компонента в
  * клиентский через props.
  */
-export const NAV_BY_KEY: Record<NavKey, NavGroup[]> = {
+const NAV_BY_KEY: Record<NavKey, NavGroup[]> = {
   company: COMPANY_NAV,
   admin: ADMIN_NAV,
 };
+
+/** Меню для конкретного рабочего пространства с учётом типа воронки. */
+export function navFor(key: NavKey, funnelType: FunnelType): NavGroup[] {
+  return NAV_BY_KEY[key]
+    .map((group) => ({
+      ...group,
+      items: group.items.filter(
+        (item) => !item.onlyFunnel || item.onlyFunnel === funnelType,
+      ),
+    }))
+    .filter((group) => group.items.length > 0);
+}

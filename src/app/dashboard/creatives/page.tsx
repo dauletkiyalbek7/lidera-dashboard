@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { CreativeTable } from '@/components/app/creative-table';
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { PeriodTabs } from '@/components/app/period-tabs';
+import { DateRangePicker } from '@/components/app/date-range-picker';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -10,7 +10,8 @@ import { IconCreatives } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatMoney, formatRatio } from '@/lib/format';
-import { resolvePeriod } from '@/lib/period';
+import type { FunnelType } from '@/lib/metrics';
+import { resolveRange } from '@/lib/period';
 import { getDashboardData } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
@@ -18,11 +19,12 @@ export const metadata: Metadata = { title: 'Креативы' };
 export default async function CreativesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const period = resolvePeriod((await searchParams).period);
-  const { creatives } = await getDashboardData(company.id, period.from, period.to);
+  const range = resolveRange(await searchParams);
+  const { creatives } = await getDashboardData(company.id, range.from, range.to);
+  const funnelType = company.funnel_type as FunnelType;
 
   const best = creatives[0];
   const worst = [...creatives].sort((a, b) => a.roas - b.roas)[0];
@@ -35,7 +37,7 @@ export default async function CreativesPage({
       <PageHeader
         title="Креативы"
         description="Лучшие и худшие креативы по деньгам, а не по количеству заявок."
-        action={<PeriodTabs active={period.key} />}
+        action={<DateRangePicker range={range} />}
       />
 
       <PageBody>
@@ -74,9 +76,9 @@ export default async function CreativesPage({
             <Card className="mt-4">
               <CardHeader
                 title="Сквозная аналитика креативов"
-                subtitle={`Расход, лиды, пробные, продажи и выручка за ${period.label}`}
+                subtitle={`Расход, лиды, продажи и выручка за ${range.label}`}
               />
-              <CreativeTable creatives={creatives} />
+              <CreativeTable creatives={creatives} funnelType={funnelType} />
             </Card>
           </>
         )}

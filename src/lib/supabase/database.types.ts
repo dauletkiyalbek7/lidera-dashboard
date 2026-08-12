@@ -14,6 +14,8 @@ export type Json =
 
 export type UserRole = 'SUPER_ADMIN' | 'DIRECTOR' | 'MANAGER' | 'EMPLOYEE';
 export type CompanyStatus = 'active' | 'inactive' | 'trial';
+/** trial — воронка с пробным занятием, direct — прямая продажа. */
+export type FunnelType = 'trial' | 'direct';
 export type AdPlatform = 'meta' | 'tiktok' | 'google' | 'other';
 export type LeadStatus =
   | 'new'
@@ -35,6 +37,7 @@ export type CompanyRow = Timestamps & {
   phone: string | null;
   email: string | null;
   status: CompanyStatus;
+  funnel_type: FunnelType;
   is_demo: boolean;
 }
 

@@ -74,6 +74,7 @@ export default async function CompanyDetailPage({
                 directorName: company.director_name ?? '',
                 phone: company.phone ?? '',
                 status: company.status,
+                funnelType: company.funnel_type,
               }}
             />
           </Card>

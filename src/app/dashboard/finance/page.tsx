@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { PeriodTabs } from '@/components/app/period-tabs';
+import { DateRangePicker } from '@/components/app/date-range-picker';
 import { TrendChart } from '@/components/charts/trend-chart';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatMoney, formatPercent, formatRatio } from '@/lib/format';
-import { resolvePeriod } from '@/lib/period';
+import { resolveRange } from '@/lib/period';
 import { getDashboardData, getSubscription } from '@/lib/queries';
 import { PLAN_LABELS } from '@/lib/labels';
 
@@ -16,13 +16,13 @@ export const metadata: Metadata = { title: 'Финансы' };
 export default async function FinancePage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const period = resolvePeriod((await searchParams).period);
+  const range = resolveRange(await searchParams);
 
   const [{ totals, trend }, subscription] = await Promise.all([
-    getDashboardData(company.id, period.from, period.to),
+    getDashboardData(company.id, range.from, range.to),
     getSubscription(company.id),
   ]);
 
@@ -31,7 +31,7 @@ export default async function FinancePage({
       <PageHeader
         title="Финансы"
         description="Расход, выручка и окупаемость рекламы за выбранный период."
-        action={<PeriodTabs active={period.key} />}
+        action={<DateRangePicker range={range} />}
       />
 
       <PageBody>

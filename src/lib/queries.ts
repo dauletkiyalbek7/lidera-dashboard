@@ -2,7 +2,12 @@ import 'server-only';
 
 import type { TrendPoint } from '@/components/charts/trend-chart';
 import { eachDay } from '@/lib/period';
-import { summarize, type PerformanceSummary } from '@/lib/metrics';
+import {
+  emptyPerformance,
+  summarize,
+  type PerformanceInput,
+  type PerformanceSummary,
+} from '@/lib/metrics';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /**
@@ -61,7 +66,7 @@ export async function getDashboardData(
         .lte('sale_date', to),
       supabase
         .from('leads')
-        .select('id, creative_id')
+        .select('id, creative_id, status')
         .eq('company_id', companyId)
         .gte('created_at', `${from}T00:00:00Z`)
         .lte('created_at', `${to}T23:59:59Z`),
@@ -76,12 +81,16 @@ export async function getDashboardData(
   // Лид → креатив: связь, ради которой существует вся платформа.
   const leadToCreative = new Map(leads.map((lead) => [lead.id, lead.creative_id]));
 
+  // Лид считается обработанным, как только менеджер сдвинул его с «нового».
+  const isProcessed = (status: string) => status !== 'new' && status !== 'rejected';
+
   const totals = summarize({
     spend: sum(metrics, (row) => Number(row.spend)),
     impressions: sum(metrics, (row) => Number(row.impressions)),
     clicks: sum(metrics, (row) => Number(row.clicks)),
     leads: leads.length,
     trials: trials.filter((trial) => trial.status === 'completed').length,
+    processed: leads.filter((lead) => isProcessed(lead.status)).length,
     sales: sales.length,
     revenue: sum(sales, (row) => Number(row.amount)),
   });
@@ -106,15 +115,12 @@ export async function getDashboardData(
   }));
 
   // --- Сквозная аналитика по креативам -----------------------------------
-  const perCreative = new Map<
-    string,
-    { spend: number; impressions: number; clicks: number; leads: number; trials: number; sales: number; revenue: number }
-  >();
+  const perCreative = new Map<string, PerformanceInput>();
 
   const bucket = (id: string) => {
     let value = perCreative.get(id);
     if (!value) {
-      value = { spend: 0, impressions: 0, clicks: 0, leads: 0, trials: 0, sales: 0, revenue: 0 };
+      value = { ...emptyPerformance };
       perCreative.set(id, value);
     }
     return value;
@@ -130,7 +136,9 @@ export async function getDashboardData(
 
   for (const lead of leads) {
     if (!lead.creative_id) continue;
-    bucket(lead.creative_id).leads += 1;
+    const target = bucket(lead.creative_id);
+    target.leads += 1;
+    if (isProcessed(lead.status)) target.processed += 1;
   }
 
   for (const trial of trials) {
@@ -150,15 +158,7 @@ export async function getDashboardData(
 
   const creativePerformance: CreativePerformance[] = creatives
     .map((creative) => {
-      const input = perCreative.get(creative.id) ?? {
-        spend: 0,
-        impressions: 0,
-        clicks: 0,
-        leads: 0,
-        trials: 0,
-        sales: 0,
-        revenue: 0,
-      };
+      const input = perCreative.get(creative.id) ?? emptyPerformance;
       return {
         id: creative.id,
         name: creative.name,

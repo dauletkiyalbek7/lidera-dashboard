@@ -6,10 +6,13 @@ import { useState, type ReactNode } from 'react';
 
 import { IconClose, IconLogout, IconMenu } from '@/components/ui/icons';
 import { Logo } from '@/components/ui/logo';
-import { NAV_BY_KEY, type NavKey } from './nav-config';
+import type { FunnelType } from '@/lib/metrics';
+import { navFor, type NavKey } from './nav-config';
 
 type AppShellProps = {
   nav: NavKey;
+  /** Тип воронки компании: от него зависит состав разделов. */
+  funnelType: FunnelType;
   children: ReactNode;
   /** Название компании или «Платформа Lidera» для админа. */
   workspace: string;
@@ -20,13 +23,14 @@ type AppShellProps = {
 
 export function AppShell({
   nav,
+  funnelType,
   children,
   workspace,
   workspaceHint,
   userName,
   userEmail,
 }: AppShellProps) {
-  const groups = NAV_BY_KEY[nav];
+  const groups = navFor(nav, funnelType);
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 

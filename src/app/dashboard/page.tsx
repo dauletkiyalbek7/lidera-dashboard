@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
 
 import { CreativeTable } from '@/components/app/creative-table';
+import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { PeriodTabs } from '@/components/app/period-tabs';
 import { Funnel } from '@/components/charts/funnel';
 import { TrendChart } from '@/components/charts/trend-chart';
 import { ButtonLink } from '@/components/ui/button';
@@ -12,7 +12,8 @@ import { IconAds } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
-import { resolvePeriod } from '@/lib/period';
+import { FUNNEL_LABELS, middleStepValue, type FunnelType } from '@/lib/metrics';
+import { resolveRange } from '@/lib/period';
 import { getDashboardData } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Dashboard' };
@@ -20,23 +21,28 @@ export const metadata: Metadata = { title: 'Dashboard' };
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const params = await searchParams;
-  const period = resolvePeriod(params.period);
+  const range = resolveRange(await searchParams);
   const { totals, trend, creatives, hasAdData } = await getDashboardData(
     company.id,
-    period.from,
-    period.to,
+    range.from,
+    range.to,
   );
+
+  // Промежуточный шаг воронки зависит от типа бизнеса: пробное занятие
+  // у школы, «взято в работу» у прямых продаж.
+  const funnelType = company.funnel_type as FunnelType;
+  const funnel = FUNNEL_LABELS[funnelType];
+  const middle = middleStepValue(funnelType, totals);
 
   return (
     <>
       <PageHeader
         title="Dashboard"
-        description={`Сводка по компании «${company.name}» за последние ${period.label}.`}
-        action={<PeriodTabs active={period.key} />}
+        description={`Сводка по компании «${company.name}» за ${range.label}.`}
+        action={<DateRangePicker range={range} />}
       />
 
       <PageBody>
@@ -64,7 +70,7 @@ export default async function DashboardPage({
             hint={`Клики: ${formatNumber(totals.clicks)}`}
           />
           <StatTile label="CPL" value={formatMoney(totals.cpl)} />
-          <StatTile label="Пробные" value={formatNumber(totals.trials)} />
+          <StatTile label={funnel.middleColumn} value={formatNumber(middle)} />
           <StatTile
             label="Продажи"
             value={formatNumber(totals.sales)}
@@ -98,11 +104,11 @@ export default async function DashboardPage({
           </Card>
 
           <Card>
-            <CardHeader title="Воронка" subtitle="От лида до продажи" />
+            <CardHeader title="Воронка" subtitle={funnel.title} />
             <Funnel
               steps={[
                 { label: 'Лиды', value: totals.leads },
-                { label: 'Пробные проведены', value: totals.trials },
+                { label: funnel.middleStep, value: middle },
                 { label: 'Продажи', value: totals.sales },
               ]}
             />
@@ -120,7 +126,7 @@ export default async function DashboardPage({
             }
           />
           {creatives.length > 0 ? (
-            <CreativeTable creatives={creatives} limit={5} />
+            <CreativeTable creatives={creatives} funnelType={funnelType} limit={5} />
           ) : (
             <p className="px-6 py-10 text-center text-sm text-muted">
               За выбранный период по креативам нет данных.

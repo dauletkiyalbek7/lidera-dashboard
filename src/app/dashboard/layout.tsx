@@ -22,6 +22,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   return (
     <AppShell
       nav="company"
+      funnelType={company.funnel_type}
       workspace={company.name}
       workspaceHint={PLAN_HINT[company.status] ?? 'Компания'}
       userName={profile.name || 'Пользователь'}

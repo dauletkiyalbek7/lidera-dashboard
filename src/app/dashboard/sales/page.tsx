@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { PeriodTabs } from '@/components/app/period-tabs';
+import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
@@ -12,7 +12,7 @@ import { requireCompanySession } from '@/lib/auth';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { SALE_STATUS, statusOf } from '@/lib/labels';
 import { averageCheck } from '@/lib/metrics';
-import { resolvePeriod } from '@/lib/period';
+import { resolveRange } from '@/lib/period';
 import { getSales } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Продажи' };
@@ -28,11 +28,11 @@ const COLUMNS = [
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const period = resolvePeriod((await searchParams).period);
-  const sales = await getSales(company.id, period.from, period.to);
+  const range = resolveRange(await searchParams);
+  const sales = await getSales(company.id, range.from, range.to);
 
   const paid = sales.filter((sale) => sale.status === 'paid');
   const revenue = paid.reduce((total, sale) => total + sale.amount, 0);
@@ -42,7 +42,7 @@ export default async function SalesPage({
       <PageHeader
         title="Продажи"
         description="Закрытая часть цепочки: именно эти деньги превращают лиды в ROAS."
-        action={<PeriodTabs active={period.key} />}
+        action={<DateRangePicker range={range} />}
       />
 
       <PageBody>
@@ -56,7 +56,7 @@ export default async function SalesPage({
         </div>
 
         <Card className="mt-4">
-          <CardHeader title="Список продаж" subtitle={`Период: ${period.label}`} />
+          <CardHeader title="Список продаж" subtitle={`Период: ${range.label}`} />
           {sales.length === 0 ? (
             <div className="p-5 sm:p-6">
               <EmptyState

@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { PeriodTabs } from '@/components/app/period-tabs';
+import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
@@ -12,7 +12,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatDateTime, formatNumber } from '@/lib/format';
 import { LEAD_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
-import { resolvePeriod } from '@/lib/period';
+import { resolveRange } from '@/lib/period';
 import { getLeads } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Лиды' };
@@ -29,11 +29,11 @@ const COLUMNS = [
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const period = resolvePeriod((await searchParams).period);
-  const leads = await getLeads(company.id, period.from, period.to);
+  const range = resolveRange(await searchParams);
+  const leads = await getLeads(company.id, range.from, range.to);
 
   const attributed = leads.filter((lead) => lead.creativeName).length;
   const converted = leads.filter((lead) => lead.status === 'sale').length;
@@ -43,7 +43,7 @@ export default async function LeadsPage({
       <PageHeader
         title="Лиды"
         description="Каждый лид хранит источник, площадку и креатив — это и есть основа сквозной аналитики."
-        action={<PeriodTabs active={period.key} />}
+        action={<DateRangePicker range={range} />}
       />
 
       <PageBody>
@@ -60,7 +60,7 @@ export default async function LeadsPage({
         <Card className="mt-4">
           <CardHeader
             title="Список лидов"
-            subtitle={`Показаны последние ${formatNumber(leads.length)} за ${period.label}`}
+            subtitle={`Показаны последние ${formatNumber(leads.length)} за ${range.label}`}
           />
           {leads.length === 0 ? (
             <div className="p-5 sm:p-6">

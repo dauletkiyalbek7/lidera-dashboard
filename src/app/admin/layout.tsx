@@ -15,6 +15,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   return (
     <AppShell
       nav="admin"
+      funnelType="trial"
       workspace="Платформа Lidera"
       workspaceHint="Администрирование"
       userName={profile.name || 'Администратор'}

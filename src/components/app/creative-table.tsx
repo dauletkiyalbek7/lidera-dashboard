@@ -1,6 +1,12 @@
 import { Badge } from '@/components/ui/badge';
 import { formatMoney, formatNumber, formatRatio } from '@/lib/format';
-import { verdictByRoas, verdictLabels } from '@/lib/metrics';
+import {
+  FUNNEL_LABELS,
+  middleStepValue,
+  verdictByRoas,
+  verdictLabels,
+  type FunnelType,
+} from '@/lib/metrics';
 import type { CreativePerformance } from '@/lib/queries';
 
 const PLATFORM_LABELS: Record<string, string> = {
@@ -23,12 +29,15 @@ const VERDICT_TONE = {
  */
 export function CreativeTable({
   creatives,
+  funnelType,
   limit,
 }: {
   creatives: CreativePerformance[];
+  funnelType: FunnelType;
   limit?: number;
 }) {
   const rows = limit ? creatives.slice(0, limit) : creatives;
+  const middleColumn = FUNNEL_LABELS[funnelType].middleColumn;
 
   return (
     <div className="overflow-x-auto">
@@ -39,7 +48,7 @@ export function CreativeTable({
             <th scope="col" className="px-3 py-3 text-right font-medium">Расход</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">Лиды</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">CPL</th>
-            <th scope="col" className="px-3 py-3 text-right font-medium">Пробные</th>
+            <th scope="col" className="px-3 py-3 text-right font-medium">{middleColumn}</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">Продажи</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">Выручка</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">ROAS</th>
@@ -68,7 +77,7 @@ export function CreativeTable({
                   {formatMoney(creative.cpl)}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
-                  {formatNumber(creative.trials)}
+                  {formatNumber(middleStepValue(funnelType, creative))}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
                   {formatNumber(creative.sales)}

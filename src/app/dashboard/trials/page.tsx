@@ -1,7 +1,8 @@
 import type { Metadata } from 'next';
+import { redirect } from 'next/navigation';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { PeriodTabs } from '@/components/app/period-tabs';
+import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
@@ -12,7 +13,7 @@ import { requireCompanySession } from '@/lib/auth';
 import { formatDate, formatNumber, formatPercent } from '@/lib/format';
 import { statusOf, TRIAL_STATUS } from '@/lib/labels';
 import { safeDivide } from '@/lib/metrics';
-import { resolvePeriod } from '@/lib/period';
+import { resolveRange } from '@/lib/period';
 import { getTrials } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Пробные' };
@@ -27,11 +28,15 @@ const COLUMNS = [
 export default async function TrialsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const period = resolvePeriod((await searchParams).period);
-  const trials = await getTrials(company.id, period.from, period.to);
+
+  // У компаний с прямой продажей пробных занятий нет — раздел им не показывается.
+  if (company.funnel_type !== 'trial') redirect('/dashboard');
+
+  const range = resolveRange(await searchParams);
+  const trials = await getTrials(company.id, range.from, range.to);
 
   const completed = trials.filter((trial) => trial.status === 'completed').length;
   const noShow = trials.filter((trial) => trial.status === 'no_show').length;
@@ -41,7 +46,7 @@ export default async function TrialsPage({
       <PageHeader
         title="Пробные"
         description="Промежуточный шаг воронки: сколько записей дошли до реально проведённого пробного."
-        action={<PeriodTabs active={period.key} />}
+        action={<DateRangePicker range={range} />}
       />
 
       <PageBody>
@@ -57,7 +62,7 @@ export default async function TrialsPage({
         </div>
 
         <Card className="mt-4">
-          <CardHeader title="Записи на пробные" subtitle={`Период: ${period.label}`} />
+          <CardHeader title="Записи на пробные" subtitle={`Период: ${range.label}`} />
           {trials.length === 0 ? (
             <div className="p-5 sm:p-6">
               <EmptyState

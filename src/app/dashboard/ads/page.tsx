@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { PeriodTabs } from '@/components/app/period-tabs';
+import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
@@ -12,7 +12,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import { INTEGRATION_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
-import { resolvePeriod } from '@/lib/period';
+import { resolveRange } from '@/lib/period';
 import { getAdAccounts, getCampaigns, getDashboardData } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Реклама' };
@@ -34,15 +34,15 @@ const CAMPAIGN_STATUS: Record<string, { label: string; tone: 'positive' | 'neutr
 export default async function AdsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const period = resolvePeriod((await searchParams).period);
+  const range = resolveRange(await searchParams);
 
   const [accounts, campaigns, { totals }] = await Promise.all([
     getAdAccounts(company.id),
     getCampaigns(company.id),
-    getDashboardData(company.id, period.from, period.to),
+    getDashboardData(company.id, range.from, range.to),
   ]);
 
   if (accounts.length === 0 && campaigns.length === 0) {
@@ -70,7 +70,7 @@ export default async function AdsPage({
       <PageHeader
         title="Реклама"
         description="Расход, показы и клики из подключённых рекламных кабинетов."
-        action={<PeriodTabs active={period.key} />}
+        action={<DateRangePicker range={range} />}
       />
 
       <PageBody>

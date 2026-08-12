@@ -48,6 +48,26 @@ export function CompanyCreateForm() {
           </select>
         </div>
 
+
+        <div className="sm:col-span-2">
+          <label htmlFor="funnelType" className="block text-[13px] font-medium text-ink-soft">
+            Тип воронки
+          </label>
+          <select
+            id="funnelType"
+            name="funnelType"
+            defaultValue="trial"
+            className={selectClass}
+          >
+            <option value="trial">Лид → Пробный → Продажа (онлайн-школа, услуги)</option>
+            <option value="direct">Лид → Обработан → Продажа (товарный бизнес)</option>
+          </select>
+          <p className="mt-1.5 text-[12px] text-faint">
+            У компаний без пробных занятий раздел «Пробные» не показывается, а в воронке
+            промежуточным шагом становится «взято в работу».
+          </p>
+        </div>
+
         <div>
           <label htmlFor="plan" className="block text-[13px] font-medium text-ink-soft">
             Тариф

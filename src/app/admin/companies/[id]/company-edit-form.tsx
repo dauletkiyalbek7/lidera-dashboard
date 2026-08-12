@@ -20,7 +20,13 @@ export function CompanyEditForm({
   defaults,
 }: {
   companyId: string;
-  defaults: { name: string; directorName: string; phone: string; status: string };
+  defaults: {
+    name: string;
+    directorName: string;
+    phone: string;
+    status: string;
+    funnelType: string;
+  };
 }) {
   const [state, formAction] = useActionState(updateCompany, {} as AdminState);
 
@@ -45,6 +51,21 @@ export function CompanyEditForm({
           <option value="active">Активна</option>
           <option value="trial">Пробный период</option>
           <option value="inactive">Деактивирована</option>
+        </select>
+      </div>
+
+      <div>
+        <label htmlFor="funnelType" className="block text-[13px] font-medium text-ink-soft">
+          Тип воронки
+        </label>
+        <select
+          id="funnelType"
+          name="funnelType"
+          defaultValue={defaults.funnelType}
+          className={selectClass}
+        >
+          <option value="trial">Лид → Пробный → Продажа</option>
+          <option value="direct">Лид → Обработан → Продажа</option>
         </select>
       </div>
 

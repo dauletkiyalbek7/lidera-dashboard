@@ -44,7 +44,10 @@ export type PerformanceInput = {
   impressions: number;
   clicks: number;
   leads: number;
+  /** Промежуточный шаг воронки trial: проведённые пробные занятия. */
   trials: number;
+  /** Промежуточный шаг воронки direct: лиды, взятые в работу. */
+  processed: number;
   sales: number;
   revenue: number;
 };
@@ -85,9 +88,44 @@ export const emptyPerformance: PerformanceInput = {
   clicks: 0,
   leads: 0,
   trials: 0,
+  processed: 0,
   sales: 0,
   revenue: 0,
 };
+
+/**
+ * Тип воронки компании. Онлайн-школа ведёт лид через пробное занятие,
+ * товарный бизнес продаёт сразу — промежуточный шаг у них разный.
+ */
+export type FunnelType = 'trial' | 'direct';
+
+export const FUNNEL_LABELS: Record<FunnelType, {
+  title: string;
+  middleStep: string;
+  middleColumn: string;
+  hint: string;
+}> = {
+  trial: {
+    title: 'Лид → Пробный → Продажа',
+    middleStep: 'Пробные проведены',
+    middleColumn: 'Пробные',
+    hint: 'С пробным занятием — для онлайн-школ и услуг',
+  },
+  direct: {
+    title: 'Лид → Обработан → Продажа',
+    middleStep: 'Взято в работу',
+    middleColumn: 'В работе',
+    hint: 'Без пробного — для товарного бизнеса и прямых продаж',
+  },
+};
+
+/** Значение промежуточного шага воронки для выбранного типа. */
+export function middleStepValue(
+  funnelType: FunnelType,
+  performance: Pick<PerformanceInput, 'trials' | 'processed'>,
+): number {
+  return funnelType === 'trial' ? performance.trials : performance.processed;
+}
 
 /**
  * Оценка креатива по ROAS. Именно она отвечает на главный вопрос платформы:

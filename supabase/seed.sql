@@ -339,3 +339,193 @@ begin
   raise notice 'Демо-данные загружены для компании %', v_company;
 end;
 $$;
+
+-- =============================================================================
+-- Вторая демо-компания: товарный бизнес с прямой продажей (funnel_type = direct).
+-- Пробных занятий у неё нет — лид сразу превращается в покупку, поэтому раздел
+-- «Пробные» такой компании не показывается, а промежуточным шагом воронки
+-- становится «взято в работу».
+--
+-- Логин: director@demoparfum.kz / DemoParfum2026!
+-- =============================================================================
+
+do $$
+declare
+  v_email    text := 'director@demoparfum.kz';
+  v_password text := 'DemoParfum2026!';
+  v_user uuid; v_company uuid;
+  v_acc_meta uuid; v_acc_tt uuid; v_camp_meta uuid; v_camp_tt uuid;
+  v_set_meta uuid; v_set_tt uuid; v_days int := 60;
+begin
+  if exists (select 1 from public.companies where name = 'Demo Parfum') then
+    raise notice 'Демо-компания с прямой продажей уже есть — пропускаем.';
+    return;
+  end if;
+
+  create or replace function pg_temp.rnd(seed text)
+  returns numeric language sql immutable as $fn$
+    select (('x' || substr(md5(seed), 1, 8))::bit(32)::bigint)::numeric / 4294967296.0;
+  $fn$;
+
+  select id into v_user from auth.users where email = v_email;
+  if v_user is null then
+    v_user := gen_random_uuid();
+    insert into auth.users (
+      instance_id, id, aud, role, email, encrypted_password,
+      email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+      confirmation_token, recovery_token, email_change, email_change_token_new,
+      email_change_token_current, phone_change, phone_change_token, reauthentication_token
+    ) values (
+      '00000000-0000-0000-0000-000000000000', v_user, 'authenticated', 'authenticated',
+      v_email, extensions.crypt(v_password, extensions.gen_salt('bf')), now(),
+      '{"provider":"email","providers":["email"]}'::jsonb,
+      '{"name":"Руслан Кадыров"}'::jsonb, now(), now(),
+      '', '', '', '', '', '', '', ''
+    );
+    insert into auth.identities (
+      id, user_id, provider_id, identity_data, provider, last_sign_in_at, created_at, updated_at
+    ) values (
+      gen_random_uuid(), v_user, v_user::text,
+      jsonb_build_object('sub', v_user::text, 'email', v_email,
+                         'email_verified', true, 'phone_verified', false),
+      'email', now(), now(), now()
+    );
+  end if;
+
+  insert into public.companies (name, director_name, phone, email, status, funnel_type, is_demo)
+  values ('Demo Parfum', 'Руслан Кадыров', '+7 701 987 65 43', v_email, 'active', 'direct', true)
+  returning id into v_company;
+
+  insert into public.subscriptions (company_id, plan, status, start_date)
+  values (v_company, 'start', 'active', current_date - 30);
+
+  insert into public.profiles (user_id, company_id, role, name, email, phone)
+  values (v_user, v_company, 'DIRECTOR', 'Руслан Кадыров', v_email, '+7 701 987 65 43')
+  on conflict (user_id) do update set company_id = excluded.company_id, role = 'DIRECTOR';
+
+  insert into public.ad_accounts (company_id, platform, account_name, account_id, status)
+  values (v_company, 'meta', 'Demo Parfum — Meta Ads', 'act_5566778899', 'connected')
+  returning id into v_acc_meta;
+  insert into public.ad_accounts (company_id, platform, account_name, account_id, status)
+  values (v_company, 'tiktok', 'Demo Parfum — TikTok Ads', '7318899001122', 'connected')
+  returning id into v_acc_tt;
+
+  insert into public.campaigns (company_id, ad_account_id, external_id, name, platform, objective)
+  values (v_company, v_acc_meta, 'cmp_pf_meta', 'Парфюм — продажи', 'meta', 'CONVERSIONS')
+  returning id into v_camp_meta;
+  insert into public.campaigns (company_id, ad_account_id, external_id, name, platform, objective)
+  values (v_company, v_acc_tt, 'cmp_pf_tt', 'Парфюм — охват и заявки', 'tiktok', 'CONVERSIONS')
+  returning id into v_camp_tt;
+
+  insert into public.ad_sets (company_id, campaign_id, external_id, name)
+  values (v_company, v_camp_meta, 'set_pf_meta', 'Казахстан · 20–45 · интерес: парфюмерия')
+  returning id into v_set_meta;
+  insert into public.ad_sets (company_id, campaign_id, external_id, name)
+  values (v_company, v_camp_tt, 'set_pf_tt', 'Казахстан · 18–35 · широкая')
+  returning id into v_set_tt;
+
+  create temporary table _pf_creative (
+    id uuid, name text, platform text, format text, daily_spend numeric,
+    leads_per_day int, processed_rate numeric, sale_rate numeric, avg_check numeric
+  ) on commit drop;
+
+  insert into _pf_creative values
+    (gen_random_uuid(), 'Reels 01 — Распаковка',      'meta',   'video',  9000, 5, 0.80, 0.22, 32000),
+    (gen_random_uuid(), 'Reels 02 — Скидка 40%',      'meta',   'video', 12000, 9, 0.70, 0.05, 26000),
+    (gen_random_uuid(), 'Static 01 — Топ-5 ароматов', 'meta',   'image',  5000, 3, 0.85, 0.18, 35000),
+    (gen_random_uuid(), 'TikTok 01 — Тест на запах',  'tiktok', 'video',  7000, 6, 0.60, 0.08, 28000);
+
+  insert into public.creatives (id, company_id, external_id, name, platform, format, status)
+  select c.id, v_company, 'crt_' || substr(c.id::text, 1, 8), c.name, c.platform, c.format, 'active'
+  from _pf_creative c;
+
+  insert into public.ads (company_id, ad_set_id, creative_id, external_id, name)
+  select v_company, case when c.platform = 'meta' then v_set_meta else v_set_tt end,
+         c.id, 'ad_' || substr(c.id::text, 1, 8), c.name || ' — объявление'
+  from _pf_creative c;
+
+  insert into public.ad_metrics (
+    company_id, creative_id, campaign_id, platform, date,
+    spend, impressions, reach, clicks, ctr, cpc, cpm, leads, cpl)
+  select v_company, c.id,
+    case when c.platform = 'meta' then v_camp_meta else v_camp_tt end,
+    c.platform, d.day, s.spend, i.impressions, (i.impressions * 0.7)::bigint, k.clicks,
+    round((k.clicks::numeric / nullif(i.impressions, 0)) * 100, 4),
+    round(s.spend / nullif(k.clicks, 0), 2),
+    round((s.spend / nullif(i.impressions, 0)) * 1000, 2),
+    c.leads_per_day, round(s.spend / nullif(c.leads_per_day, 0), 2)
+  from _pf_creative c
+  cross join generate_series(0, v_days - 1) as g(offset_days)
+  cross join lateral (select (current_date - g.offset_days)::date as day) d
+  cross join lateral (select round(c.daily_spend * (0.8 + pg_temp.rnd(c.id::text || d.day::text || 'spend') * 0.4), 2) as spend) s
+  cross join lateral (select (s.spend * (20 + pg_temp.rnd(c.id::text || d.day::text || 'imp') * 10))::bigint as impressions) i
+  cross join lateral (select greatest(1, (i.impressions * (0.009 + pg_temp.rnd(c.id::text || d.day::text || 'clk') * 0.011))::bigint) as clicks) k;
+
+  insert into public.leads (
+    company_id, name, phone, source, platform, campaign_id, ad_set_id,
+    creative_id, utm_source, utm_medium, utm_campaign, utm_content, status, created_at)
+  select v_company,
+    (array['Аружан Серикова','Бекзат Оралов','Виктория Ли','Галия Абенова','Дамир Ержанов',
+           'Елена Пак','Жандос Сериков','Зарина Уразова','Ирина Ким','Куаныш Даулет',
+           'Лаура Ныгметова','Марат Сулейменов','Назерке Аскар','Олжас Батыр','Полина Ким'
+          ])[1 + floor(pg_temp.rnd(seed.key || 'name') * 15)::int],
+    '+7 7' || lpad(floor(pg_temp.rnd(seed.key || 'phone') * 999999999)::text, 9, '0'),
+    case when c.platform = 'meta' then 'instagram' else 'tiktok' end,
+    c.platform,
+    case when c.platform = 'meta' then v_camp_meta else v_camp_tt end,
+    case when c.platform = 'meta' then v_set_meta else v_set_tt end,
+    c.id, c.platform, 'cpc',
+    case when c.platform = 'meta' then 'cmp_pf_meta' else 'cmp_pf_tt' end,
+    c.name, 'new',
+    (current_date - g.offset_days)::timestamptz + interval '9 hours'
+      + (pg_temp.rnd(seed.key || 'hour') * interval '13 hours')
+  from _pf_creative c
+  cross join generate_series(0, v_days - 1) as g(offset_days)
+  cross join generate_series(1, 12) as n(i)
+  cross join lateral (select c.id::text || g.offset_days::text || '-' || n.i::text as key) seed
+  where n.i <= c.leads_per_day;
+
+  -- Прямая продажа: пробных занятий нет, лид сразу переходит в покупку.
+  insert into public.sales (company_id, lead_id, product, amount, status, sale_date)
+  select v_company, l.id,
+    (array['Chanel Bleu 100ml','Dior Sauvage 60ml','Tom Ford Oud 50ml','Набор мини-ароматов'])
+      [1 + floor(pg_temp.rnd(l.id::text || 'product') * 4)::int],
+    round(c.avg_check * (0.8 + pg_temp.rnd(l.id::text || 'amount') * 0.4), -2),
+    'paid', (l.created_at + interval '1 day')::date
+  from public.leads l
+  join _pf_creative c on c.id = l.creative_id
+  where l.company_id = v_company
+    and pg_temp.rnd(l.id::text || 'sale') < c.sale_rate
+    and (l.created_at + interval '1 day')::date <= current_date;
+
+  update public.leads l set status = 'sale'
+   where l.company_id = v_company
+     and exists (select 1 from public.sales s where s.lead_id = l.id);
+
+  update public.leads l
+     set status = case
+       when pg_temp.rnd(l.id::text || 'stage') < 0.55 then 'qualified'
+       else 'in_progress' end
+   from _pf_creative c
+   where c.id = l.creative_id
+     and l.company_id = v_company
+     and l.status = 'new'
+     and pg_temp.rnd(l.id::text || 'processed') < c.processed_rate;
+
+  update public.leads set status = 'rejected'
+   where company_id = v_company and status = 'new'
+     and pg_temp.rnd(id::text || 'reject') < 0.45;
+
+  insert into public.integrations (company_id, platform, status, account_id, last_sync_at)
+  values
+    (v_company, 'meta',     'connected', 'act_5566778899', now() - interval '1 hour'),
+    (v_company, 'tiktok',   'connected', '7318899001122',  now() - interval '3 hours'),
+    (v_company, 'whatsapp', 'pending',   null, null);
+
+  insert into public.audit_logs (company_id, user_id, action, entity_type, entity_id, metadata)
+  values (v_company, v_user, 'demo.seeded', 'company', v_company,
+          jsonb_build_object('days', v_days, 'funnel', 'direct'));
+
+  raise notice 'Демо-компания с прямой продажей загружена: %', v_company;
+end;
+$$;

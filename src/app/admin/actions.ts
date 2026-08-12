@@ -20,6 +20,7 @@ const createCompanySchema = z.object({
   password: z.string().min(8, 'Временный пароль — минимум 8 символов').max(72),
   status: z.enum(['active', 'trial', 'inactive']),
   plan: z.enum(['trial', 'start', 'pro', 'enterprise']),
+  funnelType: z.enum(['trial', 'direct']),
 });
 
 /**
@@ -44,6 +45,7 @@ export async function createCompany(
     password: formData.get('password'),
     status: formData.get('status'),
     plan: formData.get('plan'),
+    funnelType: formData.get('funnelType'),
   });
 
   if (!parsed.success) {
@@ -61,6 +63,7 @@ export async function createCompany(
       phone: input.phone || null,
       email: input.email,
       status: input.status,
+      funnel_type: input.funnelType,
     })
     .select('id')
     .single();
@@ -122,6 +125,7 @@ const updateCompanySchema = z.object({
   directorName: z.string().trim().max(120).optional(),
   phone: z.string().trim().max(40).optional(),
   status: z.enum(['active', 'trial', 'inactive']),
+  funnelType: z.enum(['trial', 'direct']),
 });
 
 export async function updateCompany(
@@ -137,6 +141,7 @@ export async function updateCompany(
     directorName: formData.get('directorName'),
     phone: formData.get('phone'),
     status: formData.get('status'),
+    funnelType: formData.get('funnelType'),
   });
 
   if (!parsed.success) {
@@ -151,6 +156,7 @@ export async function updateCompany(
       director_name: parsed.data.directorName || null,
       phone: parsed.data.phone || null,
       status: parsed.data.status,
+      funnel_type: parsed.data.funnelType,
     })
     .eq('id', parsed.data.companyId);
 

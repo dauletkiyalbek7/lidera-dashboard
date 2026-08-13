@@ -4,6 +4,7 @@ import { useActionState, useState } from 'react';
 import { useFormStatus } from 'react-dom';
 
 import { Field, FormMessage } from '@/components/auth/field';
+import { WorkScheduleEditor } from '@/components/app/work-schedule';
 import { Button } from '@/components/ui/button';
 import {
   ATTENDANCE_STATUS,
@@ -33,6 +34,8 @@ export function ShiftForm({
     office_label: string;
     timezone: string;
     work_start_time: string;
+    work_end_time: string;
+    work_days: number[];
     late_grace_minutes: number;
     attendance_statuses: string[];
   };
@@ -171,21 +174,28 @@ export function ShiftForm({
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field
-            label="Начало рабочего дня"
-            name="work_start_time"
-            type="time"
-            defaultValue={defaults.work_start_time.slice(0, 5)}
-          />
-          <Field
-            label="Допустимое опоздание, минут"
-            name="late_grace_minutes"
-            type="number"
-            min={0}
-            max={120}
-            defaultValue={String(defaults.late_grace_minutes)}
-            hint="После этого смена помечается как опоздание"
+        <div className="space-y-3 rounded-control border border-line bg-surface-2/40 p-4">
+          <div>
+            <span className="block text-[13px] font-medium text-ink-soft">График работы</span>
+            <p className="mt-0.5 text-[12px] leading-relaxed text-faint">
+              Общий для компании. У любого сотрудника может быть свой — в разделе
+              «Команда», кнопка «График».
+            </p>
+          </div>
+
+          <WorkScheduleEditor
+            names={{
+              days: 'work_days',
+              start: 'work_start_time',
+              end: 'work_end_time',
+              grace: 'late_grace_minutes',
+            }}
+            defaults={{
+              days: defaults.work_days,
+              start: defaults.work_start_time,
+              end: defaults.work_end_time,
+              grace: defaults.late_grace_minutes,
+            }}
           />
         </div>
 

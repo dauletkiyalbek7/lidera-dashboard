@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { SHIFT_MODE_ORDER } from '@/lib/attendance';
+import { SHIFT_MODE_ORDER, parseWorkDays } from '@/lib/attendance';
 import { requireCompanySession } from '@/lib/auth';
 import { runDistribution } from '@/lib/lead-distribution';
 import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER } from '@/lib/employee-role';
@@ -267,15 +267,22 @@ const scheduleSchema = z.object({
   employeeId: z.string().uuid(),
   /** Пустая строка означает «как в компании» — это осознанный выбор, а не ошибка. */
   shiftMode: z.enum(['', ...SHIFT_MODE_ORDER]),
-  workStartTime: z.string().regex(/^(\d{2}:\d{2})?$/, 'Время в формате 09:00'),
-  lateGraceMinutes: z.string().regex(/^\d{0,3}$/, 'Только число минут'),
+  /** inherit — график компании, custom — личный. */
+  scheduleMode: z.enum(['inherit', 'custom']),
+});
+
+const customScheduleSchema = z.object({
+  workStartTime: z.string().regex(/^\d{2}:\d{2}$/, 'Укажите начало дня в формате 09:00'),
+  workEndTime: z.string().regex(/^\d{2}:\d{2}$/, 'Укажите конец дня в формате 18:00'),
+  lateGraceMinutes: z.coerce.number().int().min(0).max(120, 'Допуск — не больше 120 минут'),
 });
 
 /**
  * Личные правила сотрудника: режим смены и график.
  *
- * Пустое поле сбрасывает правило обратно к настройке компании — так директор
- * меняет общее правило один раз, и оно доходит до всех, у кого нет исключения.
+ * «Как в компании» пишет NULL — так директор меняет общее правило один раз, и
+ * оно доходит до всех, у кого нет исключения. Режим и график независимы:
+ * удалёнщик может отмечаться без геолокации, но работать по общим часам.
  */
 export async function updateEmployeeSchedule(
   _prevState: TeamState,
@@ -290,8 +297,7 @@ export async function updateEmployeeSchedule(
   const parsed = scheduleSchema.safeParse({
     employeeId: formData.get('employeeId'),
     shiftMode: formData.get('shiftMode') ?? '',
-    workStartTime: formData.get('workStartTime') ?? '',
-    lateGraceMinutes: formData.get('lateGraceMinutes') ?? '',
+    scheduleMode: formData.get('scheduleMode') ?? 'inherit',
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
@@ -300,17 +306,41 @@ export async function updateEmployeeSchedule(
     return { error: 'Сначала укажите координаты офиса в настройках компании.' };
   }
 
-  const grace = parsed.data.lateGraceMinutes ? Number(parsed.data.lateGraceMinutes) : null;
-  if (grace !== null && grace > 120) return { error: 'Допуск опоздания — не больше 120 минут.' };
+  let schedule = {
+    work_start_time: null as string | null,
+    work_end_time: null as string | null,
+    work_days: null as number[] | null,
+    late_grace_minutes: null as number | null,
+  };
+
+  if (parsed.data.scheduleMode === 'custom') {
+    const custom = customScheduleSchema.safeParse({
+      workStartTime: formData.get('workStartTime'),
+      workEndTime: formData.get('workEndTime'),
+      lateGraceMinutes: formData.get('lateGraceMinutes'),
+    });
+
+    if (!custom.success) return { error: custom.error.issues[0].message };
+
+    const workDays = parseWorkDays(formData.getAll('workDays').map(String));
+    if (!workDays) return { error: 'Выберите хотя бы один рабочий день.' };
+
+    if (custom.data.workStartTime === custom.data.workEndTime) {
+      return { error: 'Начало и конец рабочего дня совпадают.' };
+    }
+
+    schedule = {
+      work_start_time: custom.data.workStartTime,
+      work_end_time: custom.data.workEndTime,
+      work_days: workDays,
+      late_grace_minutes: custom.data.lateGraceMinutes,
+    };
+  }
 
   const supabase = await createServerSupabase();
   const { error } = await supabase
     .from('employees')
-    .update({
-      shift_mode: parsed.data.shiftMode || null,
-      work_start_time: parsed.data.workStartTime || null,
-      late_grace_minutes: grace,
-    })
+    .update({ shift_mode: parsed.data.shiftMode || null, ...schedule })
     .eq('id', parsed.data.employeeId)
     .eq('company_id', company.id);
 

@@ -60,6 +60,8 @@ export default async function SettingsPage() {
                   office_label: company.office_label ?? '',
                   timezone: company.timezone,
                   work_start_time: company.work_start_time,
+                  work_end_time: company.work_end_time,
+                  work_days: company.work_days,
                   late_grace_minutes: company.late_grace_minutes,
                   attendance_statuses: company.attendance_statuses,
                 }}

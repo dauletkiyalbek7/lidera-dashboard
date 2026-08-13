@@ -323,6 +323,8 @@ export type TeamMember = {
   /** Личные правила смены: null означает «как в компании». */
   shiftMode: string | null;
   workStartTime: string | null;
+  workEndTime: string | null;
+  workDays: number[] | null;
   lateGraceMinutes: number | null;
   rules: ShiftRules;
   /** Показатели за выбранный период. */
@@ -347,13 +349,15 @@ export async function getTeam(
 
   const { data: companyRow } = await supabase
     .from('companies')
-    .select('shift_mode, work_start_time, late_grace_minutes')
+    .select('shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes')
     .eq('id', companyId)
     .maybeSingle();
 
   const companyRules = companyRow ?? {
     shift_mode: 'shift',
     work_start_time: '09:00',
+    work_end_time: '18:00',
+    work_days: [1, 2, 3, 4, 5],
     late_grace_minutes: 10,
   };
 
@@ -433,6 +437,8 @@ export async function getTeam(
       shiftStartedAt: shiftOf.get(employee.id) ?? null,
       shiftMode: employee.shift_mode,
       workStartTime: employee.work_start_time,
+      workEndTime: employee.work_end_time,
+      workDays: employee.work_days,
       lateGraceMinutes: employee.late_grace_minutes,
       rules: resolveShiftRules(employee, companyRules),
       ...value,

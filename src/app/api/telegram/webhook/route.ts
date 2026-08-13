@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
 
 import { LEAD_STATUS, isLeadStatus, type LeadStatus } from '@/lib/lead-status';
-import { resolveShiftRules, type ShiftRules } from '@/lib/attendance';
+import {
+  formatSchedule,
+  resolveShiftRules,
+  weekdayInZone,
+  type ShiftRules,
+} from '@/lib/attendance';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { runDistribution } from '@/lib/lead-distribution';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
@@ -271,10 +276,18 @@ async function openShift(
   // Пока сотрудник был не на смене, лиды могли копиться в очереди.
   await runDistribution(employee.company_id);
 
+  const rules = company ? resolveShiftRules(employee, company) : null;
+  const dayOff =
+    company !== null &&
+    rules !== null &&
+    !rules.workDays.includes(weekdayInZone(new Date(), company.timezone));
+
   const active = await countActiveLeads(employee.id);
   const lines = [
     late ? '⏰ Смена открыта с опозданием.' : 'Смена открыта. Хорошей работы!',
     place ? `Вы в ${formatDistance(place.distance)} от офиса.` : null,
+    rules ? `График: ${formatSchedule(rules)}.` : null,
+    dayOff ? 'Сегодня по графику выходной — смена всё равно открыта.' : null,
     '',
     `В работе сейчас: <b>${active}</b> ${plural(active, 'лид', 'лида', 'лидов')}.`,
   ];
@@ -317,9 +330,15 @@ async function markAttendance(employee: Employee, status: 'on_shift' | 'late') {
 /**
  * Опоздание — по местному времени компании и по личному графику сотрудника:
  * у удалёнщика рабочий день может начинаться позже, чем в офисе.
+ *
+ * В нерабочий день опоздания нет: человек вышел сверх графика, ставить ему за
+ * это отметку «опоздал» было бы наказанием за помощь.
  */
 function isLate(company: CompanyRow, rules: ShiftRules): boolean {
   const now = new Date();
+
+  if (!rules.workDays.includes(weekdayInZone(now, company.timezone))) return false;
+
   const local = new Intl.DateTimeFormat('ru-RU', {
     timeZone: company.timezone,
     hour: '2-digit',
@@ -349,6 +368,8 @@ type CompanyRow = {
   office_radius_m: number;
   timezone: string;
   work_start_time: string;
+  work_end_time: string;
+  work_days: number[];
   late_grace_minutes: number;
   funnel_type: string;
 };
@@ -358,7 +379,7 @@ async function companyOf(companyId: string): Promise<CompanyRow | null> {
   const { data } = await supabase
     .from('companies')
     .select(
-      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, late_grace_minutes, funnel_type',
+      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -482,6 +503,8 @@ type Employee = {
   role: string;
   shift_mode: string | null;
   work_start_time: string | null;
+  work_end_time: string | null;
+  work_days: number[] | null;
   late_grace_minutes: number | null;
 };
 
@@ -490,7 +513,7 @@ async function findEmployee(telegramUserId: number): Promise<Employee | null> {
   const { data } = await supabase
     .from('employees')
     .select(
-      'id, company_id, full_name, role, shift_mode, work_start_time, late_grace_minutes',
+      'id, company_id, full_name, role, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('telegram_user_id', telegramUserId)
     .eq('status', 'active')

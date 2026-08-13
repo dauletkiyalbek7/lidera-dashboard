@@ -50,6 +50,9 @@ export type CompanyRow = Timestamps & {
   office_label: string | null;
   timezone: string;
   work_start_time: string;
+  work_end_time: string;
+  /** Рабочие дни по ISO: 1 — понедельник, 7 — воскресенье. */
+  work_days: number[];
   late_grace_minutes: number;
   attendance_statuses: string[];
 }
@@ -202,9 +205,11 @@ export type EmployeeRow = Timestamps & {
   status: 'active' | 'fired';
   hired_at: string;
   fired_at: string | null;
-  /** Личные правила смены. NULL — берём из компании. */
+  /** Личные правила смены и графика. NULL — берём из компании. */
   shift_mode: ShiftMode | null;
   work_start_time: string | null;
+  work_end_time: string | null;
+  work_days: number[] | null;
   late_grace_minutes: number | null;
 }
 

@@ -52,7 +52,7 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
   const { data: company } = await supabase
     .from('companies')
     .select(
-      'id, funnel_type, auto_assign, max_open_leads, sla_minutes, shift_mode, work_start_time, late_grace_minutes',
+      'id, funnel_type, auto_assign, max_open_leads, sla_minutes, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -98,6 +98,8 @@ type CompanySettings = {
   sla_minutes: number;
   shift_mode: string;
   work_start_time: string;
+  work_end_time: string;
+  work_days: number[];
   late_grace_minutes: number;
 };
 
@@ -109,7 +111,7 @@ async function eligibleManagers(supabase: Admin, company: CompanySettings) {
   const { data: employees } = await supabase
     .from('employees')
     .select(
-      'id, full_name, telegram_user_id, shift_mode, work_start_time, late_grace_minutes',
+      'id, full_name, telegram_user_id, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('company_id', company.id)
     .eq('role', 'manager')

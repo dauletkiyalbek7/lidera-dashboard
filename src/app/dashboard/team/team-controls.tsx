@@ -13,10 +13,18 @@ import {
 } from '@/app/dashboard/team/actions';
 import { Done, SubmitButton } from '@/app/dashboard/leads/lead-controls';
 import { Field, FormMessage } from '@/components/auth/field';
+import { WorkScheduleEditor } from '@/components/app/work-schedule';
 import { Button } from '@/components/ui/button';
 import { IconPlus } from '@/components/ui/icons';
 import { Modal, Select } from '@/components/ui/modal';
-import { SHIFT_MODE, SHIFT_MODE_ORDER } from '@/lib/attendance';
+import {
+  SHIFT_MODE,
+  SHIFT_MODE_ORDER,
+  formatDuration,
+  formatSchedule,
+  shiftDurationMinutes,
+  type ShiftMode,
+} from '@/lib/attendance';
 import { EMPLOYEE_ROLE, employeeRolesFor } from '@/lib/employee-role';
 import type { FunnelType } from '@/lib/metrics';
 
@@ -142,26 +150,47 @@ export function InviteButton({
 }
 
 /**
- * Личный режим смены и график. Пустые поля означают «как в компании» —
- * так у директора остаётся одно место, где меняется общее правило.
+ * Личный режим смены и график сотрудника.
+ *
+ * Два независимых выбора: как человек отмечается (режим) и когда он работает
+ * (график). Каждый можно оставить «как в компании» — тогда в базе NULL, и
+ * общее правило продолжает доходить до него само.
  */
 export function ScheduleButton({
   employeeId,
   fullName,
   defaults,
-  companySummary,
+  company,
 }: {
   employeeId: string;
   fullName: string;
   defaults: {
     shiftMode: string | null;
     workStartTime: string | null;
+    workEndTime: string | null;
+    workDays: number[] | null;
     lateGraceMinutes: number | null;
   };
-  companySummary: string;
+  company: {
+    mode: ShiftMode;
+    workStartTime: string;
+    workEndTime: string;
+    workDays: number[];
+    lateGraceMinutes: number;
+  };
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(updateEmployeeSchedule, {} as TeamState);
+
+  const [mode, setMode] = useState(defaults.shiftMode ?? '');
+  const [custom, setCustom] = useState(
+    defaults.workStartTime !== null ||
+      defaults.workEndTime !== null ||
+      defaults.workDays !== null ||
+      defaults.lateGraceMinutes !== null,
+  );
+
+  const companyDay = shiftDurationMinutes(company.workStartTime, company.workEndTime);
 
   return (
     <>
@@ -172,48 +201,121 @@ export function ScheduleButton({
       <Modal
         open={open}
         onClose={() => setOpen(false)}
-        title="Режим работы сотрудника"
+        title="Режим работы и график"
         description={fullName}
       >
         {state.success ? (
           <Done message={state.success} onClose={() => setOpen(false)} />
         ) : (
-          <form action={formAction} className="space-y-4 px-5 py-5 sm:px-6">
+          <form action={formAction} className="space-y-5 px-5 py-5 sm:px-6">
             <input type="hidden" name="employeeId" value={employeeId} />
 
-            <Select
-              label="Режим смены"
-              name="shiftMode"
-              defaultValue={defaults.shiftMode ?? ''}
-              options={[
-                { value: '', label: `Как в компании — ${companySummary}` },
-                ...SHIFT_MODE_ORDER.map((mode) => ({
-                  value: mode,
-                  label: SHIFT_MODE[mode].label,
+            <div className="space-y-2">
+              <span className="block text-[13px] font-medium text-ink-soft">
+                Как отмечается
+              </span>
+
+              {[
+                {
+                  value: '',
+                  label: 'Как в компании',
+                  hint: SHIFT_MODE[company.mode].label,
+                },
+                ...SHIFT_MODE_ORDER.map((key) => ({
+                  value: key as string,
+                  label: SHIFT_MODE[key].label,
+                  hint: SHIFT_MODE[key].hint,
                 })),
-              ]}
-              hint="Офисному менеджеру — с геолокацией, удалённому — по кнопке или без смены"
-            />
+              ].map((option) => (
+                <label
+                  key={option.value}
+                  className={`flex cursor-pointer items-start gap-3 rounded-control border p-3 transition-colors ${
+                    mode === option.value
+                      ? 'border-lime/40 bg-lime/[0.06]'
+                      : 'border-line hover:border-line-strong'
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name="shiftMode"
+                    value={option.value}
+                    checked={mode === option.value}
+                    onChange={() => setMode(option.value)}
+                    className="mt-0.5 size-4 accent-lime"
+                  />
+                  <span>
+                    <span className="block text-[14px] font-medium text-ink">
+                      {option.label}
+                    </span>
+                    <span className="mt-0.5 block text-[12.5px] leading-relaxed text-faint">
+                      {option.hint}
+                    </span>
+                  </span>
+                </label>
+              ))}
+            </div>
 
-            <Field
-              label="Начало рабочего дня"
-              name="workStartTime"
-              type="time"
-              defaultValue={defaults.workStartTime?.slice(0, 5) ?? ''}
-              hint="Пусто — как в компании"
-            />
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-[13px] font-medium text-ink-soft">График работы</span>
+                <div className="flex rounded-control border border-line bg-surface-2 p-0.5">
+                  {[
+                    { value: false, label: 'Как в компании' },
+                    { value: true, label: 'Свой' },
+                  ].map((option) => (
+                    <button
+                      key={option.label}
+                      type="button"
+                      onClick={() => setCustom(option.value)}
+                      className={`h-7 rounded-[10px] px-3 text-[12.5px] font-medium transition-colors ${
+                        custom === option.value
+                          ? 'bg-surface text-ink shadow-sm'
+                          : 'text-muted hover:text-ink'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <Field
-              label="Допустимое опоздание, минут"
-              name="lateGraceMinutes"
-              type="number"
-              min={0}
-              max={120}
-              defaultValue={
-                defaults.lateGraceMinutes === null ? '' : String(defaults.lateGraceMinutes)
-              }
-              hint="Пусто — как в компании"
-            />
+              <input type="hidden" name="scheduleMode" value={custom ? 'custom' : 'inherit'} />
+
+              {custom ? (
+                <WorkScheduleEditor
+                  names={{
+                    days: 'workDays',
+                    start: 'workStartTime',
+                    end: 'workEndTime',
+                    grace: 'lateGraceMinutes',
+                  }}
+                  defaults={{
+                    days: defaults.workDays ?? company.workDays,
+                    start: defaults.workStartTime ?? company.workStartTime,
+                    end: defaults.workEndTime ?? company.workEndTime,
+                    grace: defaults.lateGraceMinutes ?? company.lateGraceMinutes,
+                  }}
+                />
+              ) : (
+                <div className="rounded-control border border-line bg-surface-2/40 px-3.5 py-3">
+                  <p className="text-[13.5px] text-ink">
+                    {formatSchedule({
+                      workDays: company.workDays,
+                      workStartTime: company.workStartTime,
+                      workEndTime: company.workEndTime,
+                    })}
+                  </p>
+                  <p className="tabular mt-0.5 text-[12px] text-faint">
+                    {formatDuration(companyDay)} в день · допуск{' '}
+                    {company.lateGraceMinutes} мин
+                  </p>
+                  <p className="mt-2 text-[12px] leading-relaxed text-faint">
+                    Меняется в «Настройках» и применяется ко всем, у кого нет своего
+                    графика.
+                  </p>
+                </div>
+              )}
+            </div>
 
             <FormMessage error={state.error} />
             <SubmitButton label="Сохранить" pendingLabel="Сохраняем…" />

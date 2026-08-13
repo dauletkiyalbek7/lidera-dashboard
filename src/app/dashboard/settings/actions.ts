@@ -7,6 +7,7 @@ import {
   AUTOMATIC_ATTENDANCE_STATUSES,
   SHIFT_MODE_ORDER,
   isAttendanceStatus,
+  parseWorkDays,
 } from '@/lib/attendance';
 import { requireCompanySession } from '@/lib/auth';
 import { isValidPoint } from '@/lib/geo';
@@ -108,7 +109,8 @@ const shiftSchema = z.object({
   office_lng: z.string().trim(),
   office_radius_m: z.coerce.number().int().min(50, 'Минимум 50 метров').max(5000),
   office_label: z.string().trim().max(160).optional(),
-  work_start_time: z.string().regex(/^\d{2}:\d{2}$/, 'Укажите время в формате 09:00'),
+  work_start_time: z.string().regex(/^\d{2}:\d{2}$/, 'Укажите время начала в формате 09:00'),
+  work_end_time: z.string().regex(/^\d{2}:\d{2}$/, 'Укажите время конца в формате 18:00'),
   late_grace_minutes: z.coerce.number().int().min(0).max(120),
   timezone: z.string().trim().max(64),
 });
@@ -136,11 +138,19 @@ export async function updateShiftSettings(
     office_radius_m: formData.get('office_radius_m'),
     office_label: formData.get('office_label'),
     work_start_time: formData.get('work_start_time'),
+    work_end_time: formData.get('work_end_time'),
     late_grace_minutes: formData.get('late_grace_minutes'),
     timezone: formData.get('timezone'),
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const workDays = parseWorkDays(formData.getAll('work_days').map(String));
+  if (!workDays) return { error: 'Выберите хотя бы один рабочий день.' };
+
+  if (parsed.data.work_start_time === parsed.data.work_end_time) {
+    return { error: 'Начало и конец рабочего дня совпадают.' };
+  }
 
   const lat = parsed.data.office_lat ? Number(parsed.data.office_lat) : null;
   const lng = parsed.data.office_lng ? Number(parsed.data.office_lng) : null;
@@ -167,6 +177,8 @@ export async function updateShiftSettings(
       office_radius_m: parsed.data.office_radius_m,
       office_label: parsed.data.office_label || null,
       work_start_time: parsed.data.work_start_time,
+      work_end_time: parsed.data.work_end_time,
+      work_days: workDays,
       late_grace_minutes: parsed.data.late_grace_minutes,
       timezone: parsed.data.timezone,
       attendance_statuses: attendance,

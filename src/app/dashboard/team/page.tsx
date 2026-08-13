@@ -8,7 +8,13 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconTeam } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { SHIFT_MODE, type ShiftMode } from '@/lib/attendance';
+import {
+  SHIFT_MODE,
+  formatDuration,
+  formatSchedule,
+  shiftDurationMinutes,
+  type ShiftMode,
+} from '@/lib/attendance';
 import { requireCompanySession } from '@/lib/auth';
 import { employeeRoleLabel } from '@/lib/employee-role';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/format';
@@ -30,6 +36,7 @@ const COLUMNS = [
   { key: 'telegram', label: 'Telegram' },
   { key: 'shift', label: 'Смена' },
   { key: 'mode', label: 'Режим' },
+  { key: 'schedule', label: 'График' },
   { key: 'hired', label: 'Принят' },
   { key: 'leads', label: 'Лиды', align: 'right' as const },
   { key: 'reached', label: 'Дозвон', align: 'right' as const },
@@ -114,7 +121,7 @@ export default async function TeamPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1360}>
+            <TableShell columns={COLUMNS} minWidth={1520}>
               {team.map((member) => (
                 <tr
                   key={member.id}
@@ -156,9 +163,19 @@ export default async function TeamPage({
                   <Td className="text-ink-soft">
                     {SHIFT_MODE[member.rules.mode].label}
                     <span className="mt-0.5 block text-[11.5px] text-faint">
-                      {member.rules.personal
-                        ? `лично · с ${member.rules.workStartTime.slice(0, 5)}`
-                        : 'как в компании'}
+                      {member.shiftMode ? 'лично' : 'как в компании'}
+                    </span>
+                  </Td>
+                  <Td className="text-ink-soft">
+                    <span className="tabular">{formatSchedule(member.rules)}</span>
+                    <span className="mt-0.5 block text-[11.5px] text-faint">
+                      {formatDuration(
+                        shiftDurationMinutes(
+                          member.rules.workStartTime,
+                          member.rules.workEndTime,
+                        ),
+                      )}
+                      {member.rules.personalSchedule ? ' · свой график' : ' · как в компании'}
                     </span>
                   </Td>
                   <Td className="tabular text-muted">{formatDate(member.hiredAt)}</Td>
@@ -188,9 +205,17 @@ export default async function TeamPage({
                           defaults={{
                             shiftMode: member.shiftMode,
                             workStartTime: member.workStartTime,
+                            workEndTime: member.workEndTime,
+                            workDays: member.workDays,
                             lateGraceMinutes: member.lateGraceMinutes,
                           }}
-                          companySummary={SHIFT_MODE[companyMode].label.toLowerCase()}
+                          company={{
+                            mode: companyMode,
+                            workStartTime: company.work_start_time,
+                            workEndTime: company.work_end_time,
+                            workDays: company.work_days,
+                            lateGraceMinutes: company.late_grace_minutes,
+                          }}
                         />
                       ) : null}
                       {member.status === 'active' ? (

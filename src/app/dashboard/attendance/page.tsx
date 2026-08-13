@@ -11,6 +11,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import {
   ATTENDANCE_STATUS,
   SHIFT_MODE,
+  formatSchedule,
   isAttendanceStatus,
   manualStatusesFor,
   type ShiftMode,
@@ -74,7 +75,11 @@ export default async function AttendancePage({
           <StatTile
             label="Опозданий"
             value={formatNumber(late)}
-            hint={`Начало дня — ${company.work_start_time.slice(0, 5)}, допуск ${company.late_grace_minutes} мин`}
+            hint={`${formatSchedule({
+              workDays: company.work_days,
+              workStartTime: company.work_start_time,
+              workEndTime: company.work_end_time,
+            })}, допуск ${company.late_grace_minutes} мин`}
           />
           <StatTile
             label="Отработано часов"

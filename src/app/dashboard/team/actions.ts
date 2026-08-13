@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireCompanySession } from '@/lib/auth';
+import { runDistribution } from '@/lib/lead-distribution';
 import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER } from '@/lib/employee-role';
 import { createServerSupabase } from '@/lib/supabase/server';
 
@@ -89,6 +90,16 @@ export async function fireEmployee(employeeId: string): Promise<TeamState> {
     .eq('company_id', company.id)
     .eq('assigned_to', parsed.data)
     .in('status', ['new', 'no_answer', 'contacted', 'in_progress', 'thinking']);
+
+  await supabase
+    .from('lead_assignments')
+    .update({ released_at: new Date().toISOString(), reason: 'fired' })
+    .eq('employee_id', parsed.data)
+    .eq('company_id', company.id)
+    .is('released_at', null);
+
+  // Освободившиеся лиды сразу уходят тем, кто на смене.
+  await runDistribution(company.id);
 
   revalidateTeam();
   return { success: 'Сотрудник уволен, его активные лиды освобождены.' };
@@ -212,16 +223,36 @@ export async function assignLead(
     if (!employee) return { error: 'Сотрудник не найден или уже уволен.' };
   }
 
+  const now = new Date().toISOString();
   const { error } = await supabase
     .from('leads')
     .update({
       assigned_to: parsed.data.employeeId || null,
-      assigned_at: parsed.data.employeeId ? new Date().toISOString() : null,
+      assigned_at: parsed.data.employeeId ? now : null,
     })
     .eq('id', parsed.data.leadId)
     .eq('company_id', company.id);
 
   if (error) return { error: 'Не удалось назначить ответственного.' };
+
+  // Журнал: закрываем прежнее назначение и открываем новое. Без него нельзя
+  // ни разобрать спор «мне лид не приходил», ни считать честную очередь.
+  await supabase
+    .from('lead_assignments')
+    .update({ released_at: now, reason: 'manual' })
+    .eq('lead_id', parsed.data.leadId)
+    .eq('company_id', company.id)
+    .is('released_at', null);
+
+  if (parsed.data.employeeId) {
+    await supabase.from('lead_assignments').insert({
+      company_id: company.id,
+      lead_id: parsed.data.leadId,
+      employee_id: parsed.data.employeeId,
+      assigned_at: now,
+      reason: 'manual',
+    });
+  }
 
   revalidateTeam();
   return { success: 'Ответственный назначен.' };

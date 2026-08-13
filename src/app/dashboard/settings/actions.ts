@@ -55,3 +55,43 @@ export async function updateCompany(
   revalidatePath('/dashboard', 'layout');
   return { success: 'Данные компании обновлены.' };
 }
+
+const distributionSchema = z.object({
+  auto_assign: z.boolean(),
+  max_open_leads: z.coerce.number().int().min(1, 'Минимум 1').max(200, 'Максимум 200'),
+  sla_minutes: z.coerce.number().int().min(1, 'Минимум 1').max(1440, 'Максимум 1440'),
+});
+
+/**
+ * Настройки авто-раздачи. Три числа, от которых зависит поведение очереди,
+ * должны быть в руках директора: в разных нишах и «быстро» значит разное.
+ */
+export async function updateDistribution(
+  _prevState: SettingsState,
+  formData: FormData,
+): Promise<SettingsState> {
+  const { company, profile } = await requireCompanySession();
+
+  if (profile.role !== 'DIRECTOR') {
+    return { error: 'Менять правила раздачи может только директор.' };
+  }
+
+  const parsed = distributionSchema.safeParse({
+    auto_assign: formData.get('auto_assign') === 'on',
+    max_open_leads: formData.get('max_open_leads'),
+    sla_minutes: formData.get('sla_minutes'),
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase
+    .from('companies')
+    .update(parsed.data)
+    .eq('id', company.id);
+
+  if (error) return { error: 'Не удалось сохранить настройки раздачи.' };
+
+  revalidatePath('/dashboard', 'layout');
+  return { success: 'Правила раздачи сохранены.' };
+}

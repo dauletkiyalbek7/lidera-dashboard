@@ -37,6 +37,22 @@ export type CompanyRow = Timestamps & {
   status: CompanyStatus;
   funnel_type: FunnelType;
   is_demo: boolean;
+  /** Настройки авто-раздачи лидов. */
+  auto_assign: boolean;
+  max_open_leads: number;
+  sla_minutes: number;
+}
+
+/** Журнал: кому и почему достался лид. */
+export type LeadAssignmentRow = {
+  id: string;
+  company_id: string;
+  lead_id: string;
+  employee_id: string;
+  assigned_at: string;
+  released_at: string | null;
+  reason: 'auto' | 'manual' | 'sla' | 'fired' | 'shift_end';
+  created_at: string;
 }
 
 export type ProfileRow = Timestamps & {
@@ -269,6 +285,10 @@ export type Database = {
         'company_id' | 'employee_id' | 'token' | 'expires_at'
       >;
       shifts: TableDef<ShiftRow, 'company_id' | 'employee_id'>;
+      lead_assignments: TableDef<
+        LeadAssignmentRow,
+        'company_id' | 'lead_id' | 'employee_id'
+      >;
       trials: TableDef<TrialRow, 'company_id'>;
       sales: TableDef<SaleRow, 'company_id'>;
       receipts: TableDef<ReceiptRow, 'company_id'>;

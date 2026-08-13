@@ -316,6 +316,9 @@ export type TeamMember = {
   firedAt: string | null;
   telegramUsername: string | null;
   telegramLinked: boolean;
+  /** Открыта ли смена прямо сейчас — только такие получают лиды. */
+  onShift: boolean;
+  shiftStartedAt: string | null;
   /** Показатели за выбранный период. */
   leads: number;
   reached: number;
@@ -336,7 +339,8 @@ export async function getTeam(
 ): Promise<TeamMember[]> {
   const supabase = await createServerSupabase();
 
-  const [{ data: employees }, { data: leads }, { data: sales }] = await Promise.all([
+  const [{ data: employees }, { data: leads }, { data: sales }, { data: openShifts }] =
+    await Promise.all([
     supabase
       .from('employees')
       .select('*')
@@ -357,7 +361,16 @@ export async function getTeam(
       .eq('status', 'paid')
       .gte('sale_date', from)
       .lte('sale_date', to),
+    supabase
+      .from('shifts')
+      .select('employee_id, started_at')
+      .eq('company_id', companyId)
+      .is('ended_at', null),
   ]);
+
+  const shiftOf = new Map(
+    (openShifts ?? []).map((shift) => [shift.employee_id, shift.started_at]),
+  );
 
   // Продажа привязана к лиду, а лид — к сотруднику: выручка идёт тому,
   // кто вёл клиента, даже если продажу занесли позже.
@@ -398,6 +411,8 @@ export async function getTeam(
       firedAt: employee.fired_at,
       telegramUsername: employee.telegram_username,
       telegramLinked: employee.telegram_user_id !== null,
+      onShift: shiftOf.has(employee.id),
+      shiftStartedAt: shiftOf.get(employee.id) ?? null,
       ...value,
     };
   });

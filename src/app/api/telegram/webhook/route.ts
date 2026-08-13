@@ -1,13 +1,14 @@
 import { NextResponse } from 'next/server';
 
-import { LEAD_STATUS, isLeadStatus, leadStatusesFor, type LeadStatus } from '@/lib/lead-status';
+import { LEAD_STATUS, isLeadStatus, type LeadStatus } from '@/lib/lead-status';
+import { runDistribution } from '@/lib/lead-distribution';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
+import { leadCard, statusButtons, escapeHtml } from '@/lib/telegram-lead-card';
 import {
   answerCallback,
   isBotConfigured,
   sendMessage,
   webhookSecret,
-  type InlineButton,
 } from '@/lib/telegram';
 
 /**
@@ -167,6 +168,9 @@ async function openShift(chatId: number, employee: Employee) {
 
   if (error) return sendMessage(chatId, 'Не удалось открыть смену, попробуйте ещё раз.');
 
+  // Пока сотрудник был не на смене, лиды могли копиться в очереди.
+  await runDistribution(employee.company_id);
+
   const active = await countActiveLeads(employee.id);
   return sendMessage(
     chatId,
@@ -241,36 +245,6 @@ async function listLeads(chatId: number, employee: Employee) {
   }
 }
 
-function leadCard(lead: {
-  name: string;
-  phone: string | null;
-  source: string | null;
-  platform: string | null;
-  status: string;
-}): string {
-  const rows = [
-    `<b>${escapeHtml(lead.name || 'Без имени')}</b>`,
-    lead.phone ? `📞 ${escapeHtml(lead.phone)}` : null,
-    lead.platform || lead.source
-      ? `Источник: ${escapeHtml(lead.platform ?? lead.source ?? '')}`
-      : null,
-    `Статус: ${LEAD_STATUS[lead.status as LeadStatus]?.label ?? lead.status}`,
-  ];
-  return rows.filter(Boolean).join('\n');
-}
-
-/** Кнопки статусов: «новый» не предлагаем — назад по воронке лид не двигают. */
-function statusButtons(leadId: string, funnelType: 'trial' | 'direct'): InlineButton[][] {
-  const statuses = leadStatusesFor(funnelType).filter((status) => status !== 'new');
-  const buttons = statuses.map((status) => ({
-    text: LEAD_STATUS[status].label,
-    callback_data: `s:${leadId}:${status}`,
-  }));
-
-  const rows: InlineButton[][] = [];
-  for (let i = 0; i < buttons.length; i += 2) rows.push(buttons.slice(i, i + 2));
-  return rows;
-}
 
 async function handleCallback(query: TelegramCallbackQuery) {
   const userId = query.from?.id;
@@ -349,9 +323,6 @@ async function countActiveLeads(employeeId: string): Promise<number> {
   return count ?? 0;
 }
 
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-}
 
 function plural(count: number, one: string, few: string, many: string): string {
   const mod10 = count % 10;

@@ -3,7 +3,7 @@ import type { Metadata } from 'next';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { Td, TableShell } from '@/components/app/table';
-import { Badge } from '@/components/ui/badge';
+import { Badge, StatusDot } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconTeam } from '@/components/ui/icons';
@@ -22,6 +22,7 @@ const COLUMNS = [
   { key: 'name', label: 'Сотрудник' },
   { key: 'role', label: 'Роль' },
   { key: 'telegram', label: 'Telegram' },
+  { key: 'shift', label: 'Смена' },
   { key: 'hired', label: 'Принят' },
   { key: 'leads', label: 'Лиды', align: 'right' as const },
   { key: 'reached', label: 'Дозвон', align: 'right' as const },
@@ -74,6 +75,11 @@ export default async function TeamPage({
             hint="Привязка появится вместе с ботом"
           />
           <StatTile
+            label="Сейчас на смене"
+            value={`${formatNumber(active.filter((member) => member.onShift).length)} из ${formatNumber(active.length)}`}
+            hint="Лиды получают только те, кто открыл смену"
+          />
+          <StatTile
             label="Лидов в работе у команды"
             value={formatNumber(team.reduce((total, member) => total + member.leads, 0))}
             hint={`За ${range.label}`}
@@ -100,7 +106,7 @@ export default async function TeamPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1080}>
+            <TableShell columns={COLUMNS} minWidth={1220}>
               {team.map((member) => (
                 <tr
                   key={member.id}
@@ -127,6 +133,16 @@ export default async function TeamPage({
                       `@${member.telegramUsername}`
                     ) : (
                       <span className="text-faint">не подключён</span>
+                    )}
+                  </Td>
+                  <Td>
+                    {member.onShift ? (
+                      <Badge tone="positive">
+                        <StatusDot tone="positive" />
+                        На смене
+                      </Badge>
+                    ) : (
+                      <span className="text-[12.5px] text-faint">не на смене</span>
                     )}
                   </Td>
                   <Td className="tabular text-muted">{formatDate(member.hiredAt)}</Td>

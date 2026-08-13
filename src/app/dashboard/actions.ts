@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireCompanySession } from '@/lib/auth';
+import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
 import { createServerSupabase } from '@/lib/supabase/server';
 
@@ -71,6 +72,10 @@ export async function createLead(
   });
 
   if (error) return { error: 'Не удалось сохранить лид.' };
+
+  // Лид, заведённый руками, попадает в ту же очередь, что и рекламный:
+  // если кто-то на смене, он уйдёт менеджеру сразу.
+  await runDistribution(company.id);
 
   revalidateCabinet();
   return { success: 'Лид добавлен.' };

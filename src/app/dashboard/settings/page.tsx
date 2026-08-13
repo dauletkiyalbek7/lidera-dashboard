@@ -9,6 +9,7 @@ import { formatDate } from '@/lib/format';
 import { COMPANY_STATUS, PLAN_LABELS, ROLE_LABELS, statusOf } from '@/lib/labels';
 import { getSubscription } from '@/lib/queries';
 import { CompanyForm } from './company-form';
+import { DistributionForm } from './distribution-form';
 
 export const metadata: Metadata = { title: 'Настройки' };
 
@@ -44,6 +45,21 @@ export default async function SettingsPage() {
           </Card>
 
           <div className="space-y-4">
+            <Card>
+              <CardHeader
+                title="Раздача лидов"
+                subtitle="Кому и как быстро уходят новые заявки"
+              />
+              <DistributionForm
+                defaults={{
+                  auto_assign: company.auto_assign,
+                  max_open_leads: company.max_open_leads,
+                  sla_minutes: company.sla_minutes,
+                }}
+                disabled={profile.role !== 'DIRECTOR'}
+              />
+            </Card>
+
             <Card>
               <CardHeader title="Учётная запись" />
               <dl className="divide-y divide-line">

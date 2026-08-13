@@ -98,14 +98,24 @@ export function ShiftForm({
           ))}
         </div>
 
-        {mode === 'geo' ? (
-          <div className="space-y-4 rounded-control border border-line bg-surface-2/40 p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className="text-[13px] font-medium text-ink-soft">Офис</span>
-              <Button type="button" variant="secondary" size="sm" onClick={locate}>
-                {locating ? 'Определяем…' : 'Взять моё местоположение'}
-              </Button>
-            </div>
+        {/*
+          Блок офиса виден всегда, а не только в режиме geo: иначе координаты
+          негде записать заранее, и непонятно, куда они вообще вводятся.
+        */}
+        <div className="space-y-4 rounded-control border border-line bg-surface-2/40 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-[13px] font-medium text-ink-soft">Адрес офиса</span>
+            <Button type="button" variant="secondary" size="sm" onClick={locate}>
+              {locating ? 'Определяем…' : 'Взять моё местоположение'}
+            </Button>
+          </div>
+
+          {mode !== 'geo' ? (
+            <p className="rounded-control border border-line bg-surface px-3 py-2 text-[12px] leading-relaxed text-faint">
+              Координаты нужны только в режиме «По кнопке и геолокации». Заполнить их
+              можно заранее — сохранятся и будут ждать переключения режима.
+            </p>
+          ) : null}
 
             <Field
               label="Название точки"
@@ -142,20 +152,24 @@ export function ShiftForm({
               hint="Меньше 50 метров ставить нельзя: точность GPS в городе хуже, и сотрудник в офисе получал бы отказ"
             />
 
-            {geoError ? <p className="text-[12.5px] text-negative">{geoError}</p> : null}
-            <p className="text-[12px] leading-relaxed text-faint">
-              Координаты можно взять и в Google Maps: долгое нажатие на точку → числа
-              вверху экрана.
-            </p>
-          </div>
-        ) : (
-          <>
-            <input type="hidden" name="office_lat" value={lat} />
-            <input type="hidden" name="office_lng" value={lng} />
-            <input type="hidden" name="office_radius_m" value={defaults.office_radius_m} />
-            <input type="hidden" name="office_label" value={defaults.office_label} />
-          </>
-        )}
+          {geoError ? <p className="text-[12.5px] text-negative">{geoError}</p> : null}
+
+          {lat && lng ? (
+            <a
+              href={`https://www.google.com/maps?q=${lat},${lng}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-[12.5px] text-lime underline-offset-2 hover:underline"
+            >
+              Проверить точку на карте →
+            </a>
+          ) : null}
+
+          <p className="text-[12px] leading-relaxed text-faint">
+            Координаты можно взять и в Google Maps: долгое нажатие на точку → числа
+            вверху экрана. Первое число — широта, второе — долгота.
+          </p>
+        </div>
 
         <div className="grid gap-4 sm:grid-cols-2">
           <Field

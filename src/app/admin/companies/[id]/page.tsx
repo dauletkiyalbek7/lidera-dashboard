@@ -4,12 +4,14 @@ import { notFound } from 'next/navigation';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
 import { getCompany } from '@/lib/admin-queries';
 import { requireSuperAdmin } from '@/lib/auth';
 import { formatDate, formatNumber } from '@/lib/format';
 import { COMPANY_STATUS, PLAN_LABELS, ROLE_LABELS, statusOf } from '@/lib/labels';
+import { observeCompany } from '../../actions';
 import {
   CompanyEditForm,
   CompanyStatusToggle,
@@ -40,8 +42,13 @@ export default async function CompanyDetailPage({
           company.is_demo ? ' · демонстрационная компания' : ''
         }`}
         action={
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center justify-end gap-3">
             <Badge tone={status.tone}>{status.label}</Badge>
+            <form action={observeCompany.bind(null, company.id)}>
+              <Button type="submit" variant="secondary" size="field">
+                Открыть кабинет
+              </Button>
+            </form>
             <Link
               href="/admin"
               className="text-[13.5px] text-muted transition-colors hover:text-ink"

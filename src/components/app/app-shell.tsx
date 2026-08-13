@@ -19,6 +19,8 @@ type AppShellProps = {
   workspaceHint: string;
   userName: string;
   userEmail: string;
+  /** Полоса над содержимым: например, предупреждение о режиме наблюдения. */
+  banner?: ReactNode;
 };
 
 export function AppShell({
@@ -29,6 +31,7 @@ export function AppShell({
   workspaceHint,
   userName,
   userEmail,
+  banner,
 }: AppShellProps) {
   const groups = navFor(nav, funnelType);
   // Внутри кабинета логотип ведёт на главную кабинета: попадать с рабочего
@@ -153,7 +156,10 @@ export function AppShell({
         </div>
       ) : null}
 
-      <div className="min-w-0">{children}</div>
+      <div className="min-w-0">
+        {banner}
+        {children}
+      </div>
     </div>
   );
 }

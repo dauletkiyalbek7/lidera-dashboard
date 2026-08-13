@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
-import { requireCompanySession } from '@/lib/auth';
+import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
 import { createServerSupabase } from '@/lib/supabase/server';
@@ -44,7 +44,9 @@ export async function createLead(
   _prevState: CrmState,
   formData: FormData,
 ): Promise<CrmState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = leadSchema.safeParse({
     name: formData.get('name'),
@@ -85,7 +87,9 @@ export async function updateLeadStatus(
   leadId: string,
   status: string,
 ): Promise<CrmState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = z
     .object({ leadId: z.string().uuid(), status: z.enum(LEAD_STATUSES) })
@@ -125,7 +129,9 @@ export async function registerSale(
   _prevState: CrmState,
   formData: FormData,
 ): Promise<CrmState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = saleSchema.safeParse({
     leadId: formData.get('leadId') ?? '',
@@ -164,7 +170,9 @@ export async function registerSale(
 }
 
 export async function updateSaleStatus(saleId: string, status: string): Promise<CrmState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = z
     .object({ saleId: z.string().uuid(), status: z.enum(SALE_STATUSES) })
@@ -195,7 +203,9 @@ export async function registerTrial(
   _prevState: CrmState,
   formData: FormData,
 ): Promise<CrmState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (company.funnel_type !== 'trial') {
     return { error: 'В вашей компании продажа идёт без пробных занятий.' };
@@ -235,7 +245,9 @@ export async function updateTrialStatus(
   trialId: string,
   status: string,
 ): Promise<CrmState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = z
     .object({ trialId: z.string().uuid(), status: z.enum(TRIAL_STATUSES) })

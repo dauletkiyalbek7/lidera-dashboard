@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { ATTENDANCE_STATUS_ORDER } from '@/lib/attendance';
-import { requireCompanySession } from '@/lib/auth';
+import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 export type AttendanceState = { error?: string; success?: string };
@@ -26,7 +26,9 @@ export async function markAttendance(
   _prevState: AttendanceState,
   formData: FormData,
 ): Promise<AttendanceState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = markSchema.safeParse({
     employeeId: formData.get('employeeId'),

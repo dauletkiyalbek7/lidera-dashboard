@@ -9,7 +9,7 @@ import {
   isAttendanceStatus,
   parseWorkDays,
 } from '@/lib/attendance';
-import { requireCompanySession } from '@/lib/auth';
+import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { isValidPoint } from '@/lib/geo';
 import { createServerSupabase } from '@/lib/supabase/server';
 
@@ -28,7 +28,9 @@ export async function updateCompany(
   _prevState: SettingsState,
   formData: FormData,
 ): Promise<SettingsState> {
-  const { company, profile } = await requireCompanySession();
+  const { company, profile, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (profile.role !== 'DIRECTOR') {
     return { error: 'Изменять данные компании может только директор.' };
@@ -80,7 +82,9 @@ export async function updateDistribution(
   _prevState: SettingsState,
   formData: FormData,
 ): Promise<SettingsState> {
-  const { company, profile } = await requireCompanySession();
+  const { company, profile, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (profile.role !== 'DIRECTOR') {
     return { error: 'Менять правила раздачи может только директор.' };
@@ -128,7 +132,9 @@ export async function updateShiftSettings(
   _prevState: SettingsState,
   formData: FormData,
 ): Promise<SettingsState> {
-  const { company, profile } = await requireCompanySession();
+  const { company, profile, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (profile.role !== 'DIRECTOR') {
     return { error: 'Менять режим смены может только директор.' };

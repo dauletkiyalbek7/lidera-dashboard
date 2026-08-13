@@ -4,7 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { SHIFT_MODE_ORDER, parseWorkDays } from '@/lib/attendance';
-import { requireCompanySession } from '@/lib/auth';
+import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { runDistribution } from '@/lib/lead-distribution';
 import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER } from '@/lib/employee-role';
 import { createServerSupabase } from '@/lib/supabase/server';
@@ -33,7 +33,9 @@ export async function createEmployee(
   _prevState: TeamState,
   formData: FormData,
 ): Promise<TeamState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = employeeSchema.safeParse({
     fullName: formData.get('fullName'),
@@ -71,7 +73,9 @@ export async function createEmployee(
  * иначе они зависнут на том, кто уже не работает.
  */
 export async function fireEmployee(employeeId: string): Promise<TeamState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = z.string().uuid().safeParse(employeeId);
   if (!parsed.success) return { error: 'Некорректный сотрудник.' };
@@ -108,7 +112,9 @@ export async function fireEmployee(employeeId: string): Promise<TeamState> {
 
 /** Возврат сотрудника — бывает и такое, повторно заводить карточку не нужно. */
 export async function rehireEmployee(employeeId: string): Promise<TeamState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = z.string().uuid().safeParse(employeeId);
   if (!parsed.success) return { error: 'Некорректный сотрудник.' };
@@ -139,7 +145,9 @@ export type InviteState = { error?: string; link?: string; expiresAt?: string };
  * старая ссылка из переписки останется рабочей.
  */
 export async function createInvite(employeeId: string): Promise<InviteState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = z.string().uuid().safeParse(employeeId);
   if (!parsed.success) return { error: 'Некорректный сотрудник.' };
@@ -197,7 +205,9 @@ export async function assignLead(
   leadId: string,
   employeeId: string,
 ): Promise<TeamState> {
-  const { company } = await requireCompanySession();
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = z
     .object({
@@ -288,7 +298,9 @@ export async function updateEmployeeSchedule(
   _prevState: TeamState,
   formData: FormData,
 ): Promise<TeamState> {
-  const { company, profile } = await requireCompanySession();
+  const { company, profile, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (profile.role !== 'DIRECTOR') {
     return { error: 'Менять график сотрудников может только директор.' };

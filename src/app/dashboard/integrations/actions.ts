@@ -2,7 +2,7 @@
 
 import { revalidatePath } from 'next/cache';
 
-import { requireCompanySession } from '@/lib/auth';
+import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { isMetaConfigured, syncMetaAccount } from '@/lib/meta-sync';
 import { createServerSupabase } from '@/lib/supabase/server';
 
@@ -16,7 +16,9 @@ export type SyncState = { error?: string; success?: string };
  * ошибки, если токен отозвали или срок доступа истёк.
  */
 export async function syncMetaNow(): Promise<SyncState> {
-  const { company, profile } = await requireCompanySession();
+  const { company, profile, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (profile.role !== 'DIRECTOR') {
     return { error: 'Запускать синхронизацию может только директор.' };

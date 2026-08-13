@@ -1,12 +1,17 @@
 'use server';
 
 import { revalidatePath } from 'next/cache';
+import { cookies } from 'next/headers';
+import { redirect } from 'next/navigation';
 import { z } from 'zod';
 
-import { requireSuperAdmin } from '@/lib/auth';
+import { requireSuperAdmin, VIEW_COMPANY_COOKIE } from '@/lib/auth';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 
 export type AdminState = { error?: string; success?: string };
+
+/** Наблюдение живёт рабочий день: забытая вкладка не остаётся открытой навсегда. */
+const OBSERVE_SESSION_SECONDS = 8 * 60 * 60;
 
 const MISSING_KEY_ERROR =
   'Не задан SUPABASE_SERVICE_ROLE_KEY. Добавьте ключ в переменные окружения — ' +
@@ -285,6 +290,39 @@ export async function createDirector(
 
   revalidatePath(`/admin/companies/${parsed.data.companyId}`);
   return { success: 'Директор добавлен и может входить в кабинет.' };
+}
+
+/**
+ * Открыть кабинет компании для наблюдения.
+ *
+ * Это не вход под чужой учётной записью: сессия остаётся администраторской,
+ * данные читаются под RLS, а любые изменения в кабинете заблокированы. Факт
+ * просмотра пишем в журнал — владелец компании вправе его увидеть.
+ */
+export async function observeCompany(companyId: string): Promise<void> {
+  const admin = await requireSuperAdmin();
+
+  const parsed = z.string().uuid().safeParse(companyId);
+  if (!parsed.success) redirect('/admin');
+
+  await logAction(admin.userId, parsed.data, 'company.observed', 'company', parsed.data, {});
+
+  (await cookies()).set(VIEW_COMPANY_COOKIE, parsed.data, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: OBSERVE_SESSION_SECONDS,
+  });
+
+  redirect('/dashboard');
+}
+
+/** Выйти из режима наблюдения и вернуться в админ-панель. */
+export async function stopObserving(): Promise<void> {
+  await requireSuperAdmin();
+  (await cookies()).delete(VIEW_COMPANY_COOKIE);
+  redirect('/admin');
 }
 
 async function logAction(

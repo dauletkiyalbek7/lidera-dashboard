@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { LEAD_STATUS, isLeadStatus, type LeadStatus } from '@/lib/lead-status';
+import { distanceMeters, formatDistance } from '@/lib/geo';
 import { runDistribution } from '@/lib/lead-distribution';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import { leadCard, statusButtons, escapeHtml } from '@/lib/telegram-lead-card';
@@ -9,6 +10,7 @@ import {
   isBotConfigured,
   sendMessage,
   webhookSecret,
+  type KeyboardButton,
 } from '@/lib/telegram';
 
 /**
@@ -27,6 +29,11 @@ export const dynamic = 'force-dynamic';
 
 const KEYBOARD_OFF = [['🟢 Я на смене'], ['📋 Мои лиды']];
 const KEYBOARD_ON = [['🔴 Я ухожу'], ['📋 Мои лиды']];
+/** Геолокацию Telegram отдаёт только по нажатию этой кнопки — не автоматически. */
+const KEYBOARD_GEO: KeyboardButton[][] = [
+  [{ text: '📍 Отправить геолокацию', request_location: true }],
+  ['↩️ Отмена'],
+];
 
 export async function POST(request: Request) {
   if (!isBotConfigured() || !isAdminConfigured()) {
@@ -67,6 +74,12 @@ async function handleMessage(message: TelegramMessage) {
   const text = (message.text ?? '').trim();
   if (!userId) return;
 
+  if (message.location) {
+    const employee = await findEmployee(userId);
+    if (!employee) return;
+    return openShiftWithLocation(chatId, employee, message.location);
+  }
+
   if (text.startsWith('/start')) {
     const token = text.slice('/start'.length).trim();
     if (token) return bindEmployee(chatId, userId, message.from?.username ?? null, token);
@@ -80,7 +93,10 @@ async function handleMessage(message: TelegramMessage) {
     );
   }
 
-  if (text.includes('на смене')) return openShift(chatId, employee);
+  if (text.includes('Отмена')) {
+    return sendMessage(chatId, 'Хорошо, смену не открываем.', { keyboard: KEYBOARD_OFF });
+  }
+  if (text.includes('на смене')) return startShiftFlow(chatId, employee);
   if (text.includes('ухожу')) return closeShift(chatId, employee);
   if (text.includes('Мои лиды')) return listLeads(chatId, employee);
 
@@ -153,30 +169,189 @@ async function bindEmployee(
 // Смены
 // -----------------------------------------------------------------------------
 
-async function openShift(chatId: number, employee: Employee) {
-  const supabase = createAdminSupabase();
+/**
+ * Открытие смены. В режиме geo сначала просим геолокацию: Telegram отдаёт её
+ * только по нажатию кнопки, тихо определить место сотрудника нельзя — и это
+ * правильно, человек должен видеть, что делится координатами.
+ */
+async function startShiftFlow(chatId: number, employee: Employee) {
+  const company = await companyOf(employee.company_id);
+
+  if (company?.shift_mode === 'always') {
+    return sendMessage(
+      chatId,
+      'В вашей компании смену открывать не нужно — лиды приходят всегда.',
+      { keyboard: [['📋 Мои лиды']] },
+    );
+  }
 
   if (await openShiftOf(employee.id)) {
     return sendMessage(chatId, 'Смена уже открыта.', { keyboard: KEYBOARD_ON });
   }
 
+  const needsLocation =
+    company?.shift_mode === 'geo' &&
+    company.office_lat !== null &&
+    company.office_lng !== null;
+
+  if (needsLocation) {
+    return sendMessage(
+      chatId,
+      'Чтобы открыть смену, отправьте геолокацию — проверим, что вы на месте.',
+      { keyboard: KEYBOARD_GEO },
+    );
+  }
+
+  return openShift(chatId, employee, null);
+}
+
+/** Пришли координаты: считаем расстояние до офиса и решаем. */
+async function openShiftWithLocation(
+  chatId: number,
+  employee: Employee,
+  location: { latitude: number; longitude: number },
+) {
+  const company = await companyOf(employee.company_id);
+
+  if (!company || company.office_lat === null || company.office_lng === null) {
+    return openShift(chatId, employee, null);
+  }
+
+  const distance = distanceMeters(
+    { lat: location.latitude, lng: location.longitude },
+    { lat: Number(company.office_lat), lng: Number(company.office_lng) },
+  );
+
+  if (distance > company.office_radius_m) {
+    return sendMessage(
+      chatId,
+      `Вы <b>${formatDistance(distance)}</b> от офиса — это дальше допустимых ${formatDistance(company.office_radius_m)}.\n\nОткрыть смену можно на месте. Если работаете удалённо, попросите директора изменить режим смены.`,
+      { keyboard: KEYBOARD_OFF },
+    );
+  }
+
+  return openShift(chatId, employee, {
+    lat: location.latitude,
+    lng: location.longitude,
+    distance,
+  });
+}
+
+async function openShift(
+  chatId: number,
+  employee: Employee,
+  place: { lat: number; lng: number; distance: number } | null,
+) {
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+  const late = company ? isLate(company) : false;
+
   const { error } = await supabase.from('shifts').insert({
     company_id: employee.company_id,
     employee_id: employee.id,
     source: 'telegram',
+    start_lat: place?.lat ?? null,
+    start_lng: place?.lng ?? null,
+    start_distance_m: place?.distance ?? null,
+    late,
   });
 
   if (error) return sendMessage(chatId, 'Не удалось открыть смену, попробуйте ещё раз.');
+
+  await markAttendance(employee, late ? 'late' : 'on_shift');
 
   // Пока сотрудник был не на смене, лиды могли копиться в очереди.
   await runDistribution(employee.company_id);
 
   const active = await countActiveLeads(employee.id);
-  return sendMessage(
-    chatId,
-    `Смена открыта. Хорошей работы!\n\nВ работе сейчас: <b>${active}</b> ${plural(active, 'лид', 'лида', 'лидов')}.`,
-    { keyboard: KEYBOARD_ON },
-  );
+  const lines = [
+    late ? '⏰ Смена открыта с опозданием.' : 'Смена открыта. Хорошей работы!',
+    place ? `Вы в ${formatDistance(place.distance)} от офиса.` : null,
+    '',
+    `В работе сейчас: <b>${active}</b> ${plural(active, 'лид', 'лида', 'лидов')}.`,
+  ];
+
+  return sendMessage(chatId, lines.filter((line) => line !== null).join('\n'), {
+    keyboard: KEYBOARD_ON,
+  });
+}
+
+/** Отметка в табеле. Ставится автоматически и не затирает ручную. */
+async function markAttendance(employee: Employee, status: 'on_shift' | 'late') {
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+  const today = localDate(company?.timezone ?? 'Asia/Almaty');
+
+  const { data: existing } = await supabase
+    .from('attendance')
+    .select('id, source')
+    .eq('employee_id', employee.id)
+    .eq('date', today)
+    .maybeSingle();
+
+  // Больничный или отпуск, проставленный директором, важнее автоматической отметки.
+  if (existing && existing.source === 'manual') return;
+
+  if (existing) {
+    await supabase.from('attendance').update({ status }).eq('id', existing.id);
+    return;
+  }
+
+  await supabase.from('attendance').insert({
+    company_id: employee.company_id,
+    employee_id: employee.id,
+    date: today,
+    status,
+    source: 'auto',
+  });
+}
+
+/** Опоздание считается по местному времени компании, а не по времени сервера. */
+function isLate(company: CompanyRow): boolean {
+  const now = new Date();
+  const local = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: company.timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(now);
+
+  const [hours, minutes] = local.split(':').map(Number);
+  const [startHours, startMinutes] = company.work_start_time.split(':').map(Number);
+
+  return hours * 60 + minutes > startHours * 60 + startMinutes + company.late_grace_minutes;
+}
+
+function localDate(timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+type CompanyRow = {
+  shift_mode: string;
+  office_lat: number | null;
+  office_lng: number | null;
+  office_radius_m: number;
+  timezone: string;
+  work_start_time: string;
+  late_grace_minutes: number;
+  funnel_type: string;
+};
+
+async function companyOf(companyId: string): Promise<CompanyRow | null> {
+  const supabase = createAdminSupabase();
+  const { data } = await supabase
+    .from('companies')
+    .select(
+      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, late_grace_minutes, funnel_type',
+    )
+    .eq('id', companyId)
+    .maybeSingle();
+  return data ?? null;
 }
 
 async function closeShift(chatId: number, employee: Employee) {
@@ -341,6 +516,7 @@ type TelegramMessage = {
   chat: { id: number };
   from?: { id: number; username?: string };
   text?: string;
+  location?: { latitude: number; longitude: number };
 };
 
 type TelegramCallbackQuery = {

@@ -12,6 +12,7 @@ import {
   IconReceipts,
   IconSales,
   IconSettings,
+  IconAttendance,
   IconTeam,
   IconTrials,
 } from '@/components/ui/icons';
@@ -53,6 +54,7 @@ const COMPANY_NAV: NavGroup[] = [
       { href: '/dashboard/trials', label: 'Пробные', icon: IconTrials, onlyFunnel: 'trial' },
       { href: '/dashboard/sales', label: 'Продажи', icon: IconSales },
       { href: '/dashboard/team', label: 'Команда', icon: IconTeam },
+      { href: '/dashboard/attendance', label: 'Посещение', icon: IconAttendance },
     ],
   },
   {

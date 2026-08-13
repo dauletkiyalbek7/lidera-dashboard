@@ -1,3 +1,5 @@
+import { createHash } from 'node:crypto';
+
 import { NextResponse } from 'next/server';
 
 import { runDistributionForAll } from '@/lib/lead-distribution';
@@ -9,21 +11,25 @@ import { runDistributionForAll } from '@/lib/lead-distribution';
  * на бесплатном тарифе он срабатывает раз в сутки, а возврат лида по SLA
  * должен происходить через минуты, иначе правило бессмысленно.
  *
- * Адрес публичный, поэтому доступ закрыт секретом в заголовке. Без него
- * посторонний мог бы гонять раздачу и перекидывать чужие лиды.
+ * Адрес публичный, поэтому доступ закрыт общим секретом. Отдельной переменной
+ * для него нет намеренно: ключ — это sha256 от сервисного ключа Supabase,
+ * который и так есть у обеих сторон. В базе лежит только хеш, сам ключ по сети
+ * не ходит, и настраивать в хостинге ничего не нужно.
  */
 
 export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
-  const secret = process.env.CRON_SECRET;
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-  if (!secret) {
-    console.error('cron/distribute: не задан CRON_SECRET');
+  if (!serviceKey) {
+    console.error('cron/distribute: не задан SUPABASE_SERVICE_ROLE_KEY');
     return NextResponse.json({ error: 'not configured' }, { status: 503 });
   }
 
-  if (request.headers.get('x-cron-secret') !== secret) {
+  const expected = createHash('sha256').update(serviceKey).digest('hex');
+
+  if (request.headers.get('x-cron-key') !== expected) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 

@@ -563,3 +563,85 @@ export async function getSubscription(companyId: string) {
 function sum<T>(rows: T[], pick: (row: T) => number): number {
   return rows.reduce((total, row) => total + (pick(row) || 0), 0);
 }
+
+export type AttendanceRecord = {
+  employeeId: string;
+  fullName: string;
+  role: string;
+  /** Отметки по дням: дата → статус. */
+  days: Record<string, string>;
+  shiftDays: number;
+  lateDays: number;
+  minutes: number;
+  onShiftNow: boolean;
+};
+
+/**
+ * Табель за период: смены и ручные отметки в одной таблице.
+ *
+ * Часы считаются по закрытым сменам; открытая смена идёт до текущего момента,
+ * иначе сегодняшний день выглядел бы пустым до конца рабочего дня.
+ */
+export async function getAttendance(
+  companyId: string,
+  from: string,
+  to: string,
+): Promise<AttendanceRecord[]> {
+  const supabase = await createServerSupabase();
+
+  const [{ data: employees }, { data: shifts }, { data: marks }] = await Promise.all([
+    supabase
+      .from('employees')
+      .select('id, full_name, role')
+      .eq('company_id', companyId)
+      .eq('status', 'active')
+      .order('full_name'),
+    supabase
+      .from('shifts')
+      .select('employee_id, started_at, ended_at, late')
+      .eq('company_id', companyId)
+      .gte('started_at', `${from}T00:00:00Z`)
+      .lte('started_at', `${to}T23:59:59Z`),
+    supabase
+      .from('attendance')
+      .select('employee_id, date, status')
+      .eq('company_id', companyId)
+      .gte('date', from)
+      .lte('date', to),
+  ]);
+
+  const byEmployee = new Map<string, AttendanceRecord>();
+
+  for (const employee of employees ?? []) {
+    byEmployee.set(employee.id, {
+      employeeId: employee.id,
+      fullName: employee.full_name,
+      role: employee.role,
+      days: {},
+      shiftDays: 0,
+      lateDays: 0,
+      minutes: 0,
+      onShiftNow: false,
+    });
+  }
+
+  for (const shift of shifts ?? []) {
+    const record = byEmployee.get(shift.employee_id);
+    if (!record) continue;
+
+    const started = new Date(shift.started_at);
+    const ended = shift.ended_at ? new Date(shift.ended_at) : new Date();
+
+    record.shiftDays += 1;
+    if (shift.late) record.lateDays += 1;
+    if (!shift.ended_at) record.onShiftNow = true;
+    record.minutes += Math.max(0, Math.round((ended.getTime() - started.getTime()) / 60000));
+  }
+
+  for (const mark of marks ?? []) {
+    const record = byEmployee.get(mark.employee_id);
+    if (record) record.days[mark.date] = mark.status;
+  }
+
+  return Array.from(byEmployee.values());
+}

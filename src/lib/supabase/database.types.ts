@@ -4,6 +4,7 @@
  *   npx supabase gen types typescript --project-id xnfqsoruxkjhekdklxot > src/lib/supabase/database.types.ts
  */
 
+import type { AttendanceStatus, ShiftMode } from '@/lib/attendance';
 import type { EmployeeRole } from '@/lib/employee-role';
 import type { LeadStatus as LeadStatusValue } from '@/lib/lead-status';
 
@@ -41,6 +42,27 @@ export type CompanyRow = Timestamps & {
   auto_assign: boolean;
   max_open_leads: number;
   sla_minutes: number;
+  /** Режим смены и геолокация офиса. */
+  shift_mode: ShiftMode;
+  office_lat: number | null;
+  office_lng: number | null;
+  office_radius_m: number;
+  office_label: string | null;
+  timezone: string;
+  work_start_time: string;
+  late_grace_minutes: number;
+  attendance_statuses: string[];
+}
+
+/** Отметка в табеле: один день — одна строка на сотрудника. */
+export type AttendanceRow = Timestamps & {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  date: string;
+  status: AttendanceStatus;
+  note: string | null;
+  source: 'auto' | 'manual';
 }
 
 /** Журнал: кому и почему достался лид. */
@@ -257,6 +279,10 @@ export type ShiftRow = Timestamps & {
   started_at: string;
   ended_at: string | null;
   source: 'telegram' | 'manual';
+  start_lat: number | null;
+  start_lng: number | null;
+  start_distance_m: number | null;
+  late: boolean;
 }
 
 type TableDef<Row, Required extends keyof Row> = {
@@ -285,6 +311,10 @@ export type Database = {
         'company_id' | 'employee_id' | 'token' | 'expires_at'
       >;
       shifts: TableDef<ShiftRow, 'company_id' | 'employee_id'>;
+      attendance: TableDef<
+        AttendanceRow,
+        'company_id' | 'employee_id' | 'date' | 'status'
+      >;
       lead_assignments: TableDef<
         LeadAssignmentRow,
         'company_id' | 'lead_id' | 'employee_id'

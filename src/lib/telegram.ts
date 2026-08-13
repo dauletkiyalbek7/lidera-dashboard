@@ -41,10 +41,13 @@ async function call(method: string, payload: Record<string, unknown>): Promise<v
   }
 }
 
+/** Кнопка обычной клавиатуры. Строка — просто текст, объект — запрос данных. */
+export type KeyboardButton = string | { text: string; request_location: true };
+
 export function sendMessage(
   chatId: number,
   text: string,
-  options?: { inline?: InlineButton[][]; keyboard?: string[][] },
+  options?: { inline?: InlineButton[][]; keyboard?: KeyboardButton[][] },
 ): Promise<void> {
   const payload: Record<string, unknown> = {
     chat_id: chatId,
@@ -56,7 +59,12 @@ export function sendMessage(
   if (options?.inline) {
     payload.reply_markup = { inline_keyboard: options.inline };
   } else if (options?.keyboard) {
-    payload.reply_markup = { keyboard: options.keyboard, resize_keyboard: true };
+    payload.reply_markup = {
+      keyboard: options.keyboard.map((row) =>
+        row.map((button) => (typeof button === 'string' ? { text: button } : button)),
+      ),
+      resize_keyboard: true,
+    };
   }
 
   return call('sendMessage', payload);

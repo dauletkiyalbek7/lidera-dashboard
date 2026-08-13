@@ -65,6 +65,14 @@ export const IconTeam = (p: IconProps) => (
   </Icon>
 );
 
+export const IconAttendance = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4.5" width="18" height="16" rx="3" />
+    <path d="M8 2.5v4M16 2.5v4M3 9.5h18" />
+    <path d="m9 14.5 2 2 4-4" />
+  </Icon>
+);
+
 export const IconTrials = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3" y="5" width="18" height="16" rx="3" />

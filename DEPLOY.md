@@ -33,6 +33,9 @@ Framework определится автоматически (Next.js), кома�
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | `lidera_dash_bot` | да |
 | `TELEGRAM_WEBHOOK_SECRET` | как в `.env.local` | **нет** |
 
+Отдельная переменная для планировщика раздачи не нужна: он ходит по хешу
+сервисного ключа.
+
 Отмечайте все три окружения (Production, Preview, Development).
 
 ## 4. Supabase: разрешить боевой адрес

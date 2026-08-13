@@ -10,6 +10,7 @@ import { COMPANY_STATUS, PLAN_LABELS, ROLE_LABELS, statusOf } from '@/lib/labels
 import { getSubscription } from '@/lib/queries';
 import { CompanyForm } from './company-form';
 import { DistributionForm } from './distribution-form';
+import { ShiftForm } from './shift-form';
 
 export const metadata: Metadata = { title: 'Настройки' };
 
@@ -45,6 +46,27 @@ export default async function SettingsPage() {
           </Card>
 
           <div className="space-y-4">
+            <Card>
+              <CardHeader
+                title="Смены и офис"
+                subtitle="Как сотрудники отмечаются и когда начинается рабочий день"
+              />
+              <ShiftForm
+                defaults={{
+                  shift_mode: company.shift_mode,
+                  office_lat: company.office_lat,
+                  office_lng: company.office_lng,
+                  office_radius_m: company.office_radius_m,
+                  office_label: company.office_label ?? '',
+                  timezone: company.timezone,
+                  work_start_time: company.work_start_time,
+                  late_grace_minutes: company.late_grace_minutes,
+                  attendance_statuses: company.attendance_statuses,
+                }}
+                disabled={profile.role !== 'DIRECTOR'}
+              />
+            </Card>
+
             <Card>
               <CardHeader
                 title="Раздача лидов"

@@ -50,7 +50,7 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
 
   const { data: company } = await supabase
     .from('companies')
-    .select('id, funnel_type, auto_assign, max_open_leads, sla_minutes')
+    .select('id, funnel_type, auto_assign, max_open_leads, sla_minutes, shift_mode')
     .eq('id', companyId)
     .maybeSingle();
 
@@ -93,6 +93,7 @@ type CompanySettings = {
   funnel_type: string;
   max_open_leads: number;
   sla_minutes: number;
+  shift_mode: string;
 };
 
 /**
@@ -142,8 +143,11 @@ async function eligibleManagers(supabase: Admin, company: CompanySettings) {
     }
   }
 
+  // Режим «без смены»: компания работает без отметок, лиды идут всем менеджерам.
+  const requiresShift = company.shift_mode !== 'always';
+
   return employees
-    .filter((employee) => onShift.has(employee.id))
+    .filter((employee) => !requiresShift || onShift.has(employee.id))
     .map((employee) => ({
       ...employee,
       load: load.get(employee.id) ?? 0,

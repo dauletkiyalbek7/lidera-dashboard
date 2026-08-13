@@ -609,10 +609,12 @@ export async function getAdBreakdown(
     toRow(number, bucket, number, null, null),
   ).sort((a, b) => b.spend - a.spend);
 
-  const spend = sum(metrics ?? [], (row) => Number(row.spend));
-  const impressions = sum(metrics ?? [], (row) => Number(row.impressions));
-  const clicks = sum(metrics ?? [], (row) => Number(row.clicks));
-  const conversions = sum(metrics ?? [], (row) => Number(row.leads));
+  // Итоги считаем по тем же пересчитанным строкам, что и разбивку: иначе
+  // карточки наверху и таблицы под ними разошлись бы в валюте.
+  const spend = sum(spendRows, (row) => Number(row.spend));
+  const impressions = sum(spendRows, (row) => Number(row.impressions));
+  const clicks = sum(spendRows, (row) => Number(row.clicks));
+  const conversions = sum(spendRows, (row) => Number(row.leads));
 
   return {
     totals: {

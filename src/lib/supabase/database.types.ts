@@ -202,6 +202,10 @@ export type EmployeeRow = Timestamps & {
   status: 'active' | 'fired';
   hired_at: string;
   fired_at: string | null;
+  /** Личные правила смены. NULL — берём из компании. */
+  shift_mode: ShiftMode | null;
+  work_start_time: string | null;
+  late_grace_minutes: number | null;
 }
 
 export type TrialRow = Timestamps & {

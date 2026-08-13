@@ -8,13 +8,19 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconTeam } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
+import { SHIFT_MODE, type ShiftMode } from '@/lib/attendance';
 import { requireCompanySession } from '@/lib/auth';
 import { employeeRoleLabel } from '@/lib/employee-role';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import type { FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
 import { getTeam } from '@/lib/queries';
-import { AddEmployeeButton, EmployeeRowActions, InviteButton } from './team-controls';
+import {
+  AddEmployeeButton,
+  EmployeeRowActions,
+  InviteButton,
+  ScheduleButton,
+} from './team-controls';
 
 export const metadata: Metadata = { title: 'Команда' };
 
@@ -23,6 +29,7 @@ const COLUMNS = [
   { key: 'role', label: 'Роль' },
   { key: 'telegram', label: 'Telegram' },
   { key: 'shift', label: 'Смена' },
+  { key: 'mode', label: 'Режим' },
   { key: 'hired', label: 'Принят' },
   { key: 'leads', label: 'Лиды', align: 'right' as const },
   { key: 'reached', label: 'Дозвон', align: 'right' as const },
@@ -41,6 +48,7 @@ export default async function TeamPage({
   const funnelType = company.funnel_type as FunnelType;
 
   const team = await getTeam(company.id, range.from, range.to);
+  const companyMode = company.shift_mode as ShiftMode;
   const active = team.filter((member) => member.status === 'active');
   const linked = active.filter((member) => member.telegramLinked).length;
   const revenue = team.reduce((total, member) => total + member.revenue, 0);
@@ -106,7 +114,7 @@ export default async function TeamPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1220}>
+            <TableShell columns={COLUMNS} minWidth={1360}>
               {team.map((member) => (
                 <tr
                   key={member.id}
@@ -145,6 +153,14 @@ export default async function TeamPage({
                       <span className="text-[12.5px] text-faint">не на смене</span>
                     )}
                   </Td>
+                  <Td className="text-ink-soft">
+                    {SHIFT_MODE[member.rules.mode].label}
+                    <span className="mt-0.5 block text-[11.5px] text-faint">
+                      {member.rules.personal
+                        ? `лично · с ${member.rules.workStartTime.slice(0, 5)}`
+                        : 'как в компании'}
+                    </span>
+                  </Td>
                   <Td className="tabular text-muted">{formatDate(member.hiredAt)}</Td>
                   <Td align="right" className="tabular text-ink">
                     {formatNumber(member.leads)}
@@ -165,6 +181,18 @@ export default async function TeamPage({
                   </Td>
                   <Td last align="right">
                     <div className="flex items-center justify-end gap-1">
+                      {member.status === 'active' ? (
+                        <ScheduleButton
+                          employeeId={member.id}
+                          fullName={member.fullName}
+                          defaults={{
+                            shiftMode: member.shiftMode,
+                            workStartTime: member.workStartTime,
+                            lateGraceMinutes: member.lateGraceMinutes,
+                          }}
+                          companySummary={SHIFT_MODE[companyMode].label.toLowerCase()}
+                        />
+                      ) : null}
                       {member.status === 'active' ? (
                         <InviteButton
                           employeeId={member.id}

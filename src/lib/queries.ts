@@ -1,6 +1,7 @@
 import 'server-only';
 
 import type { TrendPoint } from '@/components/charts/trend-chart';
+import { resolveShiftRules, type ShiftRules } from '@/lib/attendance';
 import { countUntouched, isReached, leadStage } from '@/lib/lead-status';
 import { eachDay } from '@/lib/period';
 import {
@@ -319,6 +320,11 @@ export type TeamMember = {
   /** Открыта ли смена прямо сейчас — только такие получают лиды. */
   onShift: boolean;
   shiftStartedAt: string | null;
+  /** Личные правила смены: null означает «как в компании». */
+  shiftMode: string | null;
+  workStartTime: string | null;
+  lateGraceMinutes: number | null;
+  rules: ShiftRules;
   /** Показатели за выбранный период. */
   leads: number;
   reached: number;
@@ -338,6 +344,18 @@ export async function getTeam(
   to: string,
 ): Promise<TeamMember[]> {
   const supabase = await createServerSupabase();
+
+  const { data: companyRow } = await supabase
+    .from('companies')
+    .select('shift_mode, work_start_time, late_grace_minutes')
+    .eq('id', companyId)
+    .maybeSingle();
+
+  const companyRules = companyRow ?? {
+    shift_mode: 'shift',
+    work_start_time: '09:00',
+    late_grace_minutes: 10,
+  };
 
   const [{ data: employees }, { data: leads }, { data: sales }, { data: openShifts }] =
     await Promise.all([
@@ -413,6 +431,10 @@ export async function getTeam(
       telegramLinked: employee.telegram_user_id !== null,
       onShift: shiftOf.has(employee.id),
       shiftStartedAt: shiftOf.get(employee.id) ?? null,
+      shiftMode: employee.shift_mode,
+      workStartTime: employee.work_start_time,
+      lateGraceMinutes: employee.late_grace_minutes,
+      rules: resolveShiftRules(employee, companyRules),
       ...value,
     };
   });

@@ -107,3 +107,43 @@ export function manualStatusesFor(enabled: string[]): AttendanceStatus[] {
     (status) => enabled.includes(status) && status !== 'on_shift' && status !== 'late',
   );
 }
+
+/**
+ * Действующие правила для конкретного сотрудника.
+ *
+ * Настройки компании — значение по умолчанию, личные поля их перекрывают.
+ * Отдельная функция нужна, чтобы «наследовать» не приходилось повторять в боте,
+ * в раздаче и в интерфейсе — три места разошлись бы при первой же правке.
+ */
+export type ShiftRules = {
+  mode: ShiftMode;
+  workStartTime: string;
+  lateGraceMinutes: number;
+  /** Правило личное или досталось от компании — это видно в интерфейсе. */
+  personal: boolean;
+};
+
+export function resolveShiftRules(
+  employee: {
+    shift_mode: string | null;
+    work_start_time: string | null;
+    late_grace_minutes: number | null;
+  },
+  company: {
+    shift_mode: string;
+    work_start_time: string;
+    late_grace_minutes: number;
+  },
+): ShiftRules {
+  const mode = employee.shift_mode ?? company.shift_mode;
+
+  return {
+    mode: isShiftMode(mode) ? mode : 'shift',
+    workStartTime: employee.work_start_time ?? company.work_start_time,
+    lateGraceMinutes: employee.late_grace_minutes ?? company.late_grace_minutes,
+    personal:
+      employee.shift_mode !== null ||
+      employee.work_start_time !== null ||
+      employee.late_grace_minutes !== null,
+  };
+}

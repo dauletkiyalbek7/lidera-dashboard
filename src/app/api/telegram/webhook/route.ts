@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { LEAD_STATUS, isLeadStatus, type LeadStatus } from '@/lib/lead-status';
+import { resolveShiftRules, type ShiftRules } from '@/lib/attendance';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { runDistribution } from '@/lib/lead-distribution';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
@@ -176,8 +177,9 @@ async function bindEmployee(
  */
 async function startShiftFlow(chatId: number, employee: Employee) {
   const company = await companyOf(employee.company_id);
+  const rules = company ? resolveShiftRules(employee, company) : null;
 
-  if (company?.shift_mode === 'always') {
+  if (rules?.mode === 'always') {
     return sendMessage(
       chatId,
       'В вашей компании смену открывать не нужно — лиды приходят всегда.',
@@ -190,7 +192,8 @@ async function startShiftFlow(chatId: number, employee: Employee) {
   }
 
   const needsLocation =
-    company?.shift_mode === 'geo' &&
+    rules?.mode === 'geo' &&
+    company !== null &&
     company.office_lat !== null &&
     company.office_lng !== null;
 
@@ -212,6 +215,11 @@ async function openShiftWithLocation(
   location: { latitude: number; longitude: number },
 ) {
   const company = await companyOf(employee.company_id);
+
+  // Личный режим «по кнопке» отменяет проверку места, даже если компания в geo.
+  if (company && resolveShiftRules(employee, company).mode !== 'geo') {
+    return openShift(chatId, employee, null);
+  }
 
   if (!company || company.office_lat === null || company.office_lng === null) {
     return openShift(chatId, employee, null);
@@ -244,7 +252,7 @@ async function openShift(
 ) {
   const supabase = createAdminSupabase();
   const company = await companyOf(employee.company_id);
-  const late = company ? isLate(company) : false;
+  const late = company ? isLate(company, resolveShiftRules(employee, company)) : false;
 
   const { error } = await supabase.from('shifts').insert({
     company_id: employee.company_id,
@@ -306,8 +314,11 @@ async function markAttendance(employee: Employee, status: 'on_shift' | 'late') {
   });
 }
 
-/** Опоздание считается по местному времени компании, а не по времени сервера. */
-function isLate(company: CompanyRow): boolean {
+/**
+ * Опоздание — по местному времени компании и по личному графику сотрудника:
+ * у удалёнщика рабочий день может начинаться позже, чем в офисе.
+ */
+function isLate(company: CompanyRow, rules: ShiftRules): boolean {
   const now = new Date();
   const local = new Intl.DateTimeFormat('ru-RU', {
     timeZone: company.timezone,
@@ -317,9 +328,9 @@ function isLate(company: CompanyRow): boolean {
   }).format(now);
 
   const [hours, minutes] = local.split(':').map(Number);
-  const [startHours, startMinutes] = company.work_start_time.split(':').map(Number);
+  const [startHours, startMinutes] = rules.workStartTime.split(':').map(Number);
 
-  return hours * 60 + minutes > startHours * 60 + startMinutes + company.late_grace_minutes;
+  return hours * 60 + minutes > startHours * 60 + startMinutes + rules.lateGraceMinutes;
 }
 
 function localDate(timeZone: string): string {
@@ -464,13 +475,23 @@ async function handleCallback(query: TelegramCallbackQuery) {
 // Общее
 // -----------------------------------------------------------------------------
 
-type Employee = { id: string; company_id: string; full_name: string; role: string };
+type Employee = {
+  id: string;
+  company_id: string;
+  full_name: string;
+  role: string;
+  shift_mode: string | null;
+  work_start_time: string | null;
+  late_grace_minutes: number | null;
+};
 
 async function findEmployee(telegramUserId: number): Promise<Employee | null> {
   const supabase = createAdminSupabase();
   const { data } = await supabase
     .from('employees')
-    .select('id, company_id, full_name, role')
+    .select(
+      'id, company_id, full_name, role, shift_mode, work_start_time, late_grace_minutes',
+    )
     .eq('telegram_user_id', telegramUserId)
     .eq('status', 'active')
     .maybeSingle();

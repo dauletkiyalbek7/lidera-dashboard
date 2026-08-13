@@ -7,6 +7,7 @@ import {
   createInvite,
   fireEmployee,
   rehireEmployee,
+  updateEmployeeSchedule,
   type InviteState,
   type TeamState,
 } from '@/app/dashboard/team/actions';
@@ -15,6 +16,7 @@ import { Field, FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import { IconPlus } from '@/components/ui/icons';
 import { Modal, Select } from '@/components/ui/modal';
+import { SHIFT_MODE, SHIFT_MODE_ORDER } from '@/lib/attendance';
 import { EMPLOYEE_ROLE, employeeRolesFor } from '@/lib/employee-role';
 import type { FunnelType } from '@/lib/metrics';
 
@@ -135,6 +137,89 @@ export function InviteButton({
           </div>
         </Modal>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * Личный режим смены и график. Пустые поля означают «как в компании» —
+ * так у директора остаётся одно место, где меняется общее правило.
+ */
+export function ScheduleButton({
+  employeeId,
+  fullName,
+  defaults,
+  companySummary,
+}: {
+  employeeId: string;
+  fullName: string;
+  defaults: {
+    shiftMode: string | null;
+    workStartTime: string | null;
+    lateGraceMinutes: number | null;
+  };
+  companySummary: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [state, formAction] = useActionState(updateEmployeeSchedule, {} as TeamState);
+
+  return (
+    <>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(true)}>
+        График
+      </Button>
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Режим работы сотрудника"
+        description={fullName}
+      >
+        {state.success ? (
+          <Done message={state.success} onClose={() => setOpen(false)} />
+        ) : (
+          <form action={formAction} className="space-y-4 px-5 py-5 sm:px-6">
+            <input type="hidden" name="employeeId" value={employeeId} />
+
+            <Select
+              label="Режим смены"
+              name="shiftMode"
+              defaultValue={defaults.shiftMode ?? ''}
+              options={[
+                { value: '', label: `Как в компании — ${companySummary}` },
+                ...SHIFT_MODE_ORDER.map((mode) => ({
+                  value: mode,
+                  label: SHIFT_MODE[mode].label,
+                })),
+              ]}
+              hint="Офисному менеджеру — с геолокацией, удалённому — по кнопке или без смены"
+            />
+
+            <Field
+              label="Начало рабочего дня"
+              name="workStartTime"
+              type="time"
+              defaultValue={defaults.workStartTime?.slice(0, 5) ?? ''}
+              hint="Пусто — как в компании"
+            />
+
+            <Field
+              label="Допустимое опоздание, минут"
+              name="lateGraceMinutes"
+              type="number"
+              min={0}
+              max={120}
+              defaultValue={
+                defaults.lateGraceMinutes === null ? '' : String(defaults.lateGraceMinutes)
+              }
+              hint="Пусто — как в компании"
+            />
+
+            <FormMessage error={state.error} />
+            <SubmitButton label="Сохранить" pendingLabel="Сохраняем…" />
+          </form>
+        )}
+      </Modal>
     </>
   );
 }

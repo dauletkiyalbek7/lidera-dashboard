@@ -3,6 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
+import { SHIFT_MODE_ORDER } from '@/lib/attendance';
 import { requireCompanySession } from '@/lib/auth';
 import { runDistribution } from '@/lib/lead-distribution';
 import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER } from '@/lib/employee-role';
@@ -260,4 +261,64 @@ export async function assignLead(
 
 function revalidateTeam() {
   revalidatePath('/dashboard', 'layout');
+}
+
+const scheduleSchema = z.object({
+  employeeId: z.string().uuid(),
+  /** Пустая строка означает «как в компании» — это осознанный выбор, а не ошибка. */
+  shiftMode: z.enum(['', ...SHIFT_MODE_ORDER]),
+  workStartTime: z.string().regex(/^(\d{2}:\d{2})?$/, 'Время в формате 09:00'),
+  lateGraceMinutes: z.string().regex(/^\d{0,3}$/, 'Только число минут'),
+});
+
+/**
+ * Личные правила сотрудника: режим смены и график.
+ *
+ * Пустое поле сбрасывает правило обратно к настройке компании — так директор
+ * меняет общее правило один раз, и оно доходит до всех, у кого нет исключения.
+ */
+export async function updateEmployeeSchedule(
+  _prevState: TeamState,
+  formData: FormData,
+): Promise<TeamState> {
+  const { company, profile } = await requireCompanySession();
+
+  if (profile.role !== 'DIRECTOR') {
+    return { error: 'Менять график сотрудников может только директор.' };
+  }
+
+  const parsed = scheduleSchema.safeParse({
+    employeeId: formData.get('employeeId'),
+    shiftMode: formData.get('shiftMode') ?? '',
+    workStartTime: formData.get('workStartTime') ?? '',
+    lateGraceMinutes: formData.get('lateGraceMinutes') ?? '',
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  if (parsed.data.shiftMode === 'geo' && company.office_lat === null) {
+    return { error: 'Сначала укажите координаты офиса в настройках компании.' };
+  }
+
+  const grace = parsed.data.lateGraceMinutes ? Number(parsed.data.lateGraceMinutes) : null;
+  if (grace !== null && grace > 120) return { error: 'Допуск опоздания — не больше 120 минут.' };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase
+    .from('employees')
+    .update({
+      shift_mode: parsed.data.shiftMode || null,
+      work_start_time: parsed.data.workStartTime || null,
+      late_grace_minutes: grace,
+    })
+    .eq('id', parsed.data.employeeId)
+    .eq('company_id', company.id);
+
+  if (error) return { error: 'Не удалось сохранить график.' };
+
+  // Режим мог смениться на «без смены» — тогда человек уже может получать лиды.
+  await runDistribution(company.id);
+
+  revalidateTeam();
+  return { success: 'График сохранён.' };
 }

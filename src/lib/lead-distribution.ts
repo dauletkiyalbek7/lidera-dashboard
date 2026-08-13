@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { resolveShiftRules } from '@/lib/attendance';
 import type { LeadStatus } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
 import { createAdminSupabase } from '@/lib/supabase/admin';
@@ -50,7 +51,9 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
 
   const { data: company } = await supabase
     .from('companies')
-    .select('id, funnel_type, auto_assign, max_open_leads, sla_minutes, shift_mode')
+    .select(
+      'id, funnel_type, auto_assign, max_open_leads, sla_minutes, shift_mode, work_start_time, late_grace_minutes',
+    )
     .eq('id', companyId)
     .maybeSingle();
 
@@ -94,6 +97,8 @@ type CompanySettings = {
   max_open_leads: number;
   sla_minutes: number;
   shift_mode: string;
+  work_start_time: string;
+  late_grace_minutes: number;
 };
 
 /**
@@ -103,7 +108,9 @@ type CompanySettings = {
 async function eligibleManagers(supabase: Admin, company: CompanySettings) {
   const { data: employees } = await supabase
     .from('employees')
-    .select('id, full_name, telegram_user_id')
+    .select(
+      'id, full_name, telegram_user_id, shift_mode, work_start_time, late_grace_minutes',
+    )
     .eq('company_id', company.id)
     .eq('role', 'manager')
     .eq('status', 'active');
@@ -143,11 +150,13 @@ async function eligibleManagers(supabase: Admin, company: CompanySettings) {
     }
   }
 
-  // Режим «без смены»: компания работает без отметок, лиды идут всем менеджерам.
-  const requiresShift = company.shift_mode !== 'always';
-
+  // Режим считается по каждому отдельно: в одной компании уживаются офисные
+  // менеджеры со сменами и удалённые, которым отмечаться не нужно.
   return employees
-    .filter((employee) => !requiresShift || onShift.has(employee.id))
+    .filter(
+      (employee) =>
+        resolveShiftRules(employee, company).mode === 'always' || onShift.has(employee.id),
+    )
     .map((employee) => ({
       ...employee,
       load: load.get(employee.id) ?? 0,

@@ -31,13 +31,16 @@ export function AppShell({
   userEmail,
 }: AppShellProps) {
   const groups = navFor(nav, funnelType);
+  // Внутри кабинета логотип ведёт на главную кабинета: попадать с рабочего
+  // экрана на витрину продукта — неожиданно и раздражает.
+  const home = nav === 'admin' ? '/admin' : '/dashboard';
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
 
   const sidebar = (
     <div className="flex h-full flex-col">
       <div className="flex h-16 shrink-0 items-center justify-between border-b border-line px-5">
-        <Logo />
+        <Logo href={home} />
         <button
           type="button"
           onClick={() => setOpen(false)}
@@ -82,11 +85,6 @@ export function AppShell({
                     >
                       <item.icon className="size-[18px] shrink-0" />
                       <span className="flex-1 truncate">{item.label}</span>
-                      {item.soon ? (
-                        <span className="rounded-full border border-line-strong px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-faint">
-                          Скоро
-                        </span>
-                      ) : null}
                     </Link>
                   </li>
                 );
@@ -124,7 +122,7 @@ export function AppShell({
     <div className="min-h-dvh lg:grid lg:grid-cols-[264px_1fr]">
       {/* Мобильная шапка */}
       <div className="sticky top-0 z-40 flex h-14 items-center justify-between border-b border-line bg-base/90 px-4 backdrop-blur lg:hidden">
-        <Logo />
+        <Logo href={home} />
         <button
           type="button"
           onClick={() => setOpen(true)}

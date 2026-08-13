@@ -67,7 +67,7 @@ export default async function FinancePage({
         </Card>
 
         <Card className="mt-4">
-          <CardHeader title="Тариф" subtitle="Биллинг подключается на следующем этапе" />
+          <CardHeader title="Тариф" subtitle="Текущий план компании" />
           <dl className="grid gap-px bg-line sm:grid-cols-3">
             <div className="bg-surface px-5 py-4 sm:px-6">
               <dt className="text-[12.5px] text-muted">План</dt>

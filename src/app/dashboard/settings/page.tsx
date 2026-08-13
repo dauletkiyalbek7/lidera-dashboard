@@ -103,7 +103,7 @@ export default async function SettingsPage() {
             </Card>
 
             <Card>
-              <CardHeader title="Тариф" subtitle="Оплата подключается на следующем этапе" />
+              <CardHeader title="Тариф" subtitle="Текущий план компании" />
               <dl className="divide-y divide-line">
                 <Row
                   label="План"
@@ -122,18 +122,6 @@ export default async function SettingsPage() {
               </dl>
             </Card>
 
-            <Card>
-              <CardHeader
-                title="Сотрудники"
-                subtitle="Создание сотрудников и права доступа появятся на следующем этапе"
-                action={<Badge>Скоро</Badge>}
-              />
-              <p className="px-5 py-5 text-[13.5px] leading-relaxed text-muted sm:px-6">
-                Модель ролей уже заложена в базе: помимо директора поддерживаются роли
-                менеджера и сотрудника, а изоляция данных работает на уровне строк.
-                Интерфейс управления командой добавим без изменения схемы.
-              </p>
-            </Card>
           </div>
         </div>
       </PageBody>

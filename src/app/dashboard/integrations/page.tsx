@@ -93,11 +93,7 @@ export default async function IntegrationsPage() {
                       <ButtonLink href="/dashboard/ads" variant="secondary" size="sm">
                         Открыть «Рекламу»
                       </ButtonLink>
-                    ) : (
-                      <ButtonLink href="/contacts" variant="secondary" size="sm">
-                        Подключить
-                      </ButtonLink>
-                    )}
+                    ) : null}
                   </div>
 
                   {syncError(record) ? (
@@ -120,15 +116,15 @@ export default async function IntegrationsPage() {
 
         <Card className="mt-4">
           <CardHeader
-            title="Как подключается рекламный кабинет"
-            subtitle="Пока автоматическая авторизация в Meta и TikTok на согласовании — кабинет подключает команда Lidera"
+            title="Как обновляются данные"
+            subtitle="Ручные выгрузки не нужны — цифры приходят из рекламного кабинета сами"
           />
           <ol className="space-y-4 px-5 py-5 sm:px-6">
             {[
-              'Вы оставляете заявку — мы уточняем, какие кабинеты подключить.',
-              'Выдаёте доступ к рекламному кабинету на технический аккаунт Lidera.',
-              'Мы включаем синхронизацию: кампании и креативы появляются в кабинете.',
-              'Дальше данные обновляются автоматически, без ручных выгрузок.',
+              'Каждую ночь платформа сама забирает данные из рекламного кабинета.',
+              'Забираются последние 30 дней: площадка ещё пару дней уточняет вчерашние цифры.',
+              'Кампании, креативы, расход и результат обновляются одним заходом.',
+              'Нужны свежие цифры прямо сейчас — кнопка «Обновить» в разделе «Реклама».',
             ].map((step, index) => (
               <li key={step} className="flex gap-3.5">
                 <span className="tabular flex size-6 shrink-0 items-center justify-center rounded-full border border-line bg-surface-2 text-[12px] font-medium text-lime">

@@ -21,7 +21,7 @@ export type NavItem = {
   href: string;
   label: string;
   icon: (props: React.SVGProps<SVGSVGElement>) => React.ReactElement;
-  /** Раздел уже есть в интерфейсе, но наполняется на следующем этапе. */
+  /** Раздел ещё наполняется: в меню его не показываем, по адресу он открыт. */
   soon?: boolean;
   /** Раздел показывается только компаниям с такой воронкой. */
   onlyFunnel?: FunnelType;
@@ -100,7 +100,8 @@ export function navFor(key: NavKey, funnelType: FunnelType): NavGroup[] {
     .map((group) => ({
       ...group,
       items: group.items.filter(
-        (item) => !item.onlyFunnel || item.onlyFunnel === funnelType,
+        (item) =>
+          !item.soon && (!item.onlyFunnel || item.onlyFunnel === funnelType),
       ),
     }))
     .filter((group) => group.items.length > 0);

@@ -41,8 +41,7 @@ export default async function ReceiptsPage() {
     <>
       <PageHeader
         title="Чеки"
-        description="Подтверждение оплат: приём чеков через Telegram-бот и распознавание сумм появятся на следующем этапе."
-        action={<Badge>Скоро</Badge>}
+        description="Подтверждение оплат: чеки, суммы и связь с продажей."
       />
 
       <PageBody>
@@ -53,7 +52,7 @@ export default async function ReceiptsPage() {
               <EmptyState
                 icon={<IconReceipts className="size-5" />}
                 title="Чеков пока нет"
-                description="Раздел готов к приёму чеков: структура хранения, статусы проверки и связь с продажей уже заложены. Осталось подключить Telegram-бот и распознавание."
+                description="Как только менеджеры начнут присылать чеки, они появятся здесь — с суммой, датой и привязкой к продаже."
               />
             </div>
           ) : (

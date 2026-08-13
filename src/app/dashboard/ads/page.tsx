@@ -10,10 +10,21 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconAds } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
-import { formatMoney, formatNumber, formatPercent } from '@/lib/format';
+import {
+  currencySymbol,
+  formatDateShort,
+  formatMoney,
+  formatNumber,
+  formatPercent,
+} from '@/lib/format';
 import { INTEGRATION_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
 import { resolveRange } from '@/lib/period';
-import { getAdAccounts, getAdBreakdown, getCampaigns } from '@/lib/queries';
+import {
+  getAdAccounts,
+  getAdBreakdown,
+  getCampaigns,
+  getCurrencyNote,
+} from '@/lib/queries';
 import { SyncMetaButton } from '@/app/dashboard/integrations/sync-button';
 
 export const metadata: Metadata = { title: 'Реклама' };
@@ -52,10 +63,11 @@ export default async function AdsPage({
   const currency = company.currency;
   const range = resolveRange(await searchParams);
 
-  const [accounts, campaigns, breakdown] = await Promise.all([
+  const [accounts, campaigns, breakdown, currencyNote] = await Promise.all([
     getAdAccounts(company.id),
     getCampaigns(company.id),
     getAdBreakdown(company.id, range.from, range.to),
+    getCurrencyNote(company.id, currency),
   ]);
 
   const { totals } = breakdown;
@@ -84,7 +96,11 @@ export default async function AdsPage({
     <>
       <PageHeader
         title="Реклама"
-        description="Сколько потратили, сколько человек написало и почём вышел один написавший."
+        description={
+          currencyNote
+            ? `Сколько потратили, сколько человек написало и почём вышел один написавший. Кабинет считает в ${currencySymbol(currencyNote.source)}, отчёт — в ${currencySymbol(currencyNote.target)} по курсу Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
+            : 'Сколько потратили, сколько человек написало и почём вышел один написавший.'
+        }
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
             <SyncMetaButton disabled={profile.role !== 'DIRECTOR'} />

@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { TrendPoint } from '@/components/charts/trend-chart';
 import { resolveShiftRules, type ShiftRules } from '@/lib/attendance';
+import { createRateLookup } from '@/lib/currency';
 import { countUntouched, isReached, leadStage } from '@/lib/lead-status';
 import { eachDay } from '@/lib/period';
 import {
@@ -19,6 +20,95 @@ import { createServerSupabase } from '@/lib/supabase/server';
  * companyId подменить, база вернёт пустой результат. Явный фильтр по
  * company_id оставлен ради индексов и читаемости.
  */
+
+/** Строка расхода: сумма, её валюта и день, по курсу которого считаем. */
+type SpendRow = { spend: number | string; date: string; currency?: string | null };
+
+/**
+ * Приводит расход рекламного кабинета к валюте компании.
+ *
+ * Meta присылает суммы в валюте кабинета (у MIRAS — доллары). Показать их со
+ * знаком тенге, не пересчитав, значит соврать в десятки раз, поэтому каждая
+ * строка пересчитывается по курсу Нацбанка на свой день.
+ */
+async function toCompanyCurrency<T extends SpendRow>(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  rows: T[],
+): Promise<T[]> {
+  if (rows.length === 0) return rows;
+
+  const { data: company } = await supabase
+    .from('companies')
+    .select('currency')
+    .eq('id', companyId)
+    .maybeSingle();
+
+  const target = company?.currency ?? 'KZT';
+
+  // Пересчёт нужен, только если валюта расхода отличается от валюты компании.
+  const foreign = rows.some((row) => row.currency && row.currency !== target);
+  if (!foreign) return rows;
+
+  const { data: rates } = await supabase
+    .from('exchange_rates')
+    .select('date, code, kzt_per_unit')
+    .order('date', { ascending: true });
+
+  const lookup = createRateLookup(rates ?? []);
+
+  return rows.map((row) => {
+    const source = row.currency;
+    if (!source || source === target) return row;
+    return { ...row, spend: lookup.convert(Number(row.spend), source, target, row.date) };
+  });
+}
+
+export type CurrencyNote = {
+  /** Валюта рекламного кабинета. */
+  source: string;
+  /** Валюта отчётов компании. */
+  target: string;
+  /** Последний известный курс: сколько единиц target стоит одна единица source. */
+  rate: number;
+  /** Дата этого курса — чтобы было видно, свежий он или нет. */
+  date: string;
+};
+
+/**
+ * Пояснение к пересчёту: какой курс применён к расходу кабинета.
+ * Возвращает null, когда пересчитывать нечего — валюты совпадают.
+ */
+export async function getCurrencyNote(
+  companyId: string,
+  companyCurrency: string,
+): Promise<CurrencyNote | null> {
+  const supabase = await createServerSupabase();
+
+  const { data: accounts } = await supabase
+    .from('ad_accounts')
+    .select('currency')
+    .eq('company_id', companyId)
+    .not('currency', 'is', null);
+
+  const source = accounts?.find((row) => row.currency && row.currency !== companyCurrency)
+    ?.currency;
+  if (!source) return null;
+
+  const { data: rates } = await supabase
+    .from('exchange_rates')
+    .select('date, code, kzt_per_unit')
+    .order('date', { ascending: true });
+
+  const lookup = createRateLookup(rates ?? []);
+  const latest = lookup.latest(source) ?? lookup.latest(companyCurrency);
+  if (!latest) return null;
+
+  const rate = lookup.convert(1, source, companyCurrency, latest.date);
+  if (rate === 1) return null;
+
+  return { source, target: companyCurrency, rate, date: latest.date };
+}
 
 export type CreativePerformance = PerformanceSummary & {
   id: string;
@@ -45,7 +135,7 @@ export async function getDashboardData(
     await Promise.all([
       supabase
         .from('ad_metrics')
-        .select('creative_id, date, spend, impressions, clicks, leads')
+        .select('creative_id, date, spend, impressions, clicks, leads, currency')
         .eq('company_id', companyId)
         .gte('date', from)
         .lte('date', to),
@@ -74,7 +164,7 @@ export async function getDashboardData(
         .lte('created_at', `${to}T23:59:59Z`),
     ]);
 
-  const metrics = metricsResult.data ?? [];
+  const metrics = await toCompanyCurrency(supabase, companyId, metricsResult.data ?? []);
   const creatives = creativesResult.data ?? [];
   const trials = trialsResult.data ?? [];
   const sales = salesResult.data ?? [];
@@ -261,7 +351,7 @@ export async function getCreativeCards(
         .eq('company_id', companyId),
       supabase
         .from('ad_metrics')
-        .select('creative_id, campaign_id, spend, impressions, clicks, leads')
+        .select('creative_id, campaign_id, date, spend, impressions, clicks, leads, currency')
         .eq('company_id', companyId)
         .not('creative_id', 'is', null)
         .gte('date', from)
@@ -291,6 +381,9 @@ export async function getCreativeCards(
 
   const campaignById = new Map((campaignRows ?? []).map((row) => [row.id, row]));
   const placement = new Map<string, { campaigns: Set<string>; numbers: Set<string> }>();
+
+  // Расход приходит в валюте кабинета — приводим к валюте компании.
+  const spendRows = await toCompanyCurrency(supabase, companyId, metrics ?? []);
 
   const stats = new Map<
     string,
@@ -322,7 +415,7 @@ export async function getCreativeCards(
     return value;
   };
 
-  for (const row of metrics ?? []) {
+  for (const row of spendRows) {
     if (!row.creative_id) continue;
     const target = bucket(row.creative_id);
     target.spend += Number(row.spend);
@@ -433,7 +526,7 @@ export async function getAdBreakdown(
   const [{ data: metrics }, { data: campaigns }] = await Promise.all([
     supabase
       .from('ad_metrics')
-      .select('campaign_id, date, spend, impressions, clicks, leads')
+      .select('campaign_id, date, spend, impressions, clicks, leads, currency')
       .eq('company_id', companyId)
       .gte('date', from)
       .lte('date', to),
@@ -444,6 +537,7 @@ export async function getAdBreakdown(
   ]);
 
   const campaignById = new Map((campaigns ?? []).map((row) => [row.id, row]));
+  const spendRows = await toCompanyCurrency(supabase, companyId, metrics ?? []);
 
   type MetricRow = {
     campaign_id: string | null;
@@ -473,7 +567,7 @@ export async function getAdBreakdown(
     if (Number(row.spend) > 0) bucket.days.add(row.date);
   };
 
-  for (const row of metrics ?? []) {
+  for (const row of spendRows) {
     if (row.campaign_id) add(byCampaign, row.campaign_id, row);
     const number = row.campaign_id
       ? campaignById.get(row.campaign_id)?.whatsapp_number

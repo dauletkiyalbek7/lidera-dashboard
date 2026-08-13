@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { syncExchangeRates } from '@/lib/currency';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 
 /**
@@ -28,6 +29,9 @@ const CONVERSATION_ACTIONS = [
 ];
 
 const LEAD_ACTIONS = ['lead', 'leadgen.other', 'onsite_conversion.lead_grouped'];
+
+/** Валюты, которые платформа умеет пересчитывать (курсы Нацбанка РК). */
+const SUPPORTED_CURRENCIES = ['KZT', 'USD', 'EUR', 'RUB'];
 
 export type MetaSyncResult = {
   account: string;
@@ -68,6 +72,16 @@ export async function syncAllMetaAccounts(): Promise<{
 
   const results: MetaSyncResult[] = [];
   const errors: { account: string; message: string }[] = [];
+
+  // Курсы нужны раньше расходов: без них доллары кабинета не станут тенге.
+  try {
+    await syncExchangeRates(supabase);
+  } catch (error) {
+    errors.push({
+      account: 'курсы валют',
+      message: error instanceof Error ? error.message : 'неизвестная ошибка',
+    });
+  }
 
   for (const account of accounts) {
     try {
@@ -134,6 +148,10 @@ export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncR
 
   if (!account?.account_id) throw new Error('рекламный кабинет не найден');
 
+  // Кнопка «Обновить» тоже подтягивает курсы: директор нажимает её именно
+  // тогда, когда хочет увидеть свежие цифры.
+  await syncExchangeRates(supabase).catch(() => null);
+
   try {
     const result = await pullFromMeta(account);
     await noteSync(account.company_id, account.account_id, { ok: true, result });
@@ -167,6 +185,24 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
 
   const since = isoDate(new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000));
   const until = isoDate(new Date());
+
+  // --- 0. Валюта кабинета -------------------------------------------------
+  // Расход приходит в ней, а не в валюте компании: доллары нельзя записать в
+  // отчёт тенге, не пересчитав по курсу.
+  const [profile] = await graph<{ currency?: string }>(
+    `${GRAPH}/${actId}?fields=currency&access_token=${token}`,
+    { single: true },
+  );
+  const accountCurrency = SUPPORTED_CURRENCIES.includes(profile?.currency ?? '')
+    ? (profile?.currency as string)
+    : null;
+
+  if (accountCurrency) {
+    await supabase
+      .from('ad_accounts')
+      .update({ currency: accountCurrency })
+      .eq('id', account.id);
+  }
 
   // --- 1. Номера WhatsApp: они живут в настройках групп объявлений ---------
   const numberByCampaign = new Map<string, string>();
@@ -284,6 +320,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
 
     const current = merged.get(key) ?? {
       company_id: account.company_id,
+      currency: accountCurrency,
       campaign_id: campaignId,
       creative_id: creativeId,
       platform: 'meta' as const,
@@ -445,7 +482,7 @@ function isoDate(date: Date): string {
  * Ошибку Meta пробрасываем текстом: «токен истёк» должно быть видно сразу,
  * а не превращаться в пустой отчёт.
  */
-async function graph<T>(url: string): Promise<T[]> {
+async function graph<T>(url: string, options?: { single?: boolean }): Promise<T[]> {
   const items: T[] = [];
   let next: string | null = url;
 
@@ -463,6 +500,10 @@ async function graph<T>(url: string): Promise<T[]> {
     if (!response.ok) {
       throw new Error(`Meta API вернул ${response.status}`);
     }
+
+    // Запрос свойств самого объекта (например, валюты кабинета) отдаёт объект,
+    // а не список: постраничка тут не при чём.
+    if (options?.single) return [payload as unknown as T];
 
     items.push(...(payload.data ?? []));
     next = payload.paging?.next ?? null;

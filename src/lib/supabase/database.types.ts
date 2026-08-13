@@ -109,6 +109,8 @@ export type AdAccountRow = Timestamps & {
   account_name: string;
   account_id: string | null;
   status: 'connected' | 'disconnected' | 'error';
+  /** Валюта рекламного кабинета: в ней приходит расход. */
+  currency: string | null;
 }
 
 export type CampaignRow = Timestamps & {
@@ -176,7 +178,18 @@ export type AdMetricRow = {
   cpm: number;
   leads: number;
   cpl: number;
+  /** Валюта поля spend. NULL — валюта компании (демо и ручные записи). */
+  currency: string | null;
   created_at: string;
+}
+
+/** Курс Нацбанка РК: сколько тенге стоит единица валюты в этот день. */
+export type ExchangeRateRow = {
+  date: string;
+  code: string;
+  kzt_per_unit: number;
+  source: string;
+  fetched_at: string;
 }
 
 export type LeadRow = Timestamps & {
@@ -321,6 +334,7 @@ export type Database = {
       ads: TableDef<AdRow, 'company_id' | 'name'>;
       creatives: TableDef<CreativeRow, 'company_id' | 'name' | 'platform'>;
       ad_metrics: TableDef<AdMetricRow, 'company_id' | 'date'>;
+      exchange_rates: TableDef<ExchangeRateRow, 'date' | 'code' | 'kzt_per_unit'>;
       leads: TableDef<LeadRow, 'company_id'>;
       employees: TableDef<EmployeeRow, 'company_id' | 'full_name' | 'role'>;
       employee_invites: TableDef<

@@ -14,7 +14,7 @@ import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/form
 import type { FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
 import { getTeam } from '@/lib/queries';
-import { AddEmployeeButton, EmployeeRowActions } from './team-controls';
+import { AddEmployeeButton, EmployeeRowActions, InviteButton } from './team-controls';
 
 export const metadata: Metadata = { title: 'Команда' };
 
@@ -148,11 +148,20 @@ export default async function TeamPage({
                     {member.revenue ? formatMoney(member.revenue, { compact: true }) : '—'}
                   </Td>
                   <Td last align="right">
-                    <EmployeeRowActions
-                      employeeId={member.id}
-                      fullName={member.fullName}
-                      status={member.status}
-                    />
+                    <div className="flex items-center justify-end gap-1">
+                      {member.status === 'active' ? (
+                        <InviteButton
+                          employeeId={member.id}
+                          fullName={member.fullName}
+                          linked={member.telegramLinked}
+                        />
+                      ) : null}
+                      <EmployeeRowActions
+                        employeeId={member.id}
+                        fullName={member.fullName}
+                        status={member.status}
+                      />
+                    </div>
                   </Td>
                 </tr>
               ))}

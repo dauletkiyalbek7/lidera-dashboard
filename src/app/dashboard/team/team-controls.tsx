@@ -4,8 +4,10 @@ import { useActionState, useState, useTransition } from 'react';
 
 import {
   createEmployee,
+  createInvite,
   fireEmployee,
   rehireEmployee,
+  type InviteState,
   type TeamState,
 } from '@/app/dashboard/team/actions';
 import { Done, SubmitButton } from '@/app/dashboard/leads/lead-controls';
@@ -61,6 +63,78 @@ export function AddEmployeeButton({ funnelType }: { funnelType: FunnelType }) {
           </form>
         )}
       </Modal>
+    </>
+  );
+}
+
+/**
+ * Ссылка-приглашение в бот. Показываем её в окне, а не копируем молча:
+ * директор должен видеть, что именно он отправляет сотруднику.
+ */
+export function InviteButton({
+  employeeId,
+  fullName,
+  linked,
+}: {
+  employeeId: string;
+  fullName: string;
+  linked: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [pending, startTransition] = useTransition();
+  const [state, setState] = useState<InviteState>({});
+  const [copied, setCopied] = useState(false);
+
+  const request = () => {
+    setOpen(true);
+    setCopied(false);
+    setState({});
+    startTransition(async () => setState(await createInvite(employeeId)));
+  };
+
+  const copy = async () => {
+    if (!state.link) return;
+    await navigator.clipboard.writeText(state.link);
+    setCopied(true);
+  };
+
+  return (
+    <>
+      <Button type="button" variant="ghost" size="sm" onClick={request}>
+        {linked ? 'Новая ссылка' : 'Пригласить'}
+      </Button>
+
+      {open ? (
+        <Modal
+          open
+          onClose={() => setOpen(false)}
+          title="Ссылка для входа в бот"
+          description={fullName}
+        >
+          <div className="space-y-4 px-5 py-5 sm:px-6">
+            {pending ? <p className="text-[13.5px] text-muted">Готовим ссылку…</p> : null}
+
+            {state.error ? (
+              <p className="text-[13.5px] text-negative">{state.error}</p>
+            ) : null}
+
+            {state.link ? (
+              <>
+                <p className="text-[13.5px] leading-relaxed text-ink-soft">
+                  Отправьте ссылку сотруднику. Она сработает один раз и сгорит через
+                  48 часов — прежние ссылки этого человека уже недействительны.
+                </p>
+                <p className="break-all rounded-control border border-line bg-surface-2 px-3 py-2.5 text-[12.5px] text-ink">
+                  {state.link}
+                </p>
+                <Button type="button" className="w-full" onClick={copy}>
+                  {copied ? 'Скопировано' : 'Скопировать ссылку'}
+                </Button>
+              </>
+            ) : null}
+          </div>
+        </Modal>
+      ) : null}
     </>
   );
 }

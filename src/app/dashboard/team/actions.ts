@@ -114,6 +114,72 @@ export async function rehireEmployee(employeeId: string): Promise<TeamState> {
   return { success: 'Сотрудник снова активен.' };
 }
 
+/** Сколько живёт ссылка-приглашение. Дольше — выше риск, что её перешлют. */
+const INVITE_TTL_HOURS = 48;
+
+export type InviteState = { error?: string; link?: string; expiresAt?: string };
+
+/**
+ * Ссылка для входа сотрудника в бот: t.me/<бот>?start=<токен>.
+ *
+ * Токен случайный и одноразовый — бот пометит его использованным при первом
+ * переходе. Прежние неиспользованные приглашения этого сотрудника гасим, иначе
+ * старая ссылка из переписки останется рабочей.
+ */
+export async function createInvite(employeeId: string): Promise<InviteState> {
+  const { company } = await requireCompanySession();
+
+  const parsed = z.string().uuid().safeParse(employeeId);
+  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
+
+  const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
+  if (!botUsername) return { error: 'Бот не настроен: не задано имя бота.' };
+
+  const supabase = await createServerSupabase();
+
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('id, status')
+    .eq('id', parsed.data)
+    .eq('company_id', company.id)
+    .maybeSingle();
+
+  if (!employee) return { error: 'Сотрудник не найден.' };
+  if (employee.status !== 'active') return { error: 'Сотрудник уволен.' };
+
+  const now = new Date();
+  await supabase
+    .from('employee_invites')
+    .update({ used_at: now.toISOString() })
+    .eq('employee_id', parsed.data)
+    .eq('company_id', company.id)
+    .is('used_at', null);
+
+  const token = randomToken();
+  const expiresAt = new Date(now.getTime() + INVITE_TTL_HOURS * 60 * 60 * 1000);
+
+  const { error } = await supabase.from('employee_invites').insert({
+    company_id: company.id,
+    employee_id: parsed.data,
+    token,
+    expires_at: expiresAt.toISOString(),
+  });
+
+  if (error) return { error: 'Не удалось создать приглашение.' };
+
+  revalidateTeam();
+  return {
+    link: `https://t.me/${botUsername}?start=${token}`,
+    expiresAt: expiresAt.toISOString(),
+  };
+}
+
+/** 32 символа из криптографического источника — угадать перебором нереально. */
+function randomToken(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(24));
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
 /** Назначить ответственного за лида. Пустая строка снимает ответственного. */
 export async function assignLead(
   leadId: string,

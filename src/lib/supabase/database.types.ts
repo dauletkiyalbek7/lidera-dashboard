@@ -222,6 +222,27 @@ export type AuditLogRow = {
   created_at: string;
 }
 
+/** Одноразовое приглашение сотрудника в Telegram-бот. */
+export type EmployeeInviteRow = {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  token: string;
+  expires_at: string;
+  used_at: string | null;
+  created_at: string;
+}
+
+/** Рабочая смена: открыта, пока ended_at пуст. */
+export type ShiftRow = Timestamps & {
+  id: string;
+  company_id: string;
+  employee_id: string;
+  started_at: string;
+  ended_at: string | null;
+  source: 'telegram' | 'manual';
+}
+
 type TableDef<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Partial<Row> & Pick<Row, Required>;
@@ -243,6 +264,11 @@ export type Database = {
       ad_metrics: TableDef<AdMetricRow, 'company_id' | 'date'>;
       leads: TableDef<LeadRow, 'company_id'>;
       employees: TableDef<EmployeeRow, 'company_id' | 'full_name' | 'role'>;
+      employee_invites: TableDef<
+        EmployeeInviteRow,
+        'company_id' | 'employee_id' | 'token' | 'expires_at'
+      >;
+      shifts: TableDef<ShiftRow, 'company_id' | 'employee_id'>;
       trials: TableDef<TrialRow, 'company_id'>;
       sales: TableDef<SaleRow, 'company_id'>;
       receipts: TableDef<ReceiptRow, 'company_id'>;

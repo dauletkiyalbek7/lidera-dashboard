@@ -34,7 +34,7 @@ export default async function TrialsPage({
   // У компаний с прямой продажей пробных занятий нет — раздел им не показывается.
   if (company.funnel_type !== 'trial') redirect('/dashboard');
 
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
   const trials = await getTrials(company.id, range.from, range.to);
 
   const completed = trials.filter((trial) => trial.status === 'completed').length;

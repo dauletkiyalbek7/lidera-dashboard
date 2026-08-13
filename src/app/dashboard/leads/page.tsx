@@ -45,7 +45,7 @@ export default async function LeadsPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
   const [leads, stats, creatives, employees] = await Promise.all([

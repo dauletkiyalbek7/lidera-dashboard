@@ -26,7 +26,14 @@ export type DateRange = {
   label: string;
 };
 
-export const DEFAULT_PRESET: PresetKey = '30d';
+/**
+ * По умолчанию показываем сегодняшний день: директор заходит утром узнать,
+ * что происходит сейчас, а не листать месяц назад.
+ */
+export const DEFAULT_PRESET: PresetKey = 'today';
+
+/** Часовой пояс по умолчанию: платформа работает в Казахстане. */
+export const DEFAULT_TIME_ZONE = 'Asia/Almaty';
 
 export const PRESETS: { key: PresetKey; label: string }[] = [
   { key: 'today', label: 'Сегодня' },
@@ -51,6 +58,33 @@ export function toIsoDate(date: Date): string {
 export function parseIsoDate(value: string): Date {
   const [year, month, day] = value.split('-').map(Number);
   return new Date(year, month - 1, day);
+}
+
+/**
+ * Сегодняшняя дата в часовом поясе компании.
+ *
+ * Сервер живёт по UTC, а Алматы на пять часов впереди: с полуночи до пяти утра
+ * «сегодня» по-серверному — это ещё вчерашний день. Для отчётов день должен
+ * начинаться тогда же, когда он начинается у людей в офисе.
+ */
+export function zonedIsoDate(date: Date, timeZone: string = DEFAULT_TIME_ZONE): string {
+  try {
+    // en-CA форматирует дату как YYYY-MM-DD.
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(date);
+  } catch {
+    // Неизвестный пояс в настройках не должен ронять страницу.
+    return toIsoDate(date);
+  }
+}
+
+/** «Сегодня» компании как Date — от него считаются все пресеты. */
+export function todayInZone(timeZone?: string): Date {
+  return parseIsoDate(zonedIsoDate(new Date(), timeZone ?? DEFAULT_TIME_ZONE));
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -117,26 +151,31 @@ export function presetRange(preset: PresetKey, today = new Date()): {
  * Разбор параметров страницы. Произвольный диапазон имеет приоритет над
  * пресетом; некорректные значения молча заменяются диапазоном по умолчанию.
  */
-export function resolveRange(params: {
-  period?: string;
-  from?: string;
-  to?: string;
-}): DateRange {
+export function resolveRange(
+  params: {
+    period?: string;
+    from?: string;
+    to?: string;
+  },
+  timeZone?: string,
+): DateRange {
+  const today = todayInZone(timeZone);
+
   if (isValidIsoDate(params.from) && isValidIsoDate(params.to)) {
     const [from, to] =
       params.from <= params.to ? [params.from, params.to] : [params.to, params.from];
-    return { from, to, preset: matchPreset(from, to), label: rangeLabel(from, to) };
+    return { from, to, preset: matchPreset(from, to, today), label: rangeLabel(from, to) };
   }
 
   const preset = PRESETS.find((item) => item.key === params.period)?.key ?? DEFAULT_PRESET;
-  const { from, to } = presetRange(preset);
+  const { from, to } = presetRange(preset, today);
   return { from, to, preset, label: rangeLabel(from, to) };
 }
 
 /** Если ручной диапазон совпал с пресетом — подсвечиваем этот пресет. */
-function matchPreset(from: string, to: string): PresetKey | null {
+function matchPreset(from: string, to: string, today: Date): PresetKey | null {
   for (const { key } of PRESETS) {
-    const range = presetRange(key);
+    const range = presetRange(key, today);
     if (range.from === from && range.to === to) return key;
   }
   return null;

@@ -20,7 +20,7 @@ export default async function FinancePage({
 }) {
   const { company } = await requireCompanySession();
   const currency = company.currency;
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
 
   const [{ totals, trend }, subscription] = await Promise.all([
     getDashboardData(company.id, range.from, range.to),

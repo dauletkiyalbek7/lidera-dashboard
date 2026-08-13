@@ -61,7 +61,7 @@ export default async function AdsPage({
 }) {
   const { company, profile } = await requireCompanySession();
   const currency = company.currency;
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
 
   const [accounts, campaigns, breakdown, currencyNote] = await Promise.all([
     getAdAccounts(company.id),

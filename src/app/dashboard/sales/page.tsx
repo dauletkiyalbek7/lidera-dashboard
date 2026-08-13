@@ -31,7 +31,7 @@ export default async function SalesPage({
 }) {
   const { company } = await requireCompanySession();
   const currency = company.currency;
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
 
   const [sales, leads] = await Promise.all([
     getSales(company.id, range.from, range.to),

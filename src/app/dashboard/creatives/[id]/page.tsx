@@ -25,7 +25,7 @@ export default async function CreativePage({
   const { company } = await requireCompanySession();
   const currency = company.currency;
   const { id } = await params;
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
 
   const cards = await getCreativeCards(company.id, range.from, range.to);
   const creative = cards.find((card) => card.id === id);

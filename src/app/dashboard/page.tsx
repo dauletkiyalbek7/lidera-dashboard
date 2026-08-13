@@ -25,7 +25,7 @@ export default async function DashboardPage({
 }) {
   const { company } = await requireCompanySession();
   const currency = company.currency;
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
   const { totals, trend, creatives, hasAdData } = await getDashboardData(
     company.id,
     range.from,

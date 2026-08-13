@@ -42,7 +42,7 @@ export default async function AttendancePage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
   const rows = await getAttendance(company.id, range.from, range.to);
 
   const mode = company.shift_mode as ShiftMode;

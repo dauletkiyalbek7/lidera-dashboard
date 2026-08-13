@@ -23,7 +23,7 @@ export default async function CreativesPage({
 }) {
   const { company } = await requireCompanySession();
   const currency = company.currency;
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
 
   const cards = await getCreativeCards(company.id, range.from, range.to);
 

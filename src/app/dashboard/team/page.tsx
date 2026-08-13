@@ -52,7 +52,7 @@ export default async function TeamPage({
 }) {
   const { company } = await requireCompanySession();
   const currency = company.currency;
-  const range = resolveRange(await searchParams);
+  const range = resolveRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
   const team = await getTeam(company.id, range.from, range.to);

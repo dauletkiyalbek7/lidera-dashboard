@@ -9,7 +9,6 @@ import { requireCompanySession } from '@/lib/auth';
 import { formatDateTime } from '@/lib/format';
 import { INTEGRATION_STATUS, statusOf } from '@/lib/labels';
 import { getIntegrations } from '@/lib/queries';
-import { SyncMetaButton } from './sync-button';
 
 export const metadata: Metadata = { title: 'Интеграции' };
 
@@ -45,7 +44,7 @@ const CATALOG = [
 ] as const;
 
 export default async function IntegrationsPage() {
-  const { company, profile } = await requireCompanySession();
+  const { company } = await requireCompanySession();
   const integrations = await getIntegrations(company.id);
   const byPlatform = new Map(integrations.map((item) => [item.platform, item]));
 
@@ -91,7 +90,9 @@ export default async function IntegrationsPage() {
                         : 'Синхронизаций ещё не было'}
                     </p>
                     {item.platform === 'meta' ? (
-                      <span className="text-[12px] text-faint">Обновляется каждую ночь</span>
+                      <ButtonLink href="/dashboard/ads" variant="secondary" size="sm">
+                        Открыть «Рекламу»
+                      </ButtonLink>
                     ) : (
                       <ButtonLink href="/contacts" variant="secondary" size="sm">
                         Подключить
@@ -106,7 +107,10 @@ export default async function IntegrationsPage() {
                   ) : null}
 
                   {item.platform === 'meta' ? (
-                    <SyncMetaButton disabled={profile.role !== 'DIRECTOR'} />
+                    <p className="text-[12px] text-faint">
+                      Обновляется каждую ночь. Обновить вручную — кнопкой в разделе
+                      «Реклама».
+                    </p>
                   ) : null}
                 </div>
               </Card>

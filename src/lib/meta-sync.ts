@@ -210,38 +210,113 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (saved) campaignIdByExternal.set(campaign.id, saved.id);
   }
 
-  // --- 3. Дневные метрики по кампаниям ------------------------------------
+  // --- 3. Объявления и креативы -------------------------------------------
+  // Ролик и его цифры нужны в одном месте, поэтому идём на уровень
+  // объявления: только там видно, какой креатив принёс переписки.
+  const ads = await graph<MetaAd>(
+    `${GRAPH}/${actId}/ads?fields=name,status,campaign_id,` +
+      `creative{id,name,object_type,video_id,image_url,thumbnail_url,object_story_spec}` +
+      `&limit=200&access_token=${token}`,
+  );
+
+  const creativeIdByAd = new Map<string, string>();
+
+  for (const ad of ads) {
+    const creative = ad.creative;
+    if (!creative) continue;
+
+    const story = creative.object_story_spec;
+    const videoData = story?.video_data;
+    const linkData = story?.link_data;
+
+    // Видео берём из object_story_spec: у самого креатива лежит служебная
+    // копия, к которой у приложения нет доступа.
+    const videoId = videoData?.video_id ?? creative.video_id ?? null;
+
+    const { data: saved } = await supabase
+      .from('creatives')
+      .upsert(
+        {
+          company_id: account.company_id,
+          external_id: creative.id,
+          name: videoData?.title || linkData?.name || creative.name || ad.name,
+          platform: 'meta',
+          format: videoId ? 'video' : 'image',
+          status: adStatus(ad.status),
+          video_id: videoId,
+          title: videoData?.title ?? linkData?.name ?? null,
+          body: videoData?.message ?? linkData?.message ?? null,
+          // Обложка — полноразмерный кадр объявления, а не превью 64×64,
+          // которое Meta обрезает по центру и режет людям лица.
+          thumbnail_url:
+            videoData?.image_url ?? linkData?.picture ?? creative.image_url ?? null,
+        },
+        { onConflict: 'company_id,platform,external_id' },
+      )
+      .select('id')
+      .maybeSingle();
+
+    if (saved) creativeIdByAd.set(ad.id, saved.id);
+  }
+
+  // --- 4. Дневные метрики по объявлениям ----------------------------------
   const insights = await graph<MetaInsight>(
-    `${GRAPH}/${actId}/insights?level=campaign&time_increment=1` +
-      `&fields=campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start` +
+    `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
+      `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start` +
       `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
       `&limit=500&access_token=${token}`,
   );
 
-  const rows = insights
-    .filter((row) => row.campaign_id && campaignIdByExternal.has(row.campaign_id))
-    .map((row) => {
-      const spend = Number(row.spend ?? 0);
-      const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
-      const leads = conversations || actionValue(row.actions, LEAD_ACTIONS);
+  // Один креатив может крутиться в нескольких объявлениях — складываем,
+  // иначе строки подерутся за уникальный ключ «креатив + день».
+  const merged = new Map<string, MetricRow>();
 
-      return {
-        company_id: account.company_id,
-        campaign_id: campaignIdByExternal.get(row.campaign_id!)!,
-        creative_id: null,
-        platform: 'meta' as const,
-        date: row.date_start,
-        spend,
-        impressions: Number(row.impressions ?? 0),
-        reach: Number(row.reach ?? 0),
-        clicks: Number(row.clicks ?? 0),
-        ctr: Number(row.ctr ?? 0),
-        cpc: Number(row.cpc ?? 0),
-        cpm: Number(row.cpm ?? 0),
-        leads,
-        cpl: leads ? Number((spend / leads).toFixed(2)) : 0,
-      };
-    });
+  for (const row of insights) {
+    const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
+    if (!campaignId) continue;
+
+    const creativeId = row.ad_id ? (creativeIdByAd.get(row.ad_id) ?? null) : null;
+    const key = `${creativeId ?? 'нет'}|${campaignId}|${row.date_start}`;
+
+    const spend = Number(row.spend ?? 0);
+    const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
+    const leads = conversations || actionValue(row.actions, LEAD_ACTIONS);
+
+    const current = merged.get(key) ?? {
+      company_id: account.company_id,
+      campaign_id: campaignId,
+      creative_id: creativeId,
+      platform: 'meta' as const,
+      date: row.date_start,
+      spend: 0,
+      impressions: 0,
+      reach: 0,
+      clicks: 0,
+      ctr: 0,
+      cpc: 0,
+      cpm: 0,
+      leads: 0,
+      cpl: 0,
+    };
+
+    current.spend += spend;
+    current.impressions += Number(row.impressions ?? 0);
+    current.reach += Number(row.reach ?? 0);
+    current.clicks += Number(row.clicks ?? 0);
+    current.leads += leads;
+
+    merged.set(key, current);
+  }
+
+  const rows = Array.from(merged.values()).map((row) => ({
+    ...row,
+    spend: round2(row.spend),
+    // Производные пересчитываем после сложения: усреднять проценты нельзя.
+    ctr: row.impressions ? round4((row.clicks / row.impressions) * 100) : 0,
+    cpc: row.clicks ? round2(row.spend / row.clicks) : 0,
+    cpm: row.impressions ? round2((row.spend / row.impressions) * 1000) : 0,
+    cpl: row.leads ? round2(row.spend / row.leads) : 0,
+  }));
 
   // Окно перезаписываем: так повторный запуск не удваивает дни.
   await supabase
@@ -271,7 +346,53 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   };
 }
 
+type MetricRow = {
+  company_id: string;
+  campaign_id: string;
+  creative_id: string | null;
+  platform: 'meta';
+  date: string;
+  spend: number;
+  impressions: number;
+  reach: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  leads: number;
+  cpl: number;
+};
+
+type MetaAd = {
+  id: string;
+  name: string;
+  status: string;
+  campaign_id?: string;
+  creative?: {
+    id: string;
+    name?: string;
+    object_type?: string;
+    video_id?: string;
+    image_url?: string;
+    thumbnail_url?: string;
+    object_story_spec?: {
+      video_data?: {
+        video_id?: string;
+        title?: string;
+        message?: string;
+        image_url?: string;
+      };
+      link_data?: {
+        name?: string;
+        message?: string;
+        picture?: string;
+      };
+    };
+  };
+};
+
 type MetaInsight = {
+  ad_id?: string;
   campaign_id?: string;
   date_start: string;
   spend?: string;
@@ -295,6 +416,18 @@ function actionValue(
     if (found) return Number(found.value) || 0;
   }
   return 0;
+}
+
+function adStatus(status: string): 'active' | 'paused' | 'archived' {
+  return campaignStatus(status);
+}
+
+function round2(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function round4(value: number): number {
+  return Number(value.toFixed(4));
 }
 
 function campaignStatus(status: string): 'active' | 'paused' | 'archived' {

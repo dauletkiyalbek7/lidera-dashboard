@@ -211,6 +211,183 @@ export async function getCampaigns(companyId: string) {
   return data ?? [];
 }
 
+export type CreativeCard = {
+  id: string;
+  name: string;
+  title: string | null;
+  body: string | null;
+  status: string;
+  format: string | null;
+  platform: string;
+  thumbnailUrl: string | null;
+  hasVideo: boolean;
+  /** В каких кампаниях крутился и на какие номера вёл. */
+  campaigns: string[];
+  numbers: string[];
+  /** Из рекламного кабинета. */
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number;
+  /** Написали / лиды по данным площадки. */
+  conversions: number;
+  costPerConversion: number;
+  /** Из CRM: заявки, продажи и деньги, дошедшие до кассы. */
+  crmLeads: number;
+  sales: number;
+  revenue: number;
+};
+
+/**
+ * Креативы с медиа и цифрами за период.
+ *
+ * Две группы чисел намеренно не смешиваются: слева то, что говорит рекламный
+ * кабинет (расход, клики, написали), справа — что дошло до CRM (заявки,
+ * продажи, выручка). Пока CRM пустая, там честные нули, а не пересчёт одного
+ * в другое.
+ */
+export async function getCreativeCards(
+  companyId: string,
+  from: string,
+  to: string,
+): Promise<CreativeCard[]> {
+  const supabase = await createServerSupabase();
+
+  const [{ data: creatives }, { data: metrics }, { data: leads }, { data: sales }] =
+    await Promise.all([
+      supabase
+        .from('creatives')
+        .select('id, name, title, body, status, format, platform, thumbnail_url, video_id')
+        .eq('company_id', companyId),
+      supabase
+        .from('ad_metrics')
+        .select('creative_id, campaign_id, spend, impressions, clicks, leads')
+        .eq('company_id', companyId)
+        .not('creative_id', 'is', null)
+        .gte('date', from)
+        .lte('date', to),
+      supabase
+        .from('leads')
+        .select('id, creative_id')
+        .eq('company_id', companyId)
+        .not('creative_id', 'is', null)
+        .gte('created_at', `${from}T00:00:00Z`)
+        .lte('created_at', `${to}T23:59:59Z`),
+      supabase
+        .from('sales')
+        .select('amount, lead_id')
+        .eq('company_id', companyId)
+        .eq('status', 'paid')
+        .gte('sale_date', from)
+        .lte('sale_date', to),
+    ]);
+
+  const creativeOfLead = new Map((leads ?? []).map((lead) => [lead.id, lead.creative_id]));
+
+  const { data: campaignRows } = await supabase
+    .from('campaigns')
+    .select('id, name, whatsapp_number')
+    .eq('company_id', companyId);
+
+  const campaignById = new Map((campaignRows ?? []).map((row) => [row.id, row]));
+  const placement = new Map<string, { campaigns: Set<string>; numbers: Set<string> }>();
+
+  const stats = new Map<
+    string,
+    {
+      spend: number;
+      impressions: number;
+      clicks: number;
+      conversions: number;
+      crmLeads: number;
+      sales: number;
+      revenue: number;
+    }
+  >();
+
+  const bucket = (id: string) => {
+    let value = stats.get(id);
+    if (!value) {
+      value = {
+        spend: 0,
+        impressions: 0,
+        clicks: 0,
+        conversions: 0,
+        crmLeads: 0,
+        sales: 0,
+        revenue: 0,
+      };
+      stats.set(id, value);
+    }
+    return value;
+  };
+
+  for (const row of metrics ?? []) {
+    if (!row.creative_id) continue;
+    const target = bucket(row.creative_id);
+    target.spend += Number(row.spend);
+    target.impressions += Number(row.impressions);
+    target.clicks += Number(row.clicks);
+    target.conversions += Number(row.leads);
+
+    const campaign = row.campaign_id ? campaignById.get(row.campaign_id) : null;
+    if (campaign) {
+      let where = placement.get(row.creative_id);
+      if (!where) {
+        where = { campaigns: new Set(), numbers: new Set() };
+        placement.set(row.creative_id, where);
+      }
+      where.campaigns.add(campaign.name);
+      if (campaign.whatsapp_number) where.numbers.add(campaign.whatsapp_number);
+    }
+  }
+
+  for (const lead of leads ?? []) {
+    if (lead.creative_id) bucket(lead.creative_id).crmLeads += 1;
+  }
+
+  for (const sale of sales ?? []) {
+    const creativeId = sale.lead_id ? creativeOfLead.get(sale.lead_id) : null;
+    if (!creativeId) continue;
+    const target = bucket(creativeId);
+    target.sales += 1;
+    target.revenue += Number(sale.amount);
+  }
+
+  return (creatives ?? [])
+    .map((creative) => {
+      const value = stats.get(creative.id);
+      const spend = value?.spend ?? 0;
+      const impressions = value?.impressions ?? 0;
+      const clicks = value?.clicks ?? 0;
+      const conversions = value?.conversions ?? 0;
+
+      return {
+        id: creative.id,
+        name: creative.name,
+        title: creative.title,
+        body: creative.body,
+        status: creative.status,
+        format: creative.format,
+        platform: creative.platform,
+        thumbnailUrl: creative.thumbnail_url,
+        hasVideo: Boolean(creative.video_id),
+        campaigns: Array.from(placement.get(creative.id)?.campaigns ?? []),
+        numbers: Array.from(placement.get(creative.id)?.numbers ?? []),
+        spend,
+        impressions,
+        clicks,
+        ctr: impressions ? (clicks / impressions) * 100 : 0,
+        conversions,
+        costPerConversion: conversions ? spend / conversions : 0,
+        crmLeads: value?.crmLeads ?? 0,
+        sales: value?.sales ?? 0,
+        revenue: value?.revenue ?? 0,
+      };
+    })
+    .sort((a, b) => b.spend - a.spend || b.conversions - a.conversions);
+}
+
 export type AdBreakdownRow = {
   key: string;
   title: string;

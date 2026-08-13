@@ -14,6 +14,7 @@ import { formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import { INTEGRATION_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
 import { resolveRange } from '@/lib/period';
 import { getAdAccounts, getAdBreakdown, getCampaigns } from '@/lib/queries';
+import { SyncMetaButton } from '@/app/dashboard/integrations/sync-button';
 
 export const metadata: Metadata = { title: 'Реклама' };
 
@@ -47,7 +48,7 @@ export default async function AdsPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company, profile } = await requireCompanySession();
   const currency = company.currency;
   const range = resolveRange(await searchParams);
 
@@ -84,7 +85,12 @@ export default async function AdsPage({
       <PageHeader
         title="Реклама"
         description="Сколько потратили, сколько человек написало и почём вышел один написавший."
-        action={<DateRangePicker range={range} />}
+        action={
+          <div className="flex flex-wrap items-center gap-3">
+            <DateRangePicker range={range} />
+            <SyncMetaButton disabled={profile.role !== 'DIRECTOR'} />
+          </div>
+        }
       />
 
       <PageBody>

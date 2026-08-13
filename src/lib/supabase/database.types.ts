@@ -143,6 +143,10 @@ export type CreativeRow = Timestamps & {
   format: 'video' | 'image' | 'carousel' | 'other' | null;
   platform: AdPlatform;
   status: 'active' | 'paused' | 'archived';
+  /** Медиа и тексты объявления — для просмотра креатива в кабинете. */
+  video_id: string | null;
+  title: string | null;
+  body: string | null;
 }
 
 export type AdRow = Timestamps & {

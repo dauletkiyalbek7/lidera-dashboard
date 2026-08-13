@@ -86,9 +86,9 @@ export default async function AdsPage({
         title="Реклама"
         description="Сколько потратили, сколько человек написало и почём вышел один написавший."
         action={
-          <div className="flex flex-wrap items-center gap-3">
-            <DateRangePicker range={range} />
+          <div className="flex flex-wrap items-center justify-end gap-2.5">
             <SyncMetaButton disabled={profile.role !== 'DIRECTOR'} />
+            <DateRangePicker range={range} />
           </div>
         }
       />

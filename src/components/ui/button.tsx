@@ -2,7 +2,7 @@ import Link from 'next/link';
 import type { ComponentProps, ReactNode } from 'react';
 
 type Variant = 'primary' | 'secondary' | 'ghost' | 'danger';
-type Size = 'sm' | 'md' | 'lg';
+type Size = 'sm' | 'field' | 'md' | 'lg';
 
 const base =
   'inline-flex items-center justify-center gap-2 font-medium whitespace-nowrap ' +
@@ -18,6 +18,8 @@ const variants: Record<Variant, string> = {
 
 const sizes: Record<Size, string> = {
   sm: 'h-9 px-3.5 text-[13px]',
+  /** Под высоту полей и выбора периода — чтобы в шапке ничего не съезжало. */
+  field: 'h-10 px-3.5 text-[13.5px]',
   md: 'h-11 px-5 text-sm',
   lg: 'h-13 px-7 text-[15px]',
 };

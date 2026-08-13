@@ -20,6 +20,7 @@ const companySchema = z.object({
   director_name: z.string().trim().max(120).optional(),
   phone: z.string().trim().max(40).optional(),
   funnel_type: z.enum(['trial', 'direct']),
+  currency: z.enum(['KZT', 'USD', 'EUR', 'RUB']),
 });
 
 /** Реквизиты компании правит только директор — это же ограничение стоит в RLS. */
@@ -38,6 +39,7 @@ export async function updateCompany(
     director_name: formData.get('director_name'),
     phone: formData.get('phone'),
     funnel_type: formData.get('funnel_type'),
+    currency: formData.get('currency') ?? 'KZT',
   });
 
   if (!parsed.success) {
@@ -52,6 +54,7 @@ export async function updateCompany(
       director_name: parsed.data.director_name || null,
       phone: parsed.data.phone || null,
       funnel_type: parsed.data.funnel_type,
+      currency: parsed.data.currency,
     })
     .eq('id', company.id);
 

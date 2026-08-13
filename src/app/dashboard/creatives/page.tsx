@@ -22,6 +22,7 @@ export default async function CreativesPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
+  const currency = company.currency;
   const range = resolveRange(await searchParams);
   const { creatives } = await getDashboardData(company.id, range.from, range.to);
   const funnelType = company.funnel_type as FunnelType;
@@ -59,16 +60,16 @@ export default async function CreativesPage({
                 label="Лучший креатив"
                 value={best?.name ?? '—'}
                 accent
-                hint={best ? `ROAS ${formatRatio(best.roas)} · ${formatMoney(best.revenue)}` : undefined}
+                hint={best ? `ROAS ${formatRatio(best.roas)} · ${formatMoney(best.revenue, { currency })}` : undefined}
               />
               <StatTile
                 label="Худший креатив"
                 value={worst?.name ?? '—'}
-                hint={worst ? `ROAS ${formatRatio(worst.roas)} · ${formatMoney(worst.spend)} расхода` : undefined}
+                hint={worst ? `ROAS ${formatRatio(worst.roas)} · ${formatMoney(worst.spend, { currency })} расхода` : undefined}
               />
               <StatTile
                 label="Расход на убыточные"
-                value={formatMoney(wasted)}
+                value={formatMoney(wasted, { currency })}
                 hint="Креативы с ROAS ниже 1 — реклама не окупается"
               />
             </div>
@@ -78,7 +79,7 @@ export default async function CreativesPage({
                 title="Сквозная аналитика креативов"
                 subtitle={`Расход, лиды, продажи и выручка за ${range.label}`}
               />
-              <CreativeTable creatives={creatives} funnelType={funnelType} />
+              <CreativeTable creatives={creatives} funnelType={funnelType} currency={currency} />
             </Card>
           </>
         )}

@@ -1,17 +1,45 @@
-/** Централизованное форматирование чисел, денег и дат. Валюта — тенге. */
+/**
+ * Централизованное форматирование чисел, денег и дат.
+ *
+ * Валюта по умолчанию — тенге, но у компании она своя: рекламный кабинет может
+ * выставлять счета в долларах, и подписать такую сумму знаком тенге нельзя.
+ */
 
 const RU = 'ru-RU';
 
-export function formatMoney(value: number, options?: { compact?: boolean }): string {
+export const CURRENCIES = {
+  KZT: { symbol: '₸', label: 'Тенге ₸' },
+  USD: { symbol: '$', label: 'Доллар $' },
+  EUR: { symbol: '€', label: 'Евро €' },
+  RUB: { symbol: '₽', label: 'Рубль ₽' },
+} as const;
+
+export type Currency = keyof typeof CURRENCIES;
+
+export function currencySymbol(currency?: string): string {
+  return CURRENCIES[currency as Currency]?.symbol ?? CURRENCIES.KZT.symbol;
+}
+
+export function formatMoney(
+  value: number,
+  options?: { compact?: boolean; currency?: string },
+): string {
+  const symbol = currencySymbol(options?.currency);
+
   if (options?.compact && Math.abs(value) >= 1_000_000) {
-    return `${trimZero(value / 1_000_000)} млн ₸`;
+    return `${trimZero(value / 1_000_000)} млн ${symbol}`;
   }
   if (options?.compact && Math.abs(value) >= 10_000) {
-    return `${trimZero(value / 1000)} тыс ₸`;
+    return `${trimZero(value / 1000)} тыс ${symbol}`;
   }
-  return `${new Intl.NumberFormat(RU, { maximumFractionDigits: 0 }).format(
-    Math.round(value),
-  )} ₸`;
+
+  // Доллары и евро округлять до целых нельзя: расход в 0,98 превратился бы в 1.
+  const fractionDigits = symbol === '₸' || Math.abs(value) >= 1000 ? 0 : 2;
+
+  return `${new Intl.NumberFormat(RU, {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(value)} ${symbol}`;
 }
 
 export function formatNumber(value: number, fractionDigits = 0): string {

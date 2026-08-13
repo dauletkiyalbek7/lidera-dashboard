@@ -19,10 +19,10 @@ const HEIGHT = 280;
 const PADDING = { top: 16, right: 16, bottom: 28, left: 56 };
 
 /**
- * Динамика выручки и расхода. Обе серии — деньги в тенге, поэтому шкала одна:
- * вторая ось Y здесь была бы выдумкой, а не информацией.
+ * Динамика выручки и расхода. Обе серии — деньги одной валюты, поэтому шкала
+ * одна: вторая ось Y здесь была бы выдумкой, а не информацией.
  */
-export function TrendChart({ data }: { data: TrendPoint[] }) {
+export function TrendChart({ data, currency }: { data: TrendPoint[]; currency: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(880);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
@@ -102,7 +102,7 @@ export function TrendChart({ data }: { data: TrendPoint[] }) {
       </div>
 
       {showTable ? (
-        <TrendTable data={data} />
+        <TrendTable data={data} currency={currency} />
       ) : (
         <div ref={containerRef} className="relative">
           <svg
@@ -245,7 +245,7 @@ export function TrendChart({ data }: { data: TrendPoint[] }) {
                       {series.label}
                     </dt>
                     <dd className="tabular text-[12.5px] font-medium text-ink">
-                      {formatMoney(active[series.key], { compact: true })}
+                      {formatMoney(active[series.key], { compact: true, currency })}
                     </dd>
                   </div>
                 ))}
@@ -258,7 +258,7 @@ export function TrendChart({ data }: { data: TrendPoint[] }) {
   );
 }
 
-function TrendTable({ data }: { data: TrendPoint[] }) {
+function TrendTable({ data, currency }: { data: TrendPoint[]; currency: string }) {
   return (
     <div className="max-h-72 overflow-auto rounded-panel border border-line">
       <table className="w-full text-left text-[13px]">
@@ -274,10 +274,10 @@ function TrendTable({ data }: { data: TrendPoint[] }) {
             <tr key={point.date}>
               <td className="px-4 py-2.5 text-ink-soft">{formatDateShort(point.date)}</td>
               <td className="tabular px-4 py-2.5 text-right text-ink">
-                {formatMoney(point.revenue)}
+                {formatMoney(point.revenue, { currency })}
               </td>
               <td className="tabular px-4 py-2.5 text-right text-ink">
-                {formatMoney(point.spend)}
+                {formatMoney(point.spend, { currency })}
               </td>
             </tr>
           ))}

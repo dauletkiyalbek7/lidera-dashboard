@@ -30,10 +30,12 @@ const VERDICT_TONE = {
 export function CreativeTable({
   creatives,
   funnelType,
+  currency,
   limit,
 }: {
   creatives: CreativePerformance[];
   funnelType: FunnelType;
+  currency: string;
   limit?: number;
 }) {
   const rows = limit ? creatives.slice(0, limit) : creatives;
@@ -68,13 +70,13 @@ export function CreativeTable({
                   </span>
                 </th>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
-                  {formatMoney(creative.spend, { compact: true })}
+                  {formatMoney(creative.spend, { compact: true, currency })}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
                   {formatNumber(creative.leads)}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
-                  {formatMoney(creative.cpl)}
+                  {formatMoney(creative.cpl, { currency })}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
                   {formatNumber(middleStepValue(funnelType, creative))}
@@ -83,7 +85,7 @@ export function CreativeTable({
                   {formatNumber(creative.sales)}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right font-medium text-ink">
-                  {formatMoney(creative.revenue, { compact: true })}
+                  {formatMoney(creative.revenue, { compact: true, currency })}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right font-medium text-ink">
                   {formatRatio(creative.roas)}

@@ -51,6 +51,7 @@ export default async function TeamPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
+  const currency = company.currency;
   const range = resolveRange(await searchParams);
   const funnelType = company.funnel_type as FunnelType;
 
@@ -101,7 +102,7 @@ export default async function TeamPage({
           />
           <StatTile
             label="Выручка команды"
-            value={formatMoney(revenue, { compact: true })}
+            value={formatMoney(revenue, { compact: true, currency })}
             hint="Продажи по лидам с ответственным"
             accent
           />
@@ -194,7 +195,7 @@ export default async function TeamPage({
                     {formatNumber(member.won)}
                   </Td>
                   <Td align="right" className="tabular font-medium text-ink">
-                    {member.revenue ? formatMoney(member.revenue, { compact: true }) : '—'}
+                    {member.revenue ? formatMoney(member.revenue, { compact: true, currency }) : '—'}
                   </Td>
                   <Td last align="right">
                     <div className="flex items-center justify-end gap-1">

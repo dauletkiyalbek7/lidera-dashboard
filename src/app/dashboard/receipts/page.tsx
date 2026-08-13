@@ -34,6 +34,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export default async function ReceiptsPage() {
   const { company } = await requireCompanySession();
+  const currency = company.currency;
   const receipts = await getReceipts(company.id);
 
   return (
@@ -68,7 +69,7 @@ export default async function ReceiptsPage() {
                       {receipt.phone ?? '—'}
                     </Td>
                     <Td className="tabular text-ink-soft">
-                      {formatMoney(Number(receipt.amount))}
+                      {formatMoney(Number(receipt.amount), { currency })}
                     </Td>
                     <Td className="tabular text-ink-soft">
                       {receipt.receipt_date ? formatDate(receipt.receipt_date) : '—'}

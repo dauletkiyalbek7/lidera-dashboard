@@ -40,6 +40,7 @@ export default async function SettingsPage() {
                 director_name: company.director_name ?? '',
                 phone: company.phone ?? '',
                 funnel_type: company.funnel_type,
+                currency: company.currency,
               }}
               disabled={profile.role !== 'DIRECTOR'}
             />

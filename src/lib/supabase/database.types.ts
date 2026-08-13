@@ -38,6 +38,8 @@ export type CompanyRow = Timestamps & {
   status: CompanyStatus;
   funnel_type: FunnelType;
   is_demo: boolean;
+  /** Валюта отчётов — совпадает с валютой рекламного кабинета. */
+  currency: string;
   /** Настройки авто-раздачи лидов. */
   auto_assign: boolean;
   max_open_leads: number;
@@ -118,6 +120,8 @@ export type CampaignRow = Timestamps & {
   platform: AdPlatform;
   status: 'active' | 'paused' | 'archived';
   objective: string | null;
+  /** Номер WhatsApp, на который ведёт кампания в переписки. */
+  whatsapp_number: string | null;
 }
 
 export type AdSetRow = Timestamps & {

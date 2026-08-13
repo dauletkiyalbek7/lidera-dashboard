@@ -19,6 +19,7 @@ export default async function FinancePage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
+  const currency = company.currency;
   const range = resolveRange(await searchParams);
 
   const [{ totals, trend }, subscription] = await Promise.all([
@@ -36,11 +37,11 @@ export default async function FinancePage({
 
       <PageBody>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label="Рекламный расход" value={formatMoney(totals.spend)} />
-          <StatTile label="Выручка" value={formatMoney(totals.revenue)} />
+          <StatTile label="Рекламный расход" value={formatMoney(totals.spend, { currency })} />
+          <StatTile label="Выручка" value={formatMoney(totals.revenue, { currency })} />
           <StatTile
             label="Прибыль до прочих расходов"
-            value={formatMoney(totals.profit)}
+            value={formatMoney(totals.profit, { currency })}
             accent
           />
           <StatTile
@@ -48,9 +49,9 @@ export default async function FinancePage({
             value={formatRatio(totals.roas)}
             hint={`ROI: ${formatPercent(totals.roi, 0)}`}
           />
-          <StatTile label="CPL" value={formatMoney(totals.cpl)} />
-          <StatTile label="CAC" value={formatMoney(totals.cac)} />
-          <StatTile label="Средний чек" value={formatMoney(totals.averageCheck)} />
+          <StatTile label="CPL" value={formatMoney(totals.cpl, { currency })} />
+          <StatTile label="CAC" value={formatMoney(totals.cac, { currency })} />
+          <StatTile label="Средний чек" value={formatMoney(totals.averageCheck, { currency })} />
           <StatTile
             label="Конверсия лид → продажа"
             value={formatPercent(totals.conversion)}
@@ -62,7 +63,7 @@ export default async function FinancePage({
             title="Выручка и расход по дням"
             subtitle="Одна шкала в тенге: разрыв между линиями — это ваша прибыль"
           />
-          <TrendChart data={trend} />
+          <TrendChart data={trend} currency={currency} />
         </Card>
 
         <Card className="mt-4">

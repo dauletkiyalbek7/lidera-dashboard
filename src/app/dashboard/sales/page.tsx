@@ -30,6 +30,7 @@ export default async function SalesPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
+  const currency = company.currency;
   const range = resolveRange(await searchParams);
 
   const [sales, leads] = await Promise.all([
@@ -62,10 +63,10 @@ export default async function SalesPage({
       <PageBody>
         <div className="grid gap-3 sm:grid-cols-3">
           <StatTile label="Продаж" value={formatNumber(paid.length)} />
-          <StatTile label="Выручка" value={formatMoney(revenue)} accent />
+          <StatTile label="Выручка" value={formatMoney(revenue, { currency })} accent />
           <StatTile
             label="Средний чек"
-            value={formatMoney(averageCheck(revenue, paid.length))}
+            value={formatMoney(averageCheck(revenue, paid.length), { currency })}
           />
         </div>
 
@@ -92,7 +93,7 @@ export default async function SalesPage({
                     <SaleStatusSelect saleId={sale.id} status={sale.status} />
                   </Td>
                   <Td last align="right" className="tabular font-medium text-ink">
-                    {formatMoney(sale.amount)}
+                    {formatMoney(sale.amount, { currency })}
                   </Td>
                 </tr>
               ))}

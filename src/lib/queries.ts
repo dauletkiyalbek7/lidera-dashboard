@@ -205,10 +205,157 @@ export async function getCampaigns(companyId: string) {
   const supabase = await createServerSupabase();
   const { data } = await supabase
     .from('campaigns')
-    .select('id, name, platform, status, objective, created_at')
+    .select('id, name, platform, status, objective, whatsapp_number, created_at')
     .eq('company_id', companyId)
     .order('created_at', { ascending: false });
   return data ?? [];
+}
+
+export type AdBreakdownRow = {
+  key: string;
+  title: string;
+  subtitle: string | null;
+  status: string | null;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  /** Для кампаний в переписки это начатые переписки, для остальных — лиды Meta. */
+  conversions: number;
+  costPerConversion: number;
+  activeDays: number;
+};
+
+export type AdBreakdown = {
+  totals: {
+    spend: number;
+    impressions: number;
+    clicks: number;
+    conversions: number;
+    costPerConversion: number;
+    ctr: number;
+    cpc: number;
+  };
+  campaigns: AdBreakdownRow[];
+  numbers: AdBreakdownRow[];
+};
+
+/**
+ * Расход и результат по кампаниям и по номерам WhatsApp за период.
+ *
+ * Считаем из ad_metrics — тех же дневных строк, что отдаёт рекламный кабинет.
+ * Кампании без единого дня в периоде не показываем: пустая строка в отчёте
+ * только мешает искать глазами ту, которая крутится.
+ */
+export async function getAdBreakdown(
+  companyId: string,
+  from: string,
+  to: string,
+): Promise<AdBreakdown> {
+  const supabase = await createServerSupabase();
+
+  const [{ data: metrics }, { data: campaigns }] = await Promise.all([
+    supabase
+      .from('ad_metrics')
+      .select('campaign_id, date, spend, impressions, clicks, leads')
+      .eq('company_id', companyId)
+      .gte('date', from)
+      .lte('date', to),
+    supabase
+      .from('campaigns')
+      .select('id, name, status, whatsapp_number')
+      .eq('company_id', companyId),
+  ]);
+
+  const campaignById = new Map((campaigns ?? []).map((row) => [row.id, row]));
+
+  type MetricRow = {
+    campaign_id: string | null;
+    date: string;
+    spend: number;
+    impressions: number;
+    clicks: number;
+    leads: number;
+  };
+
+  const empty = () => ({ spend: 0, impressions: 0, clicks: 0, conversions: 0, days: new Set<string>() });
+  type Bucket = ReturnType<typeof empty>;
+
+  const byCampaign = new Map<string, Bucket>();
+  const byNumber = new Map<string, Bucket>();
+
+  const add = (map: Map<string, Bucket>, key: string, row: MetricRow) => {
+    let bucket = map.get(key);
+    if (!bucket) {
+      bucket = empty();
+      map.set(key, bucket);
+    }
+    bucket.spend += Number(row.spend);
+    bucket.impressions += Number(row.impressions);
+    bucket.clicks += Number(row.clicks);
+    bucket.conversions += Number(row.leads);
+    if (Number(row.spend) > 0) bucket.days.add(row.date);
+  };
+
+  for (const row of metrics ?? []) {
+    if (row.campaign_id) add(byCampaign, row.campaign_id, row);
+    const number = row.campaign_id
+      ? campaignById.get(row.campaign_id)?.whatsapp_number
+      : null;
+    if (number) add(byNumber, number, row);
+  }
+
+  const toRow = (
+    key: string,
+    bucket: Bucket,
+    title: string,
+    subtitle: string | null,
+    status: string | null,
+  ): AdBreakdownRow => ({
+    key,
+    title,
+    subtitle,
+    status,
+    spend: bucket.spend,
+    impressions: bucket.impressions,
+    clicks: bucket.clicks,
+    conversions: bucket.conversions,
+    costPerConversion: bucket.conversions ? bucket.spend / bucket.conversions : 0,
+    activeDays: bucket.days.size,
+  });
+
+  const campaignRows = Array.from(byCampaign, ([id, bucket]) => {
+    const campaign = campaignById.get(id);
+    return toRow(
+      id,
+      bucket,
+      campaign?.name ?? 'Без названия',
+      campaign?.whatsapp_number ?? null,
+      campaign?.status ?? null,
+    );
+  }).sort((a, b) => b.spend - a.spend);
+
+  const numberRows = Array.from(byNumber, ([number, bucket]) =>
+    toRow(number, bucket, number, null, null),
+  ).sort((a, b) => b.spend - a.spend);
+
+  const spend = sum(metrics ?? [], (row) => Number(row.spend));
+  const impressions = sum(metrics ?? [], (row) => Number(row.impressions));
+  const clicks = sum(metrics ?? [], (row) => Number(row.clicks));
+  const conversions = sum(metrics ?? [], (row) => Number(row.leads));
+
+  return {
+    totals: {
+      spend,
+      impressions,
+      clicks,
+      conversions,
+      costPerConversion: conversions ? spend / conversions : 0,
+      ctr: impressions ? (clicks / impressions) * 100 : 0,
+      cpc: clicks ? spend / clicks : 0,
+    },
+    campaigns: campaignRows,
+    numbers: numberRows,
+  };
 }
 
 const LIST_LIMIT = 200;

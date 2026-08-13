@@ -5,6 +5,7 @@ import { useFormStatus } from 'react-dom';
 
 import { Field, FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
+import { CURRENCIES } from '@/lib/format';
 import { FUNNEL_LABELS } from '@/lib/metrics';
 import { updateCompany, type SettingsState } from './actions';
 
@@ -17,6 +18,7 @@ export function CompanyForm({
     director_name: string;
     phone: string;
     funnel_type: string;
+    currency: string;
   };
   disabled: boolean;
 }) {
@@ -32,6 +34,28 @@ export function CompanyForm({
           defaultValue={defaults.director_name}
         />
         <Field label="Телефон" name="phone" type="tel" defaultValue={defaults.phone} />
+
+        <div>
+          <label htmlFor="currency" className="block text-[13px] font-medium text-ink-soft">
+            Валюта отчётов
+          </label>
+          <select
+            id="currency"
+            name="currency"
+            defaultValue={defaults.currency}
+            className="mt-2 h-11 w-full rounded-control border border-line bg-surface-2 px-3 text-[14.5px] text-ink focus:border-lime/50 focus:outline-none"
+          >
+            {(Object.keys(CURRENCIES) as (keyof typeof CURRENCIES)[]).map((key) => (
+              <option key={key} value={key}>
+                {CURRENCIES[key].label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+            Ставьте ту же валюту, в которой рекламный кабинет списывает деньги, —
+            иначе расход будет подписан не тем знаком.
+          </p>
+        </div>
 
         <div>
           <label

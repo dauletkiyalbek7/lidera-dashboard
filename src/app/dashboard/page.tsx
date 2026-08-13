@@ -24,6 +24,7 @@ export default async function DashboardPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireCompanySession();
+  const currency = company.currency;
   const range = resolveRange(await searchParams);
   const { totals, trend, creatives, hasAdData } = await getDashboardData(
     company.id,
@@ -63,13 +64,13 @@ export default async function DashboardPage({
 
         {/* KPI-строка: расход и выручка — главные числа, поэтому выделены */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label="Расход" value={formatMoney(totals.spend)} />
+          <StatTile label="Расход" value={formatMoney(totals.spend, { currency })} />
           <StatTile
             label="Лиды"
             value={formatNumber(totals.leads)}
             hint={`Клики: ${formatNumber(totals.clicks)}`}
           />
-          <StatTile label="CPL" value={formatMoney(totals.cpl)} />
+          <StatTile label="CPL" value={formatMoney(totals.cpl, { currency })} />
           <StatTile label={funnel.middleColumn} value={formatNumber(middle)} />
           <StatTile
             label="Продажи"
@@ -78,8 +79,8 @@ export default async function DashboardPage({
           />
           <StatTile
             label="Выручка"
-            value={formatMoney(totals.revenue)}
-            hint={`Средний чек: ${formatMoney(totals.averageCheck)}`}
+            value={formatMoney(totals.revenue, { currency })}
+            hint={`Средний чек: ${formatMoney(totals.averageCheck, { currency })}`}
           />
           <StatTile
             label="ROAS"
@@ -89,8 +90,8 @@ export default async function DashboardPage({
           />
           <StatTile
             label="Прибыль"
-            value={formatMoney(totals.profit)}
-            hint={`CAC: ${formatMoney(totals.cac)}`}
+            value={formatMoney(totals.profit, { currency })}
+            hint={`CAC: ${formatMoney(totals.cac, { currency })}`}
           />
         </div>
 
@@ -100,7 +101,7 @@ export default async function DashboardPage({
               title="Выручка и расход"
               subtitle="Обе величины в тенге и на одной шкале — без второй оси"
             />
-            <TrendChart data={trend} />
+            <TrendChart data={trend} currency={currency} />
           </Card>
 
           <Card>
@@ -126,7 +127,7 @@ export default async function DashboardPage({
             }
           />
           {creatives.length > 0 ? (
-            <CreativeTable creatives={creatives} funnelType={funnelType} limit={5} />
+            <CreativeTable creatives={creatives} funnelType={funnelType} currency={currency} limit={5} />
           ) : (
             <p className="px-6 py-10 text-center text-sm text-muted">
               За выбранный период по креативам нет данных.

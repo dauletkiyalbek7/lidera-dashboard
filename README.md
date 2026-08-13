@@ -7,6 +7,19 @@
 
 ---
 
+## Боевой контур
+
+| | Адрес |
+|---|---|
+| Сайт | https://lidera-dashboard.vercel.app |
+| Репозиторий | github.com/dauletkiyalbek7/lidera-dashboard (деплой на каждый push в `main`) |
+| База и Auth | Supabase «Lidera Final» (`xnfqsoruxkjhekdklxot`) |
+| Бот | [@lidera_dash_bot](https://t.me/lidera_dash_bot), вебхук `/api/telegram/webhook` |
+
+Порядок выката и что проверять — в [DEPLOY.md](./DEPLOY.md).
+
+---
+
 ## Быстрый старт
 
 ```bash

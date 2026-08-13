@@ -8,7 +8,7 @@
 `.gitignore`), но открывать логику продукта наружу незачем.
 
 ```bash
-git remote add origin git@github.com:<аккаунт>/lidera-dashboard.git
+git remote add origin git@github.com:dauletkiyalbek7/lidera-dashboard.git
 git push -u origin main
 ```
 
@@ -28,7 +28,7 @@ Framework определится автоматически (Next.js), кома�
 | `NEXT_PUBLIC_SUPABASE_URL` | как в `.env.local` | да |
 | `NEXT_PUBLIC_SUPABASE_ANON_KEY` | как в `.env.local` | да |
 | `SUPABASE_SERVICE_ROLE_KEY` | как в `.env.local` | **нет** |
-| `NEXT_PUBLIC_SITE_URL` | `https://<проект>.vercel.app` | да |
+| `NEXT_PUBLIC_SITE_URL` | `https://lidera-dashboard.vercel.app` | да |
 | `TELEGRAM_BOT_TOKEN` | как в `.env.local` | **нет** |
 | `NEXT_PUBLIC_TELEGRAM_BOT_USERNAME` | `lidera_dash_bot` | да |
 | `TELEGRAM_WEBHOOK_SECRET` | как в `.env.local` | **нет** |
@@ -39,8 +39,8 @@ Framework определится автоматически (Next.js), кома�
 
 Supabase → Authentication → **URL Configuration**:
 
-* **Site URL** — `https://<проект>.vercel.app`;
-* **Redirect URLs** — добавить `https://<проект>.vercel.app/auth/confirm`.
+* **Site URL** — `https://lidera-dashboard.vercel.app`;
+* **Redirect URLs** — добавить `https://lidera-dashboard.vercel.app/auth/confirm`.
 
 Без этого ссылки из писем восстановления пароля будут вести на localhost.
 
@@ -51,7 +51,7 @@ Supabase → Authentication → **URL Configuration**:
 ```bash
 curl -sX POST "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/setWebhook" \
   -H 'Content-Type: application/json' \
-  -d '{"url":"https://<проект>.vercel.app/api/telegram/webhook",
+  -d '{"url":"https://lidera-dashboard.vercel.app/api/telegram/webhook",
        "secret_token":"'"$TELEGRAM_WEBHOOK_SECRET"'",
        "allowed_updates":["message","callback_query"],
        "drop_pending_updates":true}'

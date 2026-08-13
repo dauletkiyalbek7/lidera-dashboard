@@ -64,14 +64,45 @@ export async function syncAllMetaAccounts(): Promise<{
         account: account.account_name,
         message: error instanceof Error ? error.message : 'неизвестная ошибка',
       });
-      await supabase
-        .from('ad_accounts')
-        .update({ status: 'error' })
-        .eq('id', account.id);
     }
   }
 
   return { accounts: results, errors };
+}
+
+/**
+ * Отметка о синхронизации в «Интеграциях».
+ *
+ * Директор должен сам видеть, когда данные обновлялись и что пошло не так, —
+ * иначе единственный способ узнать про истёкший токен это заметить, что цифры
+ * замерли.
+ */
+async function noteSync(
+  companyId: string,
+  accountId: string | null,
+  outcome: { ok: true; result: MetaSyncResult } | { ok: false; message: string },
+) {
+  const supabase = createAdminSupabase();
+
+  await supabase.from('integrations').upsert(
+    {
+      company_id: companyId,
+      platform: 'meta',
+      account_id: accountId,
+      status: outcome.ok ? 'connected' : 'error',
+      last_sync_at: new Date().toISOString(),
+      config: outcome.ok
+        ? {
+            rows: outcome.result.rows,
+            days: outcome.result.days,
+            campaigns: outcome.result.campaigns,
+            spend: outcome.result.spend,
+            error: null,
+          }
+        : { error: outcome.message },
+    },
+    { onConflict: 'company_id,platform' },
+  );
 }
 
 /**
@@ -80,9 +111,6 @@ export async function syncAllMetaAccounts(): Promise<{
  * и «дописывать» их было бы неверно.
  */
 export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncResult> {
-  const token = process.env.META_ACCESS_TOKEN;
-  if (!token) throw new Error('не задан META_ACCESS_TOKEN');
-
   const supabase = createAdminSupabase();
 
   const { data: account } = await supabase
@@ -92,6 +120,33 @@ export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncR
     .maybeSingle();
 
   if (!account?.account_id) throw new Error('рекламный кабинет не найден');
+
+  try {
+    const result = await pullFromMeta(account);
+    await noteSync(account.company_id, account.account_id, { ok: true, result });
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'неизвестная ошибка';
+    await supabase.from('ad_accounts').update({ status: 'error' }).eq('id', account.id);
+    await noteSync(account.company_id, account.account_id, { ok: false, message });
+    throw error;
+  }
+}
+
+type AdAccount = {
+  id: string;
+  company_id: string;
+  account_id: string | null;
+  account_name: string;
+};
+
+async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
+  const token = process.env.META_ACCESS_TOKEN;
+  if (!token) throw new Error('не задан META_ACCESS_TOKEN');
+
+  const supabase = createAdminSupabase();
+
+  if (!account.account_id) throw new Error('у кабинета не указан ID');
 
   const actId = account.account_id.startsWith('act_')
     ? account.account_id

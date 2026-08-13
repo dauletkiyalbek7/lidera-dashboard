@@ -9,6 +9,7 @@ import { requireCompanySession } from '@/lib/auth';
 import { formatDateTime } from '@/lib/format';
 import { INTEGRATION_STATUS, statusOf } from '@/lib/labels';
 import { getIntegrations } from '@/lib/queries';
+import { SyncMetaButton } from './sync-button';
 
 export const metadata: Metadata = { title: 'Интеграции' };
 
@@ -44,7 +45,7 @@ const CATALOG = [
 ] as const;
 
 export default async function IntegrationsPage() {
-  const { company } = await requireCompanySession();
+  const { company, profile } = await requireCompanySession();
   const integrations = await getIntegrations(company.id);
   const byPlatform = new Map(integrations.map((item) => [item.platform, item]));
 
@@ -82,15 +83,31 @@ export default async function IntegrationsPage() {
                   {item.description}
                 </p>
 
-                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-                  <p className="text-[12px] text-faint">
-                    {record?.last_sync_at
-                      ? `Синхронизация: ${formatDateTime(record.last_sync_at)}`
-                      : 'Синхронизаций ещё не было'}
-                  </p>
-                  <ButtonLink href="/contacts" variant="secondary" size="sm">
-                    Подключить
-                  </ButtonLink>
+                <div className="mt-5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <p className="text-[12px] text-faint">
+                      {record?.last_sync_at
+                        ? `Обновлено: ${formatDateTime(record.last_sync_at)}`
+                        : 'Синхронизаций ещё не было'}
+                    </p>
+                    {item.platform === 'meta' ? (
+                      <span className="text-[12px] text-faint">Обновляется каждую ночь</span>
+                    ) : (
+                      <ButtonLink href="/contacts" variant="secondary" size="sm">
+                        Подключить
+                      </ButtonLink>
+                    )}
+                  </div>
+
+                  {syncError(record) ? (
+                    <p className="rounded-control border border-negative/30 bg-negative/10 px-3 py-2 text-[12.5px] leading-relaxed text-negative">
+                      Последняя попытка не удалась: {syncError(record)}
+                    </p>
+                  ) : null}
+
+                  {item.platform === 'meta' ? (
+                    <SyncMetaButton disabled={profile.role !== 'DIRECTOR'} />
+                  ) : null}
                 </div>
               </Card>
             );
@@ -121,4 +138,11 @@ export default async function IntegrationsPage() {
       </PageBody>
     </>
   );
+}
+
+/** Текст ошибки последней синхронизации, если она была. */
+function syncError(record: { config?: unknown } | undefined): string | null {
+  if (!record || typeof record.config !== 'object' || record.config === null) return null;
+  const value = (record.config as { error?: unknown }).error;
+  return typeof value === 'string' && value ? value : null;
 }

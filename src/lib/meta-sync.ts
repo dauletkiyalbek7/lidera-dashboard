@@ -47,16 +47,29 @@ export async function syncAllMetaAccounts(): Promise<{
   errors: { account: string; message: string }[];
 }> {
   const supabase = createAdminSupabase();
-  const { data: accounts } = await supabase
+
+  // Демо-компании синхронизировать нечем: их кабинеты выдуманные, и Meta
+  // честно отвечает отказом. Ошибка в отчёте о запуске должна означать
+  // настоящую проблему, иначе её перестают читать.
+  const { data: demoCompanies } = await supabase
+    .from('companies')
+    .select('id')
+    .eq('is_demo', true);
+
+  const demo = new Set((demoCompanies ?? []).map((row) => row.id));
+
+  const { data: allAccounts } = await supabase
     .from('ad_accounts')
     .select('id, company_id, account_id, account_name')
     .eq('platform', 'meta')
     .not('account_id', 'is', null);
 
+  const accounts = (allAccounts ?? []).filter((row) => !demo.has(row.company_id));
+
   const results: MetaSyncResult[] = [];
   const errors: { account: string; message: string }[] = [];
 
-  for (const account of accounts ?? []) {
+  for (const account of accounts) {
     try {
       results.push(await syncMetaAccount(account.id));
     } catch (error) {

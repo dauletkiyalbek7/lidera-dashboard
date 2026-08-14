@@ -250,6 +250,9 @@ async function distributeQueue(supabase: Admin, company: CompanySettings) {
   );
 
   let assigned = 0;
+  // Сколько карточек уже ушло каждому в этот заход: пачку из двадцати заявок
+  // нельзя вываливать в чат подряд — работать с такой лентой невозможно.
+  const sentTo = new Map<string, number>();
 
   for (const lead of queue) {
     // Пересортировка на каждом шаге: иначе весь пакет уйдёт одному человеку.
@@ -258,22 +261,50 @@ async function distributeQueue(supabase: Admin, company: CompanySettings) {
     const target = managers.find((manager) => manager.open < company.max_open_leads);
     if (!target) break;
 
+    const alreadySent = sentTo.get(target.id) ?? 0;
+
     const ok = await assignTo(
       supabase,
       company,
       { ...lead, creativeLabel: lead.creative_id ? (labels.get(lead.creative_id) ?? null) : null },
       target,
       'auto',
+      alreadySent < CARDS_PER_RUN,
     );
     if (!ok) continue;
 
+    sentTo.set(target.id, alreadySent + 1);
     target.received += 1;
     target.open += 1;
     target.lastAssignedAt = Date.now();
     assigned += 1;
   }
 
+  // Про остальные — одна строка вместо десятка карточек.
+  for (const [managerId, count] of sentTo) {
+    if (count <= CARDS_PER_RUN) continue;
+    const manager = managers.find((item) => item.id === managerId);
+    if (!manager?.telegram_user_id) continue;
+
+    const rest = count - CARDS_PER_RUN;
+    await sendMessage(
+      manager.telegram_user_id,
+      `📥 Вам назначено ещё ${rest} ${plural(rest, 'клиент', 'клиента', 'клиентов')}.\nОткройте «Мои лиды» — они пойдут по одному.`,
+    );
+  }
+
   return { assigned, queued: queue.length - assigned };
+}
+
+/** Сколько карточек за один заход присылать подряд, прежде чем свести в итог. */
+const CARDS_PER_RUN = 3;
+
+function plural(count: number, one: string, few: string, many: string): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  if (mod10 === 1 && mod100 !== 11) return one;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return few;
+  return many;
 }
 
 /** Названия объявлений для карточки: менеджеру важно, на что человек откликнулся. */
@@ -310,6 +341,8 @@ async function assignTo(
   },
   manager: Candidate,
   reason: 'auto' | 'manual',
+  /** Слать ли карточку: при большой пачке остальные сводятся в одну строку. */
+  notify = true,
 ): Promise<boolean> {
   const now = new Date().toISOString();
 
@@ -334,7 +367,7 @@ async function assignTo(
     reason,
   });
 
-  if (manager.telegram_user_id) {
+  if (manager.telegram_user_id && notify) {
     const funnelType: FunnelType = company.funnel_type === 'direct' ? 'direct' : 'trial';
     await sendMessage(
       manager.telegram_user_id,

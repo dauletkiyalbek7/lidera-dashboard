@@ -40,6 +40,8 @@ export type CompanyRow = Timestamps & {
   is_demo: boolean;
   /** Валюта отчётов — совпадает с валютой рекламного кабинета. */
   currency: string;
+  /** Ключ адреса приёма заявок с сайта: /api/forms/<key>. */
+  lead_webhook_key: string | null;
   /** Настройки авто-раздачи лидов. */
   auto_assign: boolean;
   max_open_leads: number;
@@ -209,6 +211,11 @@ export type LeadRow = Timestamps & {
   utm_campaign: string | null;
   utm_content: string | null;
   utm_term: string | null;
+  /** Метки клика по рекламе — нужны событиям CAPI. */
+  fbc: string | null;
+  fbp: string | null;
+  /** Номер отправки формы: защита от повторной заявки. */
+  external_id: string | null;
   status: LeadStatus;
   assigned_to: string | null;
   assigned_at: string | null;

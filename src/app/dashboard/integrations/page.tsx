@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { Badge } from '@/components/ui/badge';
@@ -6,6 +7,7 @@ import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { IconAds, IconChain, IconCreatives, IconReceipts } from '@/components/ui/icons';
 import { requireCompanySession } from '@/lib/auth';
+import { publicEnv } from '@/lib/env';
 import { formatDateTime } from '@/lib/format';
 import { INTEGRATION_STATUS, statusOf } from '@/lib/labels';
 import { getIntegrations } from '@/lib/queries';
@@ -46,6 +48,13 @@ const CATALOG = [
 export default async function IntegrationsPage() {
   const { company } = await requireCompanySession();
   const integrations = await getIntegrations(company.id);
+  // Адрес берём из самого запроса: он верен и на боевом домене, и на превью,
+  // и не зависит от того, что записано в переменных окружения.
+  const host = (await headers()).get('host');
+  const origin = host ? `https://${host}` : publicEnv.siteUrl;
+  const webhookUrl = company.lead_webhook_key
+    ? `${origin}/api/forms/${company.lead_webhook_key}`
+    : 'Ключ ещё не выдан — обратитесь к администратору платформы';
   const byPlatform = new Map(integrations.map((item) => [item.platform, item]));
 
   return (
@@ -113,6 +122,40 @@ export default async function IntegrationsPage() {
             );
           })}
         </div>
+
+        <Card className="mt-4">
+          <CardHeader
+            title="Форма на сайте"
+            subtitle="Заявки с лендинга попадают в «Лиды» вместе с меткой объявления"
+          />
+          <div className="space-y-4 px-5 py-5 sm:px-6">
+            <div>
+              <p className="text-[13px] font-medium text-ink-soft">Адрес приёма заявок</p>
+              <code className="mt-2 block overflow-x-auto rounded-control border border-line bg-surface-2 px-3 py-2.5 text-[12.5px] text-ink">
+                {webhookUrl}
+              </code>
+            </div>
+            <ol className="space-y-3">
+              {[
+                'В Tilda: страница с формой → Настройки формы → «Webhook» → вставить этот адрес.',
+                'В скрытые поля формы добавьте fbclid, utm_source, utm_medium, utm_campaign, utm_content — Tilda подставит их из адреса страницы.',
+                'Отправьте тестовую заявку: человек появится в разделе «Лиды» с источником «сайт».',
+              ].map((step, index) => (
+                <li key={step} className="flex gap-3.5">
+                  <span className="tabular flex size-6 shrink-0 items-center justify-center rounded-full border border-line bg-surface-2 text-[12px] font-medium text-lime">
+                    {index + 1}
+                  </span>
+                  <p className="text-[13.5px] leading-relaxed text-ink-soft">{step}</p>
+                </li>
+              ))}
+            </ol>
+            <p className="text-[12px] leading-relaxed text-faint">
+              Адрес — как ключ от почтового ящика: по нему можно только оставить заявку,
+              прочитать данные компании нельзя. Публиковать его на видном месте всё же
+              не стоит.
+            </p>
+          </div>
+        </Card>
 
         <Card className="mt-4">
           <CardHeader

@@ -68,7 +68,7 @@ export default async function CreativesPage({
               <StatTile
                 label="Расход за период"
                 value={formatMoney(spend, { currency })}
-                hint={`Написали: ${formatNumber(conversions)}`}
+                hint={`Лидов: ${formatNumber(conversions)}`}
               />
               <StatTile
                 label="Самый дешёвый"
@@ -135,7 +135,7 @@ export default async function CreativesPage({
                         <span className="tabular block text-[14px] font-medium text-lime">
                           {formatNumber(card.conversions)}
                         </span>
-                        <span className="block text-[11.5px] text-faint">написали</span>
+                        <span className="block text-[11.5px] text-faint">лиды</span>
                       </span>
 
                       <span className="hidden shrink-0 text-right md:block">

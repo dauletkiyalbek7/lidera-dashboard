@@ -35,7 +35,7 @@ const CAMPAIGN_COLUMNS = [
   { key: 'number', label: 'Номер' },
   { key: 'status', label: 'Статус' },
   { key: 'spend', label: 'Расход', align: 'right' as const },
-  { key: 'conversions', label: 'Написали', align: 'right' as const },
+  { key: 'conversions', label: 'Лиды', align: 'right' as const },
   { key: 'cost', label: 'Цена', align: 'right' as const },
   { key: 'clicks', label: 'Клики', align: 'right' as const },
   { key: 'days', label: 'Дней', align: 'right' as const },
@@ -45,8 +45,8 @@ const CAMPAIGN_COLUMNS = [
 const NUMBER_COLUMNS = [
   { key: 'number', label: 'Номер WhatsApp' },
   { key: 'spend', label: 'Расход', align: 'right' as const },
-  { key: 'conversions', label: 'Написали', align: 'right' as const },
-  { key: 'cost', label: 'Цена переписки', align: 'right' as const },
+  { key: 'conversions', label: 'Лиды', align: 'right' as const },
+  { key: 'cost', label: 'Цена лида', align: 'right' as const },
   { key: 'share', label: 'Доля расхода', align: 'right' as const },
 ];
 
@@ -100,8 +100,8 @@ export default async function AdsPage({
         title="Реклама"
         description={
           currencyNote
-            ? `Сколько потратили, сколько человек написало и почём вышел один написавший. Кабинет считает в ${currencySymbol(currencyNote.source)}, отчёт — в ${currencySymbol(currencyNote.target)} по курсу Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
-            : 'Сколько потратили, сколько человек написало и почём вышел один написавший.'
+            ? `Сколько потратили, сколько лидов получили и почём вышел один. Кабинет считает в ${currencySymbol(currencyNote.source)}, отчёт — в ${currencySymbol(currencyNote.target)} по курсу Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
+            : 'Сколько потратили, сколько лидов получили и почём вышел один.'
         }
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
@@ -119,14 +119,14 @@ export default async function AdsPage({
             hint={`За ${range.label}`}
           />
           <StatTile
-            label="Написали"
+            label="Лиды"
             value={formatNumber(totals.conversions)}
-            hint="Начатые переписки по данным Meta"
+            hint="Заявки с сайта и написавшие в переписке — по данным Meta"
           />
           <StatTile
-            label="Цена переписки"
+            label="Цена лида"
             value={formatMoney(totals.costPerConversion, { currency })}
-            hint="Расход ÷ количество написавших"
+            hint="Расход ÷ количество лидов"
             accent
           />
           <StatTile

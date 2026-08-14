@@ -78,13 +78,13 @@ export default async function CreativePage({
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
               <StatTile label="Расход" value={formatMoney(creative.spend, { currency })} />
               <StatTile
-                label="Написали"
+                label="Лиды"
                 value={formatNumber(creative.conversions)}
-                hint="Начатые переписки"
+                hint="Заявки и начатые переписки"
                 accent
               />
               <StatTile
-                label="Цена написавшего"
+                label="Цена лида"
                 value={
                   creative.conversions
                     ? formatMoney(creative.costPerConversion, { currency })

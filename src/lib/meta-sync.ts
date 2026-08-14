@@ -22,13 +22,24 @@ const GRAPH = `https://graph.facebook.com/${API_VERSION}`;
 /** Сколько дней перезабираем при каждом запуске. */
 const WINDOW_DAYS = 30;
 
-/** Meta досчитывает конверсии несколько дней, поэтому недавние дни перезаписываем. */
+/**
+ * Обращения из переписок. Внутри семейства берём наибольшее, а не сумму:
+ * Meta отдаёт одно и то же событие под несколькими именами, и сложение
+ * удвоило бы людей.
+ */
 const CONVERSATION_ACTIONS = [
   'onsite_conversion.messaging_conversation_started_7d',
   'onsite_conversion.total_messaging_connection',
 ];
 
-const LEAD_ACTIONS = ['lead', 'leadgen.other', 'onsite_conversion.lead_grouped'];
+/** Заявки с сайта и из форм — тоже несколько имён одного события. */
+const LEAD_ACTIONS = [
+  'lead',
+  'offsite_conversion.fb_pixel_lead',
+  'onsite_web_lead',
+  'leadgen.other',
+  'onsite_conversion.lead_grouped',
+];
 
 /** Валюты, которые платформа умеет пересчитывать (курсы Нацбанка РК). */
 const SUPPORTED_CURRENCIES = ['KZT', 'USD', 'EUR', 'RUB'];
@@ -392,8 +403,11 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     const key = `${creativeId ?? 'нет'}|${campaignId}|${row.date_start}`;
 
     const spend = Number(row.spend ?? 0);
+    // В одном кабинете рядом живут кампании на сайт и кампании в переписки:
+    // заявки и написавшие — разные люди, поэтому их складываем. Раньше при
+    // наличии переписок заявки с сайта терялись целиком.
     const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
-    const leads = conversations || actionValue(row.actions, LEAD_ACTIONS);
+    const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
 
     const current = merged.get(key) ?? {
       company_id: account.company_id,
@@ -520,16 +534,25 @@ type MetaInsight = {
 };
 
 /** Сумма нужных действий из массива actions. Первое совпадение и есть результат. */
+/**
+ * Значение семейства событий: берём наибольшее из перечисленных типов.
+ *
+ * Meta присылает одно и то же действие под разными именами («lead»,
+ * «offsite_conversion.fb_pixel_lead», «onsite_web_lead» — это одна и та же
+ * заявка), поэтому суммировать их нельзя.
+ */
 function actionValue(
   actions: { action_type: string; value: string }[] | undefined,
   types: string[],
 ): number {
   if (!actions) return 0;
+
+  let best = 0;
   for (const type of types) {
     const found = actions.find((action) => action.action_type === type);
-    if (found) return Number(found.value) || 0;
+    if (found) best = Math.max(best, Number(found.value) || 0);
   }
-  return 0;
+  return best;
 }
 
 function adStatus(status: string): 'active' | 'paused' | 'archived' {

@@ -348,7 +348,7 @@ export type CreativeCard = {
   impressions: number;
   clicks: number;
   ctr: number;
-  /** Написали / лиды по данным площадки. */
+  /** Лиды по данным площадки: заявки с сайта плюс начатые переписки. */
   conversions: number;
   costPerConversion: number;
   /** Из CRM: заявки, продажи и деньги, дошедшие до кассы. */
@@ -525,7 +525,7 @@ export type AdBreakdownRow = {
   spend: number;
   impressions: number;
   clicks: number;
-  /** Для кампаний в переписки это начатые переписки, для остальных — лиды Meta. */
+  /** Заявки с сайта и начатые переписки вместе: и то и другое — обращения. */
   conversions: number;
   costPerConversion: number;
   activeDays: number;

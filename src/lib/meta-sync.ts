@@ -207,7 +207,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // --- 1. Номера WhatsApp: они живут в настройках групп объявлений ---------
   const numberByCampaign = new Map<string, string>();
   const adSets = await graph<{ campaign_id?: string; promoted_object?: { whatsapp_phone_number?: string } }>(
-    `${GRAPH}/${actId}/adsets?fields=campaign_id,promoted_object&limit=200&access_token=${token}`,
+    `${GRAPH}/${actId}/adsets?fields=campaign_id,promoted_object&limit=100&access_token=${token}`,
   );
   for (const adSet of adSets) {
     const number = adSet.promoted_object?.whatsapp_phone_number;
@@ -216,7 +216,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
 
   // --- 2. Кампании --------------------------------------------------------
   const campaigns = await graph<{ id: string; name: string; status: string; objective?: string }>(
-    `${GRAPH}/${actId}/campaigns?fields=name,status,objective&limit=200&access_token=${token}`,
+    `${GRAPH}/${actId}/campaigns?fields=name,status,objective&limit=100&access_token=${token}`,
   );
 
   const campaignIdByExternal = new Map<string, string>();
@@ -246,13 +246,34 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (saved) campaignIdByExternal.set(campaign.id, saved.id);
   }
 
-  // --- 3. Объявления и креативы -------------------------------------------
-  // Ролик и его цифры нужны в одном месте, поэтому идём на уровень
-  // объявления: только там видно, какой креатив принёс переписки.
-  const ads = await graph<MetaAd>(
-    `${GRAPH}/${actId}/ads?fields=name,status,campaign_id,` +
-      `creative{id,name,object_type,video_id,image_url,thumbnail_url,object_story_spec}` +
-      `&limit=200&access_token=${token}`,
+  // --- 3. Дневная статистика по объявлениям -------------------------------
+  // Идём на уровень объявления: только там видно, какой креатив принёс
+  // переписки. Период режем неделями — за месяц разом крупный кабинет
+  // отвечает отказом «слишком много данных».
+  const insights: MetaInsight[] = [];
+
+  for (const window of weekWindows(since, until)) {
+    const chunk = await graph<MetaInsight>(
+      `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
+        `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start` +
+        `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
+        `&limit=100&access_token=${token}`,
+    );
+    insights.push(...chunk);
+  }
+
+  // --- 4. Объявления и креативы -------------------------------------------
+  // Забираем только те объявления, что за период работали: в кабинете их
+  // могут быть тысячи, и тянуть все — верный способ получить отказ.
+  const workingAdIds = Array.from(
+    new Set(insights.map((row) => row.ad_id).filter((id): id is string => Boolean(id))),
+  );
+
+  const ads = await graphByIds<MetaAd>(
+    workingAdIds,
+    'name,status,campaign_id,' +
+      'creative{id,name,object_type,video_id,image_url,thumbnail_url,object_story_spec}',
+    token,
   );
 
   const creativeIdByAd = new Map<string, string>();
@@ -295,14 +316,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (saved) creativeIdByAd.set(ad.id, saved.id);
   }
 
-  // --- 4. Дневные метрики по объявлениям ----------------------------------
-  const insights = await graph<MetaInsight>(
-    `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
-      `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start` +
-      `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
-      `&limit=500&access_token=${token}`,
-  );
-
+  // --- 5. Складываем строки метрик ----------------------------------------
   // Один креатив может крутиться в нескольких объявлениях — складываем,
   // иначе строки подерутся за уникальный ключ «креатив + день».
   const merged = new Map<string, MetricRow>();
@@ -475,6 +489,61 @@ function campaignStatus(status: string): 'active' | 'paused' | 'archived' {
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+/** Разбивка периода на недели: крупные кабинеты не отдают месяц за раз. */
+function weekWindows(since: string, until: string): { since: string; until: string }[] {
+  const windows: { since: string; until: string }[] = [];
+  const end = new Date(`${until}T00:00:00Z`);
+  const cursor = new Date(`${since}T00:00:00Z`);
+
+  while (cursor <= end) {
+    const stop = new Date(cursor);
+    stop.setUTCDate(stop.getUTCDate() + 6);
+    windows.push({
+      since: isoDate(cursor),
+      until: isoDate(stop < end ? stop : end),
+    });
+    cursor.setUTCDate(cursor.getUTCDate() + 7);
+  }
+
+  return windows;
+}
+
+/**
+ * Чтение объектов по списку идентификаторов пачками.
+ *
+ * Graph API отдаёт их в виде словаря «id → объект», а не списка, поэтому
+ * ответ разворачиваем сами.
+ */
+async function graphByIds<T>(
+  ids: string[],
+  fields: string,
+  token: string,
+  batchSize = 40,
+): Promise<T[]> {
+  const items: T[] = [];
+
+  for (let start = 0; start < ids.length; start += batchSize) {
+    const batch = ids.slice(start, start + batchSize);
+    const response = await fetch(
+      `${GRAPH}/?ids=${batch.join(',')}&fields=${encodeURIComponent(fields)}` +
+        `&access_token=${token}`,
+      { cache: 'no-store' },
+    );
+
+    const payload = (await response.json()) as Record<string, unknown> & {
+      error?: { message: string; code: number };
+    };
+
+    if (payload.error) {
+      throw new Error(`Meta API: ${payload.error.message} (код ${payload.error.code})`);
+    }
+
+    items.push(...(Object.values(payload) as T[]));
+  }
+
+  return items;
 }
 
 /**

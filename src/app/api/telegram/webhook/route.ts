@@ -9,8 +9,16 @@ import {
 } from '@/lib/attendance';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { runDistribution } from '@/lib/lead-distribution';
+import { isTouchPreset, resolveTouchTime, untilLabel } from '@/lib/lead-touches';
+import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
-import { leadCard, statusButtons, escapeHtml } from '@/lib/telegram-lead-card';
+import {
+  leadCard,
+  copyPhoneButton,
+  statusButtons,
+  touchButtons,
+  escapeHtml,
+} from '@/lib/telegram-lead-card';
 import {
   answerCallback,
   isBotConfigured,
@@ -372,6 +380,7 @@ type CompanyRow = {
   work_days: number[];
   late_grace_minutes: number;
   funnel_type: string;
+  max_touches: number;
 };
 
 async function companyOf(companyId: string): Promise<CompanyRow | null> {
@@ -379,7 +388,7 @@ async function companyOf(companyId: string): Promise<CompanyRow | null> {
   const { data } = await supabase
     .from('companies')
     .select(
-      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type',
+      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, max_touches',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -428,11 +437,12 @@ async function listLeads(chatId: number, employee: Employee) {
 
   const { data: leads } = await supabase
     .from('leads')
-    .select('id, name, phone, source, platform, status')
+    .select('id, name, phone, source, platform, status, touch_count, next_touch_at')
     .eq('company_id', employee.company_id)
     .eq('assigned_to', employee.id)
     .in('status', ACTIVE_STATUSES)
-    .order('created_at', { ascending: false })
+    // Сначала те, кому обещали позвонить раньше всех: это и есть очередь дня.
+    .order('next_touch_at', { ascending: true, nullsFirst: true })
     .limit(10);
 
   if (!leads || leads.length === 0) {
@@ -441,14 +451,34 @@ async function listLeads(chatId: number, employee: Employee) {
 
   const { data: company } = await supabase
     .from('companies')
-    .select('funnel_type')
+    .select('funnel_type, timezone')
     .eq('id', employee.company_id)
     .maybeSingle();
 
   const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
 
   for (const lead of leads) {
-    await sendMessage(chatId, leadCard(lead), { inline: statusButtons(lead.id, funnelType) });
+    const promise = lead.next_touch_at
+      ? `⏰ Обещали связаться: ${new Date(lead.next_touch_at).toLocaleString('ru-RU', {
+          timeZone,
+          day: 'numeric',
+          month: 'long',
+          hour: '2-digit',
+          minute: '2-digit',
+        })}`
+      : undefined;
+
+    await sendMessage(
+      chatId,
+      leadCard({ ...lead, touchCount: lead.touch_count }, promise),
+      {
+        inline: [
+          ...copyPhoneButton(lead.phone),
+          ...statusButtons(lead.id, funnelType),
+        ],
+      },
+    );
   }
 }
 
@@ -461,22 +491,27 @@ async function handleCallback(query: TelegramCallbackQuery) {
   const employee = await findEmployee(userId);
   if (!employee) return answerCallback(query.id, 'Вы не подключены к платформе.');
 
-  const [kind, leadId, status] = (query.data ?? '').split(':');
-  if (kind !== 's' || !leadId || !status) return answerCallback(query.id);
+  const [kind, leadId, value] = (query.data ?? '').split(':');
+  if (!leadId || !value) return answerCallback(query.id);
 
+  if (kind === 's') return applyStatus(query, chatId, employee, leadId, value);
+  if (kind === 't') return applyTouch(query, chatId, employee, leadId, value);
+
+  return answerCallback(query.id);
+}
+
+/** Смена статуса лида из чата. */
+async function applyStatus(
+  query: TelegramCallbackQuery,
+  chatId: number,
+  employee: Employee,
+  leadId: string,
+  status: string,
+) {
   if (!isLeadStatus(status)) return answerCallback(query.id, 'Неизвестный статус.');
 
   const supabase = createAdminSupabase();
-
-  // Сотрудник двигает только свои лиды и только внутри своей компании.
-  const { data: lead } = await supabase
-    .from('leads')
-    .select('id, name')
-    .eq('id', leadId)
-    .eq('company_id', employee.company_id)
-    .eq('assigned_to', employee.id)
-    .maybeSingle();
-
+  const lead = await ownLead(employee, leadId);
   if (!lead) return answerCallback(query.id, 'Этот лид уже не за вами.');
 
   const { error } = await supabase
@@ -489,7 +524,90 @@ async function handleCallback(query: TelegramCallbackQuery) {
 
   const label = LEAD_STATUS[status].label;
   await answerCallback(query.id, `Статус: ${label}`);
+
+  // Не дозвонился — сразу спрашиваем, когда перезвонит. Лид остаётся за ним:
+  // никому другому этот номер не уйдёт, поэтому важно назначить срок.
+  if (status === 'no_answer') return askWhenToCall(chatId, employee, lead);
+
+  // Любой другой статус означает, что лид сдвинулся — открытые напоминания
+  // больше не нужны.
+  await closeOpenTouches(supabase, lead.id);
+
   return sendMessage(chatId, `✅ <b>${escapeHtml(lead.name || 'Лид')}</b> → ${label}`);
+}
+
+/** Спросить срок следующего звонка. */
+async function askWhenToCall(chatId: number, employee: Employee, lead: OwnLead) {
+  const company = await companyOf(employee.company_id);
+  const attempts = (lead.touch_count ?? 0) + 1;
+  const limit = company?.max_touches ?? 5;
+
+  // После нескольких безрезультатных попыток предлагаем закрыть лид, но не
+  // закрываем сами: решение — за человеком, а не за автоматикой.
+  const tail =
+    attempts >= limit
+      ? `\n\n❗️Это уже ${attempts}-я попытка. Если человек не выходит на связь — поставьте «Отказ», чтобы он не висел в работе.`
+      : '';
+
+  return sendMessage(
+    chatId,
+    `📵 <b>${escapeHtml(lead.name || 'Лид')}</b> не ответил.\nКогда перезвоните?${tail}`,
+    { inline: touchButtons(lead.id) },
+  );
+}
+
+/** Менеджер выбрал, когда вернётся к лиду. */
+async function applyTouch(
+  query: TelegramCallbackQuery,
+  chatId: number,
+  employee: Employee,
+  leadId: string,
+  presetKey: string,
+) {
+  if (!isTouchPreset(presetKey)) return answerCallback(query.id, 'Неизвестный срок.');
+
+  const lead = await ownLead(employee, leadId);
+  if (!lead) return answerCallback(query.id, 'Этот лид уже не за вами.');
+
+  const company = await companyOf(employee.company_id);
+  const remindAt = resolveTouchTime(presetKey, company?.timezone ?? 'Asia/Almaty');
+
+  await scheduleTouch(createAdminSupabase(), {
+    companyId: employee.company_id,
+    leadId: lead.id,
+    employeeId: employee.id,
+    remindAt,
+    countsAsAttempt: true,
+  });
+
+  const when = remindAt.toLocaleString('ru-RU', {
+    timeZone: company?.timezone ?? 'Asia/Almaty',
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  await answerCallback(query.id, `Напомню ${untilLabel(remindAt)}`);
+  return sendMessage(
+    chatId,
+    `⏰ Напомню про <b>${escapeHtml(lead.name || 'лид')}</b>: ${when} (${untilLabel(remindAt)}).`,
+  );
+}
+
+type OwnLead = { id: string; name: string; touch_count: number };
+
+/** Сотрудник двигает только свои лиды и только внутри своей компании. */
+async function ownLead(employee: Employee, leadId: string): Promise<OwnLead | null> {
+  const supabase = createAdminSupabase();
+  const { data } = await supabase
+    .from('leads')
+    .select('id, name, touch_count')
+    .eq('id', leadId)
+    .eq('company_id', employee.company_id)
+    .eq('assigned_to', employee.id)
+    .maybeSingle();
+  return data ?? null;
 }
 
 // -----------------------------------------------------------------------------

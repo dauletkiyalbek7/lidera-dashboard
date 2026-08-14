@@ -24,7 +24,14 @@ export function webhookSecret(): string | undefined {
   return process.env.TELEGRAM_WEBHOOK_SECRET || undefined;
 }
 
-export type InlineButton = { text: string; callback_data: string };
+/**
+ * Кнопка под сообщением. Кроме обычной с callback_data бывает кнопка
+ * копирования: Telegram кладёт текст в буфер обмена сам, и менеджеру не нужно
+ * выделять номер пальцем в чате.
+ */
+export type InlineButton =
+  | { text: string; callback_data: string }
+  | { text: string; copy_text: { text: string } };
 
 async function call(method: string, payload: Record<string, unknown>): Promise<void> {
   const response = await fetch(`${API}/bot${botToken()}/${method}`, {

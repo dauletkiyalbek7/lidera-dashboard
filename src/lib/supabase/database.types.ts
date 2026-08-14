@@ -45,7 +45,10 @@ export type CompanyRow = Timestamps & {
   /** Настройки авто-раздачи лидов. */
   auto_assign: boolean;
   max_open_leads: number;
+  /** Через сколько минут напомнить про нетронутый лид. Лид не отбирается. */
   sla_minutes: number;
+  /** После скольких безрезультатных касаний бот предлагает закрыть лид. */
+  max_touches: number;
   /** Режим смены и геолокация офиса. */
   shift_mode: ShiftMode;
   office_lat: number | null;
@@ -81,6 +84,26 @@ export type LeadAssignmentRow = {
   assigned_at: string;
   released_at: string | null;
   reason: 'auto' | 'manual' | 'sla' | 'fired' | 'shift_end';
+  created_at: string;
+}
+
+/**
+ * Касание лида: обещание перезвонить, напоминание бота или отметка о попытке.
+ * Лид у менеджера не отбирают — вместо этого его подталкивают касаниями.
+ */
+export type LeadTouchRow = {
+  id: string;
+  company_id: string;
+  lead_id: string;
+  employee_id: string | null;
+  kind: 'promise' | 'nudge' | 'note';
+  /** Когда напомнить. */
+  remind_at: string | null;
+  /** Когда бот отправил напоминание. */
+  notified_at: string | null;
+  /** Когда касание закрыли — менеджер сдвинул статус или перенёс срок. */
+  done_at: string | null;
+  note: string | null;
   created_at: string;
 }
 
@@ -255,6 +278,10 @@ export type LeadRow = Timestamps & {
   status: LeadStatus;
   assigned_to: string | null;
   assigned_at: string | null;
+  /** Ближайшее обещание перезвонить и счётчик попыток — для напоминаний. */
+  next_touch_at: string | null;
+  last_touch_at: string | null;
+  touch_count: number;
 }
 
 /** Сотрудник компании. Входа в кабинет у него нет — только Telegram-бот. */
@@ -395,6 +422,7 @@ export type Database = {
         LeadAssignmentRow,
         'company_id' | 'lead_id' | 'employee_id'
       >;
+      lead_touches: TableDef<LeadTouchRow, 'company_id' | 'lead_id'>;
       trials: TableDef<TrialRow, 'company_id'>;
       sales: TableDef<SaleRow, 'company_id'>;
       receipts: TableDef<ReceiptRow, 'company_id'>;

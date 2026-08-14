@@ -3,13 +3,14 @@ import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 
 import { runDistributionForAll } from '@/lib/lead-distribution';
+import { runTouchReminders } from '@/lib/touch-runner';
 
 /**
- * Периодическая раздача лидов.
+ * Периодическая раздача лидов и напоминания о касаниях.
  *
  * Вызывается раз в минуту из самой базы (pg_cron + pg_net) — не из Vercel Cron:
- * на бесплатном тарифе он срабатывает раз в сутки, а возврат лида по SLA
- * должен происходить через минуты, иначе правило бессмысленно.
+ * на бесплатном тарифе он срабатывает раз в сутки, а обещание «перезвоню
+ * через час» надо напомнить через час, а не назавтра.
  *
  * Адрес публичный, поэтому доступ закрыт общим секретом. Отдельной переменной
  * для него нет намеренно: ключ — это sha256 от сервисного ключа Supabase,
@@ -33,6 +34,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  const result = await runDistributionForAll();
-  return NextResponse.json({ ok: true, ...result });
+  // Сначала раздать, потом напоминать: свежий лид должен получить хозяина
+  // раньше, чем бот начнёт про него напоминать.
+  const distribution = await runDistributionForAll();
+  const touches = await runTouchReminders();
+
+  return NextResponse.json({ ok: true, ...distribution, ...touches });
 }

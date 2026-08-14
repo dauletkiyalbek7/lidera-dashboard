@@ -8,6 +8,9 @@ import { zonedIsoDate } from '@/lib/period';
 import { sendPurchaseForSale } from '@/lib/capi';
 import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
+import { isTouchPreset, resolveTouchTime, TOUCH_PRESETS } from '@/lib/lead-touches';
+import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
+import { createAdminSupabase } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /**
@@ -136,8 +139,86 @@ export async function updateLeadStatus(
     }
   }
 
+  // Лид сдвинулся — обещание перезвонить закрываем, иначе бот напомнит про
+  // клиента, с которым уже поговорили.
+  if (parsed.data.status !== 'no_answer') {
+    await closeOpenTouches(createAdminSupabase(), parsed.data.leadId);
+  }
+
   revalidateCabinet();
   return { success: 'Статус обновлён.' };
+}
+
+/**
+ * Обещание перезвонить, поставленное из кабинета.
+ *
+ * То же самое, что кнопка в боте: лид остаётся за своим менеджером, а срок
+ * следующего звонка фиксируется, чтобы бот напомнил и чтобы просрочку было
+ * видно РОПу.
+ */
+export async function planCallback(leadId: string, preset: string): Promise<CrmState> {
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  if (!isTouchPreset(preset)) return { error: 'Неизвестный срок.' };
+
+  const parsed = z.string().uuid().safeParse(leadId);
+  if (!parsed.success) return { error: 'Некорректный лид.' };
+
+  const supabase = await createServerSupabase();
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('id, assigned_to')
+    .eq('id', parsed.data)
+    .eq('company_id', company.id)
+    .maybeSingle();
+
+  if (!lead) return { error: 'Лид не найден.' };
+
+  const remindAt = resolveTouchTime(preset, company.timezone);
+
+  await scheduleTouch(createAdminSupabase(), {
+    companyId: company.id,
+    leadId: lead.id,
+    employeeId: lead.assigned_to,
+    remindAt,
+    countsAsAttempt: true,
+  });
+
+  revalidateCabinet();
+
+  const label = TOUCH_PRESETS.find((item) => item.key === preset)?.label ?? '';
+  return { success: `Перезвонить: ${label.toLowerCase()}.` };
+}
+
+/**
+ * «Раздать сейчас» — для ночной очереди.
+ *
+ * Ночью смен нет, и заявки копятся нераспределёнными. Утром РОП или директор
+ * нажимает кнопку, и всё накопившееся расходится поровну между теми, кто уже
+ * на смене.
+ */
+export async function distributeNow(): Promise<CrmState> {
+  const { company, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+
+  const result = await runDistribution(company.id);
+  revalidateCabinet();
+
+  if (result.assigned === 0 && result.queued > 0) {
+    return {
+      error: 'Раздавать некому: никто не на смене или у всех заполнен лимит заявок.',
+    };
+  }
+
+  if (result.assigned === 0) return { success: 'Нераспределённых заявок нет.' };
+
+  return {
+    success: `Разошлось заявок: ${result.assigned}${
+      result.queued > 0 ? `, осталось в очереди: ${result.queued}` : ''
+    }.`,
+  };
 }
 
 const saleSchema = z.object({

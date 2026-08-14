@@ -153,6 +153,8 @@ export type CreativeRow = Timestamps & {
   video_id: string | null;
   title: string | null;
   body: string | null;
+  /** Короткое имя для отчётов; пусто — подписываем «Видео N». */
+  label: string | null;
 }
 
 export type AdRow = Timestamps & {

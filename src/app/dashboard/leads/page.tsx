@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
@@ -149,7 +150,18 @@ export default async function LeadsPage({
                       ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
                       : (lead.source ?? '—')}
                   </Td>
-                  <Td className="text-ink-soft">{lead.creativeName ?? '—'}</Td>
+                  <Td className="text-ink-soft">
+                    {lead.creativeId && lead.creativeName ? (
+                      <Link
+                        href={`/dashboard/creatives/${lead.creativeId}`}
+                        className="whitespace-nowrap text-lime transition-colors hover:text-lime-strong"
+                      >
+                        {lead.creativeName}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </Td>
                   <Td>
                     <LeadOwnerSelect
                       leadId={lead.id}

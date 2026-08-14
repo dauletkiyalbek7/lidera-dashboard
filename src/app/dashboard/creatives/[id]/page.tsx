@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
 import { CreativePlayer } from '@/components/app/creative-player';
+import { CreativeRenameForm } from './rename-form';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Badge } from '@/components/ui/badge';
@@ -22,7 +23,7 @@ export default async function CreativePage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company, profile } = await requireCompanySession();
   const currency = company.currency;
   const { id } = await params;
   const range = resolveRange(await searchParams, company.timezone);
@@ -42,8 +43,8 @@ export default async function CreativePage({
   return (
     <>
       <PageHeader
-        title={creative.title || creative.name}
-        description={`Креатив за ${range.label}`}
+        title={creative.label}
+        description={`${creative.title || creative.name} · за ${range.label}`}
         action={<DateRangePicker range={range} />}
       />
 
@@ -127,8 +128,22 @@ export default async function CreativePage({
             </div>
 
             <Card>
+              <CardHeader
+                title="Название в отчётах"
+                subtitle="Как этот ролик подписан в таблицах платформы"
+              />
+              <CreativeRenameForm
+                creativeId={creative.id}
+                label={creative.rawLabel}
+                fallback={creative.label}
+                disabled={profile.role !== 'DIRECTOR'}
+              />
+            </Card>
+
+            <Card>
               <CardHeader title="Объявление" subtitle="Текст, который видит человек" />
               <dl className="divide-y divide-line">
+                <Row label="Название в Meta" value={creative.name || '—'} />
                 <Row label="Заголовок" value={creative.title || '—'} />
                 <Row label="Текст" value={creative.body || '—'} />
                 <Row

@@ -330,9 +330,29 @@ export async function getCampaigns(companyId: string) {
   return data ?? [];
 }
 
+/**
+ * Короткая подпись креатива.
+ *
+ * Meta называет объявления как придётся — «Напишите нам», «Новое объявление с
+ * целью „Лиды" — Копия». В таблице такое имя занимает пол-экрана и ничего не
+ * говорит. Поэтому у каждого ролика есть свой короткий номер, а полное имя из
+ * кабинета остаётся на карточке.
+ */
+export function creativeLabel(
+  creative: { label?: string | null; format?: string | null },
+  index: number,
+): string {
+  if (creative.label?.trim()) return creative.label.trim();
+  return `${creative.format === 'video' ? 'Видео' : 'Баннер'} ${index}`;
+}
+
 export type CreativeCard = {
   id: string;
   name: string;
+  /** Короткая подпись: «Видео 3» или своё имя, если задали. */
+  label: string;
+  /** Заданное имя, если оно есть: нужно форме переименования. */
+  rawLabel: string | null;
   title: string | null;
   body: string | null;
   status: string;
@@ -376,8 +396,11 @@ export async function getCreativeCards(
     await Promise.all([
       supabase
         .from('creatives')
-        .select('id, name, title, body, status, format, platform, thumbnail_url, video_id')
-        .eq('company_id', companyId),
+        .select(
+          'id, name, label, title, body, status, format, platform, thumbnail_url, video_id, created_at',
+        )
+        .eq('company_id', companyId)
+        .order('created_at'),
       supabase
         .from('ad_metrics')
         .select('creative_id, campaign_id, date, spend, impressions, clicks, leads, currency')
@@ -482,7 +505,7 @@ export async function getCreativeCards(
   }
 
   return (creatives ?? [])
-    .map((creative) => {
+    .map((creative, index) => {
       const value = stats.get(creative.id);
       const spend = value?.spend ?? 0;
       const impressions = value?.impressions ?? 0;
@@ -492,6 +515,8 @@ export async function getCreativeCards(
       return {
         id: creative.id,
         name: creative.name,
+        label: creativeLabel(creative, index + 1),
+        rawLabel: creative.label,
         title: creative.title,
         body: creative.body,
         status: creative.status,
@@ -748,6 +773,7 @@ export type LeadListItem = {
   status: string;
   created_at: string;
   creativeName: string | null;
+  creativeId: string | null;
   assignedTo: string | null;
   assignedName: string | null;
 };
@@ -812,11 +838,17 @@ export async function getLeads(
       .lte('created_at', `${to}T23:59:59Z`)
       .order('created_at', { ascending: false })
       .limit(LIST_LIMIT),
-    supabase.from('creatives').select('id, name').eq('company_id', companyId),
+    supabase
+      .from('creatives')
+      .select('id, name, label, format, created_at')
+      .eq('company_id', companyId)
+      .order('created_at'),
     supabase.from('employees').select('id, full_name').eq('company_id', companyId),
   ]);
 
-  const creativeNames = new Map((creatives ?? []).map((row) => [row.id, row.name]));
+  const creativeNames = new Map(
+    (creatives ?? []).map((row, index) => [row.id, creativeLabel(row, index + 1)]),
+  );
   const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
 
   return (leads ?? []).map((lead) => ({
@@ -828,6 +860,7 @@ export async function getLeads(
     status: lead.status,
     created_at: lead.created_at,
     creativeName: lead.creative_id ? (creativeNames.get(lead.creative_id) ?? null) : null,
+    creativeId: lead.creative_id ?? null,
     assignedTo: lead.assigned_to,
     assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
   }));

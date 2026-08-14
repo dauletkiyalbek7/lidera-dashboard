@@ -73,7 +73,7 @@ export default async function CreativesPage({
               <StatTile
                 label="Самый дешёвый"
                 value={cheapest ? formatMoney(cheapest.costPerConversion, { currency }) : '—'}
-                hint={cheapest ? cheapest.title || cheapest.name : 'Пока не с чем сравнивать'}
+                hint={cheapest ? cheapest.label : 'Пока не с чем сравнивать'}
                 accent
               />
             </div>
@@ -110,8 +110,8 @@ export default async function CreativesPage({
 
                       <span className="min-w-0 flex-1">
                         <span className="flex flex-wrap items-center gap-2">
-                          <span className="truncate text-[14px] font-medium text-ink">
-                            {card.title || card.name}
+                          <span className="whitespace-nowrap text-[14px] font-medium text-ink">
+                            {card.label}
                           </span>
                           {card.hasVideo ? <Badge tone="neutral">Видео</Badge> : null}
                           {card.status === 'active' ? (
@@ -119,7 +119,7 @@ export default async function CreativesPage({
                           ) : null}
                         </span>
                         <span className="mt-0.5 block truncate text-[12px] text-faint">
-                          {card.campaigns.slice(0, 2).join(', ') || 'Без кампании'}
+                          {card.title || card.campaigns.slice(0, 2).join(', ') || 'Без кампании'}
                           {card.numbers.length > 0 ? ` · ${card.numbers.join(', ')}` : ''}
                         </span>
                       </span>

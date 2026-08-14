@@ -5,6 +5,8 @@ import { useFormStatus } from 'react-dom';
 
 import {
   createLead,
+  distributeNow,
+  planCallback,
   registerSale,
   registerTrial,
   updateLeadStatus,
@@ -15,7 +17,9 @@ import { Field, FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import { IconCheck, IconPlus } from '@/components/ui/icons';
 import { Modal, Select } from '@/components/ui/modal';
+import { formatDateTime } from '@/lib/format';
 import { LEAD_STATUS, leadStatusesFor } from '@/lib/lead-status';
+import { TOUCH_PRESETS } from '@/lib/lead-touches';
 import type { FunnelType } from '@/lib/metrics';
 import { toIsoDate } from '@/lib/period';
 
@@ -194,6 +198,98 @@ export function LeadStatusSelect({
         ))}
       </select>
       {error ? <p className="mt-1 text-[11px] text-negative">{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * Обещание перезвонить.
+ *
+ * Лид у менеджера не отбирают, поэтому недозвон обязан заканчиваться сроком
+ * следующей попытки — иначе заявка просто зависает. Просроченное обещание
+ * подсвечено: это первое, что должен видеть РОП.
+ */
+export function LeadCallback({
+  leadId,
+  nextTouchAt,
+  touchCount,
+}: {
+  leadId: string;
+  nextTouchAt: string | null;
+  touchCount: number;
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  const plan = (preset: string) => {
+    if (!preset) return;
+    setError(null);
+    startTransition(async () => {
+      const result = await planCallback(leadId, preset);
+      if (result.error) setError(result.error);
+    });
+  };
+
+  const overdue = nextTouchAt !== null && new Date(nextTouchAt).getTime() < Date.now();
+
+  return (
+    <div>
+      <select
+        value=""
+        disabled={pending}
+        onChange={(event) => plan(event.target.value)}
+        aria-label="Когда перезвонить"
+        className={`h-8 max-w-[150px] rounded-control border bg-surface-2 px-2 text-[12.5px] transition-colors focus:outline-none ${
+          error || overdue
+            ? 'border-negative text-negative'
+            : 'border-line text-ink hover:border-line-strong'
+        } ${pending ? 'opacity-60' : ''}`}
+      >
+        <option value="">
+          {nextTouchAt
+            ? `${overdue ? '⚠ ' : ''}${formatDateTime(nextTouchAt)}`
+            : 'Назначить звонок'}
+        </option>
+        {TOUCH_PRESETS.map((preset) => (
+          <option key={preset.key} value={preset.key}>
+            {preset.label}
+          </option>
+        ))}
+      </select>
+      {touchCount > 0 ? (
+        <p className="mt-1 text-[11px] text-faint">попыток: {touchCount}</p>
+      ) : null}
+      {error ? <p className="mt-1 text-[11px] text-negative">{error}</p> : null}
+    </div>
+  );
+}
+
+/**
+ * «Раздать сейчас» — ночная очередь.
+ *
+ * Ночью смен нет и заявки копятся нераспределёнными. Утром одна кнопка
+ * раскидывает их поровну между теми, кто уже открыл смену.
+ */
+export function DistributeButton({ queued }: { queued: number }) {
+  const [pending, startTransition] = useTransition();
+  const [message, setMessage] = useState<CrmState | null>(null);
+
+  const run = () => {
+    setMessage(null);
+    startTransition(async () => setMessage(await distributeNow()));
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <Button type="button" variant="secondary" onClick={run} disabled={pending || !queued}>
+        {pending ? 'Раздаём…' : `Раздать сейчас${queued ? ` (${queued})` : ''}`}
+      </Button>
+      {message?.error ? (
+        <span className="text-[12px] text-negative">{message.error}</span>
+      ) : null}
+      {message?.success ? (
+        <span className="text-[12px] text-lime">{message.success}</span>
+      ) : null}
     </div>
   );
 }

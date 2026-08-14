@@ -816,6 +816,9 @@ export type LeadListItem = {
   creativeId: string | null;
   assignedTo: string | null;
   assignedName: string | null;
+  /** Обещание перезвонить и сколько раз уже пытались дозвониться. */
+  nextTouchAt: string | null;
+  touchCount: number;
 };
 
 export type LeadStats = {
@@ -871,7 +874,7 @@ export async function getLeads(
     supabase
       .from('leads')
       .select(
-        'id, name, phone, source, platform, status, created_at, creative_id, assigned_to',
+        'id, name, phone, source, platform, status, created_at, creative_id, assigned_to, next_touch_at, touch_count',
       )
       .eq('company_id', companyId)
       .gte('created_at', `${from}T00:00:00Z`)
@@ -903,7 +906,28 @@ export async function getLeads(
     creativeId: lead.creative_id ?? null,
     assignedTo: lead.assigned_to,
     assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
+    nextTouchAt: lead.next_touch_at,
+    touchCount: lead.touch_count,
   }));
+}
+
+/**
+ * Сколько заявок лежит без ответственного прямо сейчас.
+ *
+ * Считается вне выбранного периода: ночная очередь — это то, что скопилось,
+ * пока никого не было на смене, и её надо видеть в любом фильтре дат.
+ */
+export async function countUnassignedLeads(companyId: string): Promise<number> {
+  const supabase = await createServerSupabase();
+
+  const { count } = await supabase
+    .from('leads')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .is('assigned_to', null)
+    .in('status', ['new', 'no_answer', 'contacted', 'in_progress', 'thinking']);
+
+  return count ?? 0;
 }
 
 export type TeamMember = {

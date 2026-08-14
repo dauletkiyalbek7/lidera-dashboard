@@ -15,9 +15,17 @@ import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { PLATFORM_LABELS } from '@/lib/labels';
 import type { FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
-import { getAssignableEmployees, getCreativeOptions, getLeadStats, getLeads } from '@/lib/queries';
+import {
+  countUnassignedLeads,
+  getAssignableEmployees,
+  getCreativeOptions,
+  getLeadStats,
+  getLeads,
+} from '@/lib/queries';
 import {
   AddLeadButton,
+  DistributeButton,
+  LeadCallback,
   LeadOwnerSelect,
   LeadRowActions,
   LeadStatusSelect,
@@ -37,6 +45,7 @@ const COLUMNS = [
   { key: 'owner', label: 'Ответственный' },
   { key: 'created', label: 'Получен' },
   { key: 'status', label: 'Статус' },
+  { key: 'callback', label: 'Перезвонить' },
   { key: 'actions', label: 'Действия', align: 'right' as const },
 ];
 
@@ -49,11 +58,12 @@ export default async function LeadsPage({
   const range = resolveRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
-  const [leads, stats, creatives, employees] = await Promise.all([
+  const [leads, stats, creatives, employees, queued] = await Promise.all([
     getLeads(company.id, range.from, range.to),
     getLeadStats(company.id, range.from, range.to),
     getCreativeOptions(company.id),
     getAssignableEmployees(company.id),
+    countUnassignedLeads(company.id),
   ]);
 
   // Лиды раздаются менеджерам: РОП руководит, продажник подключается на пробном.
@@ -71,6 +81,7 @@ export default async function LeadsPage({
         action={
           <div className="flex flex-wrap items-center gap-3">
             <DateRangePicker range={range} />
+            <DistributeButton queued={queued} />
             <AddLeadButton creatives={creatives} funnelType={funnelType} />
           </div>
         }
@@ -97,7 +108,11 @@ export default async function LeadsPage({
           <StatTile
             label="Ждут первого касания"
             value={formatNumber(stats.untouched)}
-            hint={`Новые лиды старше ${UNTOUCHED_HOURS} часов — их никто не взял`}
+            hint={
+              queued > 0
+                ? `Без ответственного сейчас: ${formatNumber(queued)} — ждут смены`
+                : `Новые лиды старше ${UNTOUCHED_HOURS} часов — их никто не взял`
+            }
           />
         </div>
 
@@ -138,7 +153,7 @@ export default async function LeadsPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1240}>
+            <TableShell columns={COLUMNS} minWidth={1420}>
               {leads.map((lead) => (
                 <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
@@ -175,6 +190,13 @@ export default async function LeadsPage({
                       leadId={lead.id}
                       status={lead.status}
                       funnelType={funnelType}
+                    />
+                  </Td>
+                  <Td>
+                    <LeadCallback
+                      leadId={lead.id}
+                      nextTouchAt={lead.nextTouchAt}
+                      touchCount={lead.touchCount}
                     />
                   </Td>
                   <Td last align="right">

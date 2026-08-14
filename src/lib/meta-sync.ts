@@ -363,6 +363,22 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     }
   }
 
+  // Сами объявления тоже сохраняем: по их номеру заявка с сайта находит свой
+  // креатив. Без этой таблицы метка {{ad.id}} в ссылке ни с чем не сходится.
+  const adRows = ads
+    .filter((ad) => ad.id)
+    .map((ad) => ({
+      company_id: account.company_id,
+      external_id: ad.id,
+      name: ad.name || `Объявление ${ad.id}`,
+      status: adStatus(ad.status),
+      creative_id: creativeIdByAd.get(ad.id) ?? null,
+    }));
+
+  if (adRows.length > 0) {
+    await supabase.from('ads').upsert(adRows, { onConflict: 'company_id,external_id' });
+  }
+
   // --- 5. Складываем строки метрик ----------------------------------------
   // Один креатив может крутиться в нескольких объявлениях — складываем,
   // иначе строки подерутся за уникальный ключ «креатив + день».

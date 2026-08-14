@@ -43,10 +43,16 @@ function sourceLabel(lead: LeadCardData): string {
   return source;
 }
 
-/** Кнопки статусов. «Новый» не предлагаем — назад по воронке лид не двигают. */
+/**
+ * Кнопки менеджера.
+ *
+ * «Купил» здесь нет намеренно: курс закрывает продажник на уроке, а менеджер
+ * доводит до пробного. «Пробный» и означает, что клиент оплатил пробный урок.
+ * «В работе» тоже убран — «Дозвон» уже говорит, что разговор состоялся.
+ */
 export function statusButtons(leadId: string, funnelType: FunnelType): InlineButton[][] {
   const buttons = leadStatusesFor(funnelType)
-    .filter((status) => status !== 'new')
+    .filter((status) => MANAGER_STATUSES.includes(status))
     .map((status) => ({
       text: LEAD_STATUS[status].label,
       callback_data: `s:${leadId}:${status}`,
@@ -59,11 +65,17 @@ export function statusButtons(leadId: string, funnelType: FunnelType): InlineBut
   return rows;
 }
 
-/** Кнопка «скопировать номер» — на телефоне это быстрее выделения пальцем. */
-export function copyPhoneButton(phone: string | null): InlineButton[][] {
-  if (!phone) return [];
-  return [[{ text: '📋 Скопировать номер', copy_text: { text: phone } }]];
-}
+/**
+ * Что менеджер отмечает после звонка. Порядок — от частого к редкому.
+ * Телефон в карточке Telegram и так делает ссылкой на звонок.
+ */
+const MANAGER_STATUSES: LeadStatus[] = [
+  'no_answer',
+  'contacted',
+  'thinking',
+  'trial',
+  'rejected',
+];
 
 /**
  * Кнопки продажника под карточкой пробного занятия.

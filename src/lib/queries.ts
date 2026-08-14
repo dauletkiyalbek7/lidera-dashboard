@@ -819,11 +819,6 @@ export type LeadListItem = {
   creativeId: string | null;
   assignedTo: string | null;
   assignedName: string | null;
-  /** Обещание перезвонить и сколько раз уже пытались дозвониться. */
-  nextTouchAt: string | null;
-  touchCount: number;
-  /** Срок обещания прошёл. Считается здесь: у всей выдачи одно «сейчас». */
-  touchOverdue: boolean;
 };
 
 export type LeadStats = {
@@ -879,7 +874,7 @@ export async function getLeads(
     supabase
       .from('leads')
       .select(
-        'id, name, phone, source, platform, status, created_at, creative_id, assigned_to, next_touch_at, touch_count',
+        'id, name, phone, source, platform, status, created_at, creative_id, assigned_to',
       )
       .eq('company_id', companyId)
       .gte('created_at', `${from}T00:00:00Z`)
@@ -898,7 +893,6 @@ export async function getLeads(
     (creatives ?? []).map((row, index) => [row.id, creativeLabel(row, index + 1)]),
   );
   const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
-  const listedAt = Date.now();
 
   return (leads ?? []).map((lead) => ({
     id: lead.id,
@@ -912,10 +906,6 @@ export async function getLeads(
     creativeId: lead.creative_id ?? null,
     assignedTo: lead.assigned_to,
     assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
-    nextTouchAt: lead.next_touch_at,
-    touchCount: lead.touch_count,
-    touchOverdue:
-      lead.next_touch_at !== null && new Date(lead.next_touch_at).getTime() < listedAt,
   }));
 }
 
@@ -966,9 +956,6 @@ export type TeamMember = {
   reached: number;
   won: number;
   revenue: number;
-  /** Сколько раз возвращался к лидам и сколько обещаний просрочил. */
-  touches: number;
-  overdue: number;
 };
 
 /**
@@ -1058,17 +1045,7 @@ export async function getTeam(
     if (ownerId) bucket(ownerId).revenue += Number(sale.amount);
   }
 
-  // Касания и просроченные обещания: главный вопрос к менеджеру не «сколько
-  // лидов», а «сколько раз он к ним возвращался и всё ли выполнил».
-  const { data: touches } = await supabase
-    .from('lead_touches')
-    .select('employee_id, remind_at, done_at, kind')
-    .eq('company_id', companyId)
-    .eq('kind', 'promise')
-    .gte('created_at', `${from}T00:00:00Z`)
-    .lte('created_at', `${to}T23:59:59Z`);
-
-  // Почта входа: она лежит в profiles, а карточка сотрудника ссылается туда.
+  // Почта входа лежит в profiles, а карточка сотрудника ссылается туда.
   const profileIds = (employees ?? [])
     .map((employee) => employee.profile_id)
     .filter((id): id is string => id !== null);
@@ -1078,20 +1055,6 @@ export async function getTeam(
     : { data: [] as { id: string; email: string | null }[] };
 
   const loginEmails = new Map((logins ?? []).map((row) => [row.id, row.email]));
-
-  const now = Date.now();
-  for (const touch of touches ?? []) {
-    if (!touch.employee_id) continue;
-    const target = bucket(touch.employee_id);
-    target.touches += 1;
-    if (
-      touch.done_at === null &&
-      touch.remind_at !== null &&
-      new Date(touch.remind_at).getTime() < now
-    ) {
-      target.overdue += 1;
-    }
-  }
 
   return (employees ?? []).map((employee) => {
     const value = stats.get(employee.id) ?? EMPTY_TEAM_STATS;
@@ -1122,23 +1085,9 @@ export async function getTeam(
   });
 }
 
-type TeamStats = {
-  leads: number;
-  reached: number;
-  won: number;
-  revenue: number;
-  touches: number;
-  overdue: number;
-};
+type TeamStats = { leads: number; reached: number; won: number; revenue: number };
 
-const EMPTY_TEAM_STATS: TeamStats = {
-  leads: 0,
-  reached: 0,
-  won: 0,
-  revenue: 0,
-  touches: 0,
-  overdue: 0,
-};
+const EMPTY_TEAM_STATS: TeamStats = { leads: 0, reached: 0, won: 0, revenue: 0 };
 
 /** Активные сотрудники для выпадающих списков назначения. */
 export async function getAssignableEmployees(companyId: string) {

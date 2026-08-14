@@ -8,7 +8,6 @@ import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
 import {
   leadCard,
-  copyPhoneButton,
   statusButtons,
   trialButtons,
 } from '@/lib/telegram-lead-card';
@@ -171,7 +170,7 @@ async function remindAboutLessons(supabase: Admin): Promise<number> {
           company?.timezone ?? 'Asia/Almaty',
         )}`,
       ),
-      { inline: [...copyPhoneButton(lead.phone), ...trialButtons(lesson.id)] },
+      { inline: trialButtons(lesson.id) },
     );
 
     sent += 1;

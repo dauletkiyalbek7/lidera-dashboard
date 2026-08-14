@@ -25,7 +25,6 @@ import {
 import {
   AddLeadButton,
   DistributeButton,
-  LeadCallback,
   LeadOwnerSelect,
   LeadRowActions,
   LeadStatusSelect,
@@ -45,7 +44,6 @@ const COLUMNS = [
   { key: 'owner', label: 'Ответственный' },
   { key: 'created', label: 'Получен' },
   { key: 'status', label: 'Статус' },
-  { key: 'callback', label: 'Перезвонить' },
   { key: 'actions', label: 'Действия', align: 'right' as const },
 ];
 
@@ -156,7 +154,7 @@ export default async function LeadsPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1420}>
+            <TableShell columns={COLUMNS} minWidth={1280}>
               {leads.map((lead) => (
                 <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
@@ -199,14 +197,6 @@ export default async function LeadsPage({
                       leadId={lead.id}
                       status={lead.status}
                       funnelType={funnelType}
-                    />
-                  </Td>
-                  <Td>
-                    <LeadCallback
-                      leadId={lead.id}
-                      nextTouchAt={lead.nextTouchAt}
-                      touchCount={lead.touchCount}
-                      overdue={lead.touchOverdue}
                     />
                   </Td>
                   <Td last align="right">

@@ -41,8 +41,6 @@ const COLUMNS = [
   { key: 'hired', label: 'Принят' },
   { key: 'leads', label: 'Лиды', align: 'right' as const },
   { key: 'reached', label: 'Дозвон', align: 'right' as const },
-  { key: 'touches', label: 'Касания', align: 'right' as const },
-  { key: 'overdue', label: 'Просрочено', align: 'right' as const },
   { key: 'won', label: 'Продажи', align: 'right' as const },
   { key: 'revenue', label: 'Выручка', align: 'right' as const },
   { key: 'actions', label: '', align: 'right' as const },
@@ -125,7 +123,7 @@ export default async function TeamPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1720}>
+            <TableShell columns={COLUMNS} minWidth={1560}>
               {team.map((member) => (
                 <tr
                   key={member.id}
@@ -193,16 +191,6 @@ export default async function TeamPage({
                           0,
                         )}`
                       : '—'}
-                  </Td>
-                  <Td align="right" className="tabular text-ink-soft">
-                    {member.touches ? formatNumber(member.touches) : '—'}
-                  </Td>
-                  <Td align="right" className="tabular">
-                    {member.overdue ? (
-                      <span className="text-negative">{formatNumber(member.overdue)}</span>
-                    ) : (
-                      <span className="text-faint">—</span>
-                    )}
                   </Td>
                   <Td align="right" className="tabular text-ink">
                     {formatNumber(member.won)}

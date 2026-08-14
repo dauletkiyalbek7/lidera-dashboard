@@ -5,7 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { zonedIsoDate } from '@/lib/period';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
-import { copyPhoneButton, leadCard, trialButtons } from '@/lib/telegram-lead-card';
+import { leadCard, trialButtons } from '@/lib/telegram-lead-card';
 import { wasHeld } from '@/lib/trial-status';
 
 /**
@@ -136,7 +136,7 @@ export async function notifyTrialBooked(
       },
       `🎓 <b>Онлайн-урок</b>\n🕒 ${formatTrialTime(startsAt, timeZone)}\nМенеджер согласовал время — урок за вами.`,
     ),
-    { inline: [...copyPhoneButton(lead.phone), ...trialButtons(trial.id)] },
+    { inline: trialButtons(trial.id) },
   );
 }
 

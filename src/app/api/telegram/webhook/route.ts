@@ -18,10 +18,10 @@ import {
   notifyTrialBooked,
   syncTrialForLead,
 } from '@/lib/trials';
+import { creativeLabel } from '@/lib/queries';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import {
   leadCard,
-  copyPhoneButton,
   statusButtons,
   bookingDayButtons,
   bookingTimeButtons,
@@ -52,8 +52,11 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const KEYBOARD_OFF = [['🟢 Я на смене'], ['📋 Мои лиды']];
-const KEYBOARD_ON = [['🔴 Я ухожу'], ['📋 Мои лиды']];
+const KEYBOARD_OFF = [['🟢 Я на смене'], ['📋 Мои лиды', '📵 Недозвон']];
+const KEYBOARD_ON = [['🔴 Я ухожу'], ['📋 Мои лиды', '📵 Недозвон']];
+
+/** Какую пачку показываем: новых или тех, до кого не дозвонились. */
+type QueueMode = 'new' | 'no_answer';
 /** Геолокацию Telegram отдаёт только по нажатию этой кнопки — не автоматически. */
 const KEYBOARD_GEO: KeyboardButton[][] = [
   [{ text: '📍 Отправить геолокацию', request_location: true }],
@@ -123,6 +126,7 @@ async function handleMessage(message: TelegramMessage) {
   }
   if (text.includes('на смене')) return startShiftFlow(chatId, employee);
   if (text.includes('ухожу')) return closeShift(chatId, employee);
+  if (text.includes('Недозвон')) return listLeads(chatId, employee, 0, 'no_answer');
   if (text.includes('Мои лиды')) return listLeads(chatId, employee);
 
   const open = await openShiftOf(employee.id);
@@ -380,7 +384,13 @@ function localDate(timeZone: string, date = new Date()): string {
   }).format(date);
 }
 
-/** Короткое имя объявления для карточки: «Видео 3», а не строка из Ads Manager. */
+/**
+ * Короткое имя объявления — ровно то же, что в кабинете.
+ *
+ * Номер «Видео 11» — это место креатива в списке компании по дате создания,
+ * поэтому одной строкой из базы его не получить: нужен весь список. Иначе
+ * менеджер видит в боте одно имя, а директор в отчёте — другое.
+ */
 async function creativeLabelOf(
   supabase: ReturnType<typeof createAdminSupabase>,
   companyId: string,
@@ -390,12 +400,14 @@ async function creativeLabelOf(
 
   const { data } = await supabase
     .from('creatives')
-    .select('label, name')
-    .eq('id', creativeId)
+    .select('id, label, format, created_at')
     .eq('company_id', companyId)
-    .maybeSingle();
+    .order('created_at');
 
-  return data?.label || data?.name || null;
+  const index = (data ?? []).findIndex((row) => row.id === creativeId);
+  if (index < 0) return null;
+
+  return creativeLabel(data![index], index + 1);
 }
 
 type CompanyRow = {
@@ -469,7 +481,12 @@ const ACTIVE_STATUSES: LeadStatus[] = [
  * а дальше кнопка «Следующий». Порядок — по обещаниям: сначала тот, кому
  * обещали перезвонить раньше всех.
  */
-async function listLeads(chatId: number, employee: Employee, offset = 0) {
+async function listLeads(
+  chatId: number,
+  employee: Employee,
+  offset = 0,
+  mode: QueueMode = 'new',
+) {
   const supabase = createAdminSupabase();
 
   // Заявки — рабочая информация, и выдаются они только на смене. Иначе бот
@@ -488,23 +505,28 @@ async function listLeads(chatId: number, employee: Employee, offset = 0) {
     );
   }
 
+  // Обработанный клиент в очередь не возвращается: менеджер идёт по списку
+  // один раз и не встречает одних и тех же людей по кругу. Недозвоны лежат
+  // отдельной пачкой — к ним возвращаются, когда основная очередь пуста.
+  const statuses = mode === 'new' ? (['new'] as const) : (['no_answer'] as const);
+
   const { data: leads, count } = await supabase
     .from('leads')
     .select('id, name, phone, source, platform, status, creative_id', { count: 'exact' })
     .eq('company_id', employee.company_id)
     .eq('assigned_to', employee.id)
-    .in('status', ACTIVE_STATUSES)
-    // Очередь сама себя перестраивает: тронутый лид уходит в конец, и
-    // «Следующий» всегда даёт того, к кому дольше всех не возвращались.
-    .order('updated_at', { ascending: true })
+    .in('status', statuses)
+    .order('created_at', { ascending: true })
     .range(offset, offset);
 
   const total = count ?? 0;
 
   if (total === 0) {
-    return sendMessage(chatId, 'Активных клиентов нет. Как появятся — пришлю сюда.', {
-      keyboard: KEYBOARD_ON,
-    });
+    const empty =
+      mode === 'new'
+        ? 'Новых клиентов нет. Как появятся — пришлю сюда.\nНедозвоны — кнопка «📵 Недозвон».'
+        : 'Недозвонов нет.';
+    return sendMessage(chatId, empty, { keyboard: KEYBOARD_ON });
   }
 
   const lead = leads?.[0];
@@ -517,11 +539,14 @@ async function listLeads(chatId: number, employee: Employee, offset = 0) {
   const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
   const creativeName = await creativeLabelOf(supabase, employee.company_id, lead.creative_id);
 
-  const header = `👤 <b>Клиент ${offset + 1} из ${total}</b>`;
+  const header =
+    mode === 'new'
+      ? `👤 <b>Клиент ${offset + 1} из ${total}</b>`
+      : `📵 <b>Недозвон ${offset + 1} из ${total}</b>`;
 
   const next: InlineButton[][] =
     offset + 1 < total
-      ? [[{ text: '➡️ Следующий клиент', callback_data: `nx:${offset + 1}` }]]
+      ? [[{ text: '➡️ Следующий клиент', callback_data: `nx:${offset + 1}:${mode}` }]]
       : [];
 
   return sendMessage(
@@ -529,7 +554,6 @@ async function listLeads(chatId: number, employee: Employee, offset = 0) {
     leadCard({ ...lead, creativeLabel: creativeName }, header),
     {
       inline: [
-        ...copyPhoneButton(lead.phone),
         ...statusButtons(lead.id, funnelType),
         ...next,
       ],
@@ -551,7 +575,8 @@ async function handleCallback(query: TelegramCallbackQuery) {
   // «Следующий клиент»: во втором поле не лид, а место в очереди, третьего нет.
   if (kind === 'nx') {
     await answerCallback(query.id);
-    return listLeads(chatId, employee, Number(leadId) || 0);
+    const mode: QueueMode = value === 'no_answer' ? 'no_answer' : 'new';
+    return listLeads(chatId, employee, Number(leadId) || 0, mode);
   }
 
   if (!value) return answerCallback(query.id);

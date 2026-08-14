@@ -8,7 +8,7 @@ import type { FunnelType } from '@/lib/metrics';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
-import { leadCard, copyPhoneButton, statusButtons } from '@/lib/telegram-lead-card';
+import { leadCard, statusButtons } from '@/lib/telegram-lead-card';
 
 /**
  * Авто-раздача лидов.
@@ -377,8 +377,7 @@ async function assignTo(
       ),
       {
         inline: [
-          ...copyPhoneButton(lead.phone),
-          ...statusButtons(lead.id, funnelType),
+            ...statusButtons(lead.id, funnelType),
         ],
       },
     );

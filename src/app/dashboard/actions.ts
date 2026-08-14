@@ -4,7 +4,6 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
-import { zonedIsoDate } from '@/lib/period';
 import { sendPurchaseForSale } from '@/lib/capi';
 import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
@@ -12,6 +11,7 @@ import { isTouchPreset, resolveTouchTime, TOUCH_PRESETS } from '@/lib/lead-touch
 import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { syncTrialForLead } from '@/lib/trials';
 
 /**
  * Ручная работа с CRM: завести лид, сдвинуть его по воронке, оформить продажу
@@ -116,27 +116,15 @@ export async function updateLeadStatus(
 
   // Статус лида и разделы воронки должны совпадать: иначе менеджер отмечает
   // «пробный», а в разделе «Пробные» пусто, и записи приходится дублировать.
+  // «Пробный» сразу уходит продажнику — на нём цепочка не должна обрываться.
   if (parsed.data.status === 'trial' || parsed.data.status === 'sale') {
-    const { data: existing } = await supabase
-      .from('trials')
-      .select('id, status')
-      .eq('company_id', company.id)
-      .eq('lead_id', parsed.data.leadId)
-      .maybeSingle();
-
-    if (!existing && parsed.data.status === 'trial') {
-      await supabase.from('trials').insert({
-        company_id: company.id,
-        lead_id: parsed.data.leadId,
-        date: zonedIsoDate(new Date(), company.timezone),
-        status: 'scheduled',
-      });
-    }
-
-    // Купил — значит пробное состоялось: до продажи иначе не доходят.
-    if (parsed.data.status === 'sale' && existing && existing.status !== 'completed') {
-      await supabase.from('trials').update({ status: 'completed' }).eq('id', existing.id);
-    }
+    await syncTrialForLead(createAdminSupabase(), {
+      companyId: company.id,
+      leadId: parsed.data.leadId,
+      status: parsed.data.status,
+      timezone: company.timezone,
+    });
+    await runDistribution(company.id);
   }
 
   // Лид сдвинулся — обещание перезвонить закрываем, иначе бот напомнит про

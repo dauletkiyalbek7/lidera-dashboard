@@ -819,6 +819,8 @@ export type LeadListItem = {
   /** Обещание перезвонить и сколько раз уже пытались дозвониться. */
   nextTouchAt: string | null;
   touchCount: number;
+  /** Срок обещания прошёл. Считается здесь: у всей выдачи одно «сейчас». */
+  touchOverdue: boolean;
 };
 
 export type LeadStats = {
@@ -893,6 +895,7 @@ export async function getLeads(
     (creatives ?? []).map((row, index) => [row.id, creativeLabel(row, index + 1)]),
   );
   const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
+  const listedAt = Date.now();
 
   return (leads ?? []).map((lead) => ({
     id: lead.id,
@@ -908,6 +911,8 @@ export async function getLeads(
     assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
     nextTouchAt: lead.next_touch_at,
     touchCount: lead.touch_count,
+    touchOverdue:
+      lead.next_touch_at !== null && new Date(lead.next_touch_at).getTime() < listedAt,
   }));
 }
 
@@ -1137,6 +1142,8 @@ export type TrialListItem = {
   amount: number;
   leadName: string | null;
   leadPhone: string | null;
+  /** Продажник, который проводит занятие. */
+  sellerName: string | null;
 };
 
 export async function getTrials(
@@ -1148,14 +1155,19 @@ export async function getTrials(
 
   const { data: trials } = await supabase
     .from('trials')
-    .select('id, date, status, amount, lead_id')
+    .select('id, date, status, amount, lead_id, assigned_to')
     .eq('company_id', companyId)
     .gte('date', from)
     .lte('date', to)
     .order('date', { ascending: false })
     .limit(LIST_LIMIT);
 
-  const leads = await fetchLeadContacts(companyId, trials ?? []);
+  const [leads, { data: employees }] = await Promise.all([
+    fetchLeadContacts(companyId, trials ?? []),
+    supabase.from('employees').select('id, full_name').eq('company_id', companyId),
+  ]);
+
+  const sellerNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
 
   return (trials ?? []).map((trial) => ({
     id: trial.id,
@@ -1164,6 +1176,7 @@ export async function getTrials(
     amount: Number(trial.amount),
     leadName: trial.lead_id ? (leads.get(trial.lead_id)?.name ?? null) : null,
     leadPhone: trial.lead_id ? (leads.get(trial.lead_id)?.phone ?? null) : null,
+    sellerName: trial.assigned_to ? (sellerNames.get(trial.assigned_to) ?? null) : null,
   }));
 }
 

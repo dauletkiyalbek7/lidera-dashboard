@@ -85,6 +85,20 @@ export function touchButtons(leadId: string): InlineButton[][] {
   return rows;
 }
 
+/**
+ * Кнопки продажника под карточкой пробного занятия.
+ * Три исхода, которые он и отмечает по факту: провёл, не пришёл, купил.
+ */
+export function trialButtons(trialId: string): InlineButton[][] {
+  return [
+    [
+      { text: '✅ Провёл', callback_data: `tr:${trialId}:completed` },
+      { text: '🚫 Не пришёл', callback_data: `tr:${trialId}:no_show` },
+    ],
+    [{ text: '💰 Купил курс', callback_data: `tr:${trialId}:sale` }],
+  ];
+}
+
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }

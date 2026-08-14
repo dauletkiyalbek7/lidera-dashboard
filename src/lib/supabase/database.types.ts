@@ -311,6 +311,9 @@ export type TrialRow = Timestamps & {
   status: TrialStatus;
   date: string;
   amount: number;
+  /** Продажник, который проводит занятие. Раздаётся автоматически. */
+  assigned_to: string | null;
+  assigned_at: string | null;
 }
 
 export type SaleRow = Timestamps & {

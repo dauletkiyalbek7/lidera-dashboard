@@ -21,6 +21,7 @@ const COLUMNS = [
   { key: 'lead', label: 'Клиент' },
   { key: 'phone', label: 'Телефон' },
   { key: 'date', label: 'Дата' },
+  { key: 'seller', label: 'Проводит' },
   { key: 'status', label: 'Статус' },
 ];
 
@@ -79,6 +80,11 @@ export default async function TrialsPage({
                   </Td>
                   <Td className="tabular text-ink-soft">{trial.leadPhone ?? '—'}</Td>
                   <Td className="tabular text-ink-soft">{formatDate(trial.date)}</Td>
+                  <Td className="text-ink-soft">
+                    {trial.sellerName ?? (
+                      <span className="text-faint">ждёт продажника</span>
+                    )}
+                  </Td>
                   <Td last>
                     <TrialStatusSelect trialId={trial.id} status={trial.status} />
                   </Td>

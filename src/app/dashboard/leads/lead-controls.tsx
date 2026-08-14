@@ -213,10 +213,13 @@ export function LeadCallback({
   leadId,
   nextTouchAt,
   touchCount,
+  overdue,
 }: {
   leadId: string;
   nextTouchAt: string | null;
   touchCount: number;
+  /** Считается на сервере: время в разметке должно быть одним и тем же. */
+  overdue: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -229,8 +232,6 @@ export function LeadCallback({
       if (result.error) setError(result.error);
     });
   };
-
-  const overdue = nextTouchAt !== null && new Date(nextTouchAt).getTime() < Date.now();
 
   return (
     <div>

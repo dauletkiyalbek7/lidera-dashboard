@@ -197,6 +197,7 @@ export default async function LeadsPage({
                       leadId={lead.id}
                       nextTouchAt={lead.nextTouchAt}
                       touchCount={lead.touchCount}
+                      overdue={lead.touchOverdue}
                     />
                   </Td>
                   <Td last align="right">

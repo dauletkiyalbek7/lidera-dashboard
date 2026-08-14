@@ -11,6 +11,7 @@ import { distanceMeters, formatDistance } from '@/lib/geo';
 import { runDistribution } from '@/lib/lead-distribution';
 import { isTouchPreset, resolveTouchTime, untilLabel } from '@/lib/lead-touches';
 import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
+import { syncTrialForLead } from '@/lib/trials';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import {
   leadCard,
@@ -496,6 +497,69 @@ async function handleCallback(query: TelegramCallbackQuery) {
 
   if (kind === 's') return applyStatus(query, chatId, employee, leadId, value);
   if (kind === 't') return applyTouch(query, chatId, employee, leadId, value);
+  if (kind === 'tr') return applyTrial(query, chatId, employee, leadId, value);
+
+  return answerCallback(query.id);
+}
+
+/**
+ * Исход пробного занятия, отмеченный продажником.
+ *
+ * Продажник ведёт своё занятие, а не чужой лид, поэтому право проверяем по
+ * записи на пробное: занятие должно быть закреплено именно за ним.
+ */
+async function applyTrial(
+  query: TelegramCallbackQuery,
+  chatId: number,
+  employee: Employee,
+  trialId: string,
+  outcome: string,
+) {
+  const supabase = createAdminSupabase();
+
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('id, lead_id, status')
+    .eq('id', trialId)
+    .eq('company_id', employee.company_id)
+    .eq('assigned_to', employee.id)
+    .maybeSingle();
+
+  if (!trial) return answerCallback(query.id, 'Это занятие не за вами.');
+
+  const { data: lead } = trial.lead_id
+    ? await supabase.from('leads').select('name').eq('id', trial.lead_id).maybeSingle()
+    : { data: null };
+
+  const name = escapeHtml(lead?.name || 'Клиент');
+
+  if (outcome === 'completed' || outcome === 'no_show') {
+    await supabase.from('trials').update({ status: outcome }).eq('id', trial.id);
+
+    const label = outcome === 'completed' ? 'занятие проведено' : 'не пришёл';
+    await answerCallback(query.id, label);
+    return sendMessage(chatId, `✅ <b>${name}</b> — ${label}.`);
+  }
+
+  if (outcome === 'sale') {
+    await supabase.from('trials').update({ status: 'completed' }).eq('id', trial.id);
+
+    if (trial.lead_id) {
+      await supabase
+        .from('leads')
+        .update({ status: 'sale' })
+        .eq('id', trial.lead_id)
+        .eq('company_id', employee.company_id);
+
+      await closeOpenTouches(supabase, trial.lead_id);
+    }
+
+    await answerCallback(query.id, 'Продажа отмечена');
+    return sendMessage(
+      chatId,
+      `💰 <b>${name}</b> купил курс. Оформите продажу в кабинете, чтобы сумма попала в отчёты и ушла в Meta.`,
+    );
+  }
 
   return answerCallback(query.id);
 }
@@ -532,6 +596,19 @@ async function applyStatus(
   // Любой другой статус означает, что лид сдвинулся — открытые напоминания
   // больше не нужны.
   await closeOpenTouches(supabase, lead.id);
+
+  // «Пробный» заводит запись в разделе «Пробные» и отдаёт её продажнику:
+  // иначе цепочка обрывается на менеджере.
+  if (status === 'trial' || status === 'sale') {
+    const company = await companyOf(employee.company_id);
+    await syncTrialForLead(supabase, {
+      companyId: employee.company_id,
+      leadId: lead.id,
+      status,
+      timezone: company?.timezone ?? 'Asia/Almaty',
+    });
+    await runDistribution(employee.company_id);
+  }
 
   return sendMessage(chatId, `✅ <b>${escapeHtml(lead.name || 'Лид')}</b> → ${label}`);
 }

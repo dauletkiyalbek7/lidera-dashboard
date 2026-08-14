@@ -149,9 +149,14 @@ export async function sendPurchase(
     response = error instanceof Error ? error.message : 'сеть недоступна';
   }
 
+  // Проверочные события идут без продажи: у них выдуманный номер, и ссылку на
+  // несуществующую строку база справедливо не принимает.
+  const isRealSale =
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(event.saleId);
+
   await supabase.from('capi_events').insert({
     company_id: companyId,
-    sale_id: event.saleId,
+    sale_id: isRealSale ? event.saleId : null,
     event_name: 'Purchase',
     event_id: eventId,
     value: event.value,

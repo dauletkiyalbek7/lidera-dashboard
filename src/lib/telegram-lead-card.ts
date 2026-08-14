@@ -1,5 +1,4 @@
 import { LEAD_STATUS, leadStatusesFor, type LeadStatus } from '@/lib/lead-status';
-import { TOUCH_PRESETS } from '@/lib/lead-touches';
 import type { FunnelType } from '@/lib/metrics';
 import type { InlineButton } from '@/lib/telegram';
 
@@ -17,7 +16,6 @@ export type LeadCardData = {
   status: string;
   /** Объявление, с которого пришёл лид, — с ним понятно, о чём говорить. */
   creativeLabel?: string | null;
-  touchCount?: number | null;
 };
 
 export function leadCard(lead: LeadCardData, title?: string): string {
@@ -32,7 +30,6 @@ export function leadCard(lead: LeadCardData, title?: string): string {
       ? `Источник: ${escapeHtml(sourceLabel(lead))}`
       : null,
     `Статус: ${LEAD_STATUS[lead.status as LeadStatus]?.label ?? lead.status}`,
-    lead.touchCount ? `Попыток дозвона: ${lead.touchCount}` : null,
   ];
   return rows.filter(Boolean).join('\n');
 }
@@ -69,23 +66,6 @@ export function copyPhoneButton(phone: string | null): InlineButton[][] {
 }
 
 /**
- * Сроки следующего звонка. Показываются после «не дозвонился»: менеджер
- * выбирает, когда вернётся к лиду, и в это время бот напомнит.
- */
-export function touchButtons(leadId: string): InlineButton[][] {
-  const buttons = TOUCH_PRESETS.map((preset) => ({
-    text: preset.short,
-    callback_data: `t:${leadId}:${preset.key}`,
-  }));
-
-  const rows: InlineButton[][] = [];
-  for (let index = 0; index < buttons.length; index += 2) {
-    rows.push(buttons.slice(index, index + 2));
-  }
-  return rows;
-}
-
-/**
  * Кнопки продажника под карточкой пробного занятия.
  * Три исхода, которые он и отмечает по факту: провёл, не пришёл, купил.
  */
@@ -105,4 +85,59 @@ export function trialButtons(trialId: string): InlineButton[][] {
 
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+/**
+ * Запись на онлайн-урок в три шага: день → час → продажник.
+ *
+ * Всё кнопками, без ввода текста: менеджер держит телефон одной рукой и
+ * говорит с клиентом, набирать дату ему нечем. Идентификатор урока короче
+ * связки «лид + время», поэтому шаги ссылаются на него.
+ */
+export function bookingDayButtons(trialId: string): InlineButton[][] {
+  return [
+    [
+      { text: 'Сегодня', callback_data: `bd:${trialId}:0` },
+      { text: 'Завтра', callback_data: `bd:${trialId}:1` },
+    ],
+    [
+      { text: 'Послезавтра', callback_data: `bd:${trialId}:2` },
+      { text: 'Через 3 дня', callback_data: `bd:${trialId}:3` },
+    ],
+  ];
+}
+
+/** Часы урока: рабочий день школы с шагом в час. */
+export const BOOKING_HOURS = [
+  '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
+  '15:00', '16:00', '17:00', '18:00', '19:00', '20:00',
+];
+
+export function bookingTimeButtons(trialId: string): InlineButton[][] {
+  const buttons = BOOKING_HOURS.map((time) => ({
+    text: time,
+    callback_data: `bt:${trialId}:${time.replace(':', '')}`,
+  }));
+
+  const rows: InlineButton[][] = [];
+  for (let index = 0; index < buttons.length; index += 3) {
+    rows.push(buttons.slice(index, index + 3));
+  }
+  return rows;
+}
+
+/**
+ * Продажники на выбор. В кнопку идёт место в списке, а не идентификатор:
+ * два идентификатора в 64 байта callback_data не помещаются.
+ */
+export function bookingSellerButtons(
+  trialId: string,
+  sellers: { fullName: string; busy: boolean }[],
+): InlineButton[][] {
+  return sellers.map((seller, index) => [
+    {
+      text: seller.busy ? `${seller.fullName} — занят` : `✅ ${seller.fullName}`,
+      callback_data: `bs:${trialId}:${index}`,
+    },
+  ]);
 }

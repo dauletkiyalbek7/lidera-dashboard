@@ -372,7 +372,7 @@ async function assignTo(
     await sendMessage(
       manager.telegram_user_id,
       leadCard(
-        { ...lead, creativeLabel: lead.creativeLabel, touchCount: lead.touch_count ?? 0 },
+        { ...lead, creativeLabel: lead.creativeLabel },
         '🔔 <b>Новый клиент</b>',
       ),
       {

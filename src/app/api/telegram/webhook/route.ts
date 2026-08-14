@@ -10,15 +10,23 @@ import {
 } from '@/lib/attendance';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { runDistribution } from '@/lib/lead-distribution';
-import { isTouchPreset, resolveTouchTime, untilLabel } from '@/lib/lead-touches';
-import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
-import { syncTrialForLead } from '@/lib/trials';
+import { instantInZone } from '@/lib/lead-touches';
+import { closeOpenTouches } from '@/lib/touch-runner';
+import {
+  formatTrialTime,
+  sellerAvailability,
+  notifyTrialBooked,
+  syncTrialForLead,
+} from '@/lib/trials';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import {
   leadCard,
   copyPhoneButton,
   statusButtons,
-  touchButtons,
+  bookingDayButtons,
+  bookingTimeButtons,
+  bookingSellerButtons,
+  BOOKING_HOURS,
   escapeHtml,
 } from '@/lib/telegram-lead-card';
 import {
@@ -363,13 +371,31 @@ function isLate(company: CompanyRow, rules: ShiftRules): boolean {
   return hours * 60 + minutes > startHours * 60 + startMinutes + rules.lateGraceMinutes;
 }
 
-function localDate(timeZone: string): string {
+function localDate(timeZone: string, date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', {
     timeZone,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
-  }).format(new Date());
+  }).format(date);
+}
+
+/** Короткое имя объявления для карточки: «Видео 3», а не строка из Ads Manager. */
+async function creativeLabelOf(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  companyId: string,
+  creativeId: string | null,
+): Promise<string | null> {
+  if (!creativeId) return null;
+
+  const { data } = await supabase
+    .from('creatives')
+    .select('label, name')
+    .eq('id', creativeId)
+    .eq('company_id', companyId)
+    .maybeSingle();
+
+  return data?.label || data?.name || null;
 }
 
 type CompanyRow = {
@@ -464,13 +490,13 @@ async function listLeads(chatId: number, employee: Employee, offset = 0) {
 
   const { data: leads, count } = await supabase
     .from('leads')
-    .select('id, name, phone, source, platform, status, touch_count, next_touch_at', {
-      count: 'exact',
-    })
+    .select('id, name, phone, source, platform, status, creative_id', { count: 'exact' })
     .eq('company_id', employee.company_id)
     .eq('assigned_to', employee.id)
     .in('status', ACTIVE_STATUSES)
-    .order('next_touch_at', { ascending: true, nullsFirst: true })
+    // Очередь сама себя перестраивает: тронутый лид уходит в конец, и
+    // «Следующий» всегда даёт того, к кому дольше всех не возвращались.
+    .order('updated_at', { ascending: true })
     .range(offset, offset);
 
   const total = count ?? 0;
@@ -488,22 +514,10 @@ async function listLeads(chatId: number, employee: Employee, offset = 0) {
     });
   }
 
-  const timeZone = company?.timezone ?? 'Asia/Almaty';
   const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
+  const creativeName = await creativeLabelOf(supabase, employee.company_id, lead.creative_id);
 
-  const promise = lead.next_touch_at
-    ? `⏰ Обещали связаться: ${new Date(lead.next_touch_at).toLocaleString('ru-RU', {
-        timeZone,
-        day: 'numeric',
-        month: 'long',
-        hour: '2-digit',
-        minute: '2-digit',
-      })}`
-    : undefined;
-
-  const header = [`👤 <b>Клиент ${offset + 1} из ${total}</b>`, promise]
-    .filter(Boolean)
-    .join('\n');
+  const header = `👤 <b>Клиент ${offset + 1} из ${total}</b>`;
 
   const next: InlineButton[][] =
     offset + 1 < total
@@ -512,7 +526,7 @@ async function listLeads(chatId: number, employee: Employee, offset = 0) {
 
   return sendMessage(
     chatId,
-    leadCard({ ...lead, touchCount: lead.touch_count }, header),
+    leadCard({ ...lead, creativeLabel: creativeName }, header),
     {
       inline: [
         ...copyPhoneButton(lead.phone),
@@ -543,7 +557,9 @@ async function handleCallback(query: TelegramCallbackQuery) {
   if (!value) return answerCallback(query.id);
 
   if (kind === 's') return applyStatus(query, chatId, employee, leadId, value);
-  if (kind === 't') return applyTouch(query, chatId, employee, leadId, value);
+  if (kind === 'bd') return pickDay(query, chatId, employee, leadId, value);
+  if (kind === 'bt') return pickTime(query, chatId, employee, leadId, value);
+  if (kind === 'bs') return pickSeller(query, chatId, employee, leadId, value);
   if (kind === 'tr') return applyTrial(query, chatId, employee, leadId, value);
 
   return answerCallback(query.id);
@@ -622,7 +638,13 @@ async function applyTrial(
 }
 
 
-/** Смена статуса лида из чата. */
+/**
+ * Смена статуса лида из чата.
+ *
+ * После любой отметки бот сразу даёт следующего клиента: менеджер работает
+ * очередью, а не листает ленту. Тронутый лид уходит в конец очереди сам —
+ * порядок держится на времени последнего изменения.
+ */
 async function applyStatus(
   query: TelegramCallbackQuery,
   chatId: number,
@@ -634,7 +656,7 @@ async function applyStatus(
 
   const supabase = createAdminSupabase();
   const lead = await ownLead(employee, leadId);
-  if (!lead) return answerCallback(query.id, 'Этот лид уже не за вами.');
+  if (!lead) return answerCallback(query.id, 'Этот клиент уже не за вами.');
 
   const { error } = await supabase
     .from('leads')
@@ -646,88 +668,201 @@ async function applyStatus(
 
   const label = LEAD_STATUS[status].label;
   await answerCallback(query.id, `Статус: ${label}`);
-
-  // Не дозвонился — сразу спрашиваем, когда перезвонит. Лид остаётся за ним:
-  // никому другому этот номер не уйдёт, поэтому важно назначить срок.
-  if (status === 'no_answer') return askWhenToCall(chatId, employee, lead);
-
-  // Любой другой статус означает, что лид сдвинулся — открытые напоминания
-  // больше не нужны.
   await closeOpenTouches(supabase, lead.id);
 
-  // «Пробный» заводит запись в разделе «Пробные» и отдаёт её продажнику:
-  // иначе цепочка обрывается на менеджере.
-  if (status === 'trial' || status === 'sale') {
-    const company = await companyOf(employee.company_id);
+  const company = await companyOf(employee.company_id);
+
+  // «Пробный» — это не просто отметка: у урока должны быть время и продажник.
+  if (status === 'trial') {
+    const { createdId } = await syncTrialForLead(supabase, {
+      companyId: employee.company_id,
+      leadId: lead.id,
+      status,
+      timezone: company?.timezone ?? 'Asia/Almaty',
+    });
+
+    const trialId = createdId ?? (await draftTrialOf(employee.company_id, lead.id));
+
+    if (trialId) {
+      return sendMessage(
+        chatId,
+        `🎓 <b>${escapeHtml(lead.name || 'Клиент')}</b> — записываем на урок.\nНа какой день?`,
+        { inline: bookingDayButtons(trialId) },
+      );
+    }
+  }
+
+  if (status === 'sale') {
     await syncTrialForLead(supabase, {
       companyId: employee.company_id,
       leadId: lead.id,
       status,
       timezone: company?.timezone ?? 'Asia/Almaty',
     });
-    await runDistribution(employee.company_id);
   }
 
-  return sendMessage(chatId, `✅ <b>${escapeHtml(lead.name || 'Лид')}</b> → ${label}`);
+  await sendMessage(chatId, `✅ <b>${escapeHtml(lead.name || 'Клиент')}</b> → ${label}`);
+  return listLeads(chatId, employee);
 }
 
-/** Спросить срок следующего звонка. */
-async function askWhenToCall(chatId: number, employee: Employee, lead: OwnLead) {
-  const company = await companyOf(employee.company_id);
-  const attempts = (lead.touch_count ?? 0) + 1;
-  const limit = company?.max_touches ?? 5;
-
-  // После нескольких безрезультатных попыток предлагаем закрыть лид, но не
-  // закрываем сами: решение — за человеком, а не за автоматикой.
-  const tail =
-    attempts >= limit
-      ? `\n\n❗️Это уже ${attempts}-я попытка. Если человек не выходит на связь — поставьте «Отказ», чтобы он не висел в работе.`
-      : '';
-
-  return sendMessage(
-    chatId,
-    `📵 <b>${escapeHtml(lead.name || 'Лид')}</b> не ответил.\nКогда перезвоните?${tail}`,
-    { inline: touchButtons(lead.id) },
-  );
+/** Урок без назначенного времени — тот, который сейчас записываем. */
+async function draftTrialOf(companyId: string, leadId: string): Promise<string | null> {
+  const supabase = createAdminSupabase();
+  const { data } = await supabase
+    .from('trials')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('lead_id', leadId)
+    .is('starts_at', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data?.id ?? null;
 }
 
-/** Менеджер выбрал, когда вернётся к лиду. */
-async function applyTouch(
+// -----------------------------------------------------------------------------
+// Запись на урок: день → час → продажник
+// -----------------------------------------------------------------------------
+
+/** Шаг 1: выбран день. Запоминаем дату и спрашиваем час. */
+async function pickDay(
   query: TelegramCallbackQuery,
   chatId: number,
   employee: Employee,
-  leadId: string,
-  presetKey: string,
+  trialId: string,
+  offset: string,
 ) {
-  if (!isTouchPreset(presetKey)) return answerCallback(query.id, 'Неизвестный срок.');
-
-  const lead = await ownLead(employee, leadId);
-  if (!lead) return answerCallback(query.id, 'Этот лид уже не за вами.');
-
+  const supabase = createAdminSupabase();
   const company = await companyOf(employee.company_id);
-  const remindAt = resolveTouchTime(presetKey, company?.timezone ?? 'Asia/Almaty');
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
 
-  await scheduleTouch(createAdminSupabase(), {
-    companyId: employee.company_id,
-    leadId: lead.id,
-    employeeId: employee.id,
-    remindAt,
-    countsAsAttempt: true,
+  const day = new Date(Date.now() + (Number(offset) || 0) * 24 * 60 * 60 * 1000);
+  const date = localDate(timeZone, day);
+
+  const { error } = await supabase
+    .from('trials')
+    .update({ date })
+    .eq('id', trialId)
+    .eq('company_id', employee.company_id);
+
+  if (error) return answerCallback(query.id, 'Не удалось сохранить день.');
+
+  await answerCallback(query.id, date);
+  return sendMessage(chatId, `📅 ${date}. Во сколько урок?`, {
+    inline: bookingTimeButtons(trialId),
   });
+}
 
-  const when = remindAt.toLocaleString('ru-RU', {
-    timeZone: company?.timezone ?? 'Asia/Almaty',
-    day: 'numeric',
-    month: 'long',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+/** Шаг 2: выбран час. Считаем занятость и показываем продажников. */
+async function pickTime(
+  query: TelegramCallbackQuery,
+  chatId: number,
+  employee: Employee,
+  trialId: string,
+  hhmm: string,
+) {
+  const time = `${hhmm.slice(0, 2)}:${hhmm.slice(2)}`;
+  if (!BOOKING_HOURS.includes(time)) return answerCallback(query.id, 'Неизвестное время.');
 
-  await answerCallback(query.id, `Напомню ${untilLabel(remindAt)}`);
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
+
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('id, date')
+    .eq('id', trialId)
+    .eq('company_id', employee.company_id)
+    .maybeSingle();
+
+  if (!trial) return answerCallback(query.id, 'Запись не найдена.');
+
+  const startsAt = instantInZone(trial.date, time, timeZone);
+  if (!startsAt) return answerCallback(query.id, 'Не удалось разобрать время.');
+
+  await supabase
+    .from('trials')
+    .update({ starts_at: startsAt.toISOString() })
+    .eq('id', trial.id);
+
+  const sellers = await sellerAvailability(supabase, employee.company_id, startsAt);
+
+  if (sellers.length === 0) {
+    return sendMessage(
+      chatId,
+      'В компании нет продажников — урок пока не на кого записать. Скажите директору.',
+    );
+  }
+
+  await answerCallback(query.id, time);
   return sendMessage(
     chatId,
-    `⏰ Напомню про <b>${escapeHtml(lead.name || 'лид')}</b>: ${when} (${untilLabel(remindAt)}).`,
+    `🕒 ${formatTrialTime(startsAt, timeZone)}\nКто проводит урок?`,
+    { inline: bookingSellerButtons(trial.id, sellers) },
   );
+}
+
+/** Шаг 3: выбран продажник. Закрепляем урок и предупреждаем его. */
+async function pickSeller(
+  query: TelegramCallbackQuery,
+  chatId: number,
+  employee: Employee,
+  trialId: string,
+  index: string,
+) {
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
+
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('id, lead_id, starts_at')
+    .eq('id', trialId)
+    .eq('company_id', employee.company_id)
+    .maybeSingle();
+
+  if (!trial?.starts_at) return answerCallback(query.id, 'Сначала выберите время.');
+
+  const startsAt = new Date(trial.starts_at);
+  const sellers = await sellerAvailability(supabase, employee.company_id, startsAt);
+  const seller = sellers[Number(index)];
+
+  if (!seller) return answerCallback(query.id, 'Продажник не найден.');
+
+  // Занятость перепроверяем здесь: пока менеджер выбирал, этот час мог занять
+  // другой менеджер.
+  if (seller.busy) {
+    await answerCallback(query.id, 'Занят в это время');
+    return sendMessage(
+      chatId,
+      `${escapeHtml(seller.fullName)} уже ведёт урок в это время. Выберите другого или другой час.`,
+      { inline: bookingSellerButtons(trial.id, sellers) },
+    );
+  }
+
+  await supabase
+    .from('trials')
+    .update({ assigned_to: seller.id, assigned_at: new Date().toISOString() })
+    .eq('id', trial.id);
+
+  if (trial.lead_id) {
+    await notifyTrialBooked(
+      supabase,
+      employee.company_id,
+      trial.lead_id,
+      startsAt,
+      seller.id,
+      timeZone,
+    );
+  }
+
+  await answerCallback(query.id, 'Урок записан');
+  await sendMessage(
+    chatId,
+    `✅ Урок записан: ${formatTrialTime(startsAt, timeZone)}, проводит ${escapeHtml(seller.fullName)}.`,
+  );
+
+  return listLeads(chatId, employee);
 }
 
 type OwnLead = { id: string; name: string; touch_count: number };

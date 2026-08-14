@@ -9,7 +9,6 @@ import { sendMessage } from '@/lib/telegram';
 import {
   leadCard,
   copyPhoneButton,
-  touchButtons,
   statusButtons,
   trialButtons,
 } from '@/lib/telegram-lead-card';
@@ -33,7 +32,7 @@ import type { FunnelType } from '@/lib/metrics';
 
 type Admin = SupabaseClient<Database>;
 
-export type TouchRunResult = { reminded: number; nudged: number; lessons: number };
+export type TouchRunResult = { reminded: number; lessons: number };
 
 /** За сколько минут до урока напомнить продажнику. */
 const LESSON_REMINDER_MINUTES = 60;
@@ -100,10 +99,9 @@ export async function runTouchReminders(): Promise<TouchRunResult> {
   const supabase = createAdminSupabase();
 
   const reminded = await sendDueReminders(supabase);
-  const nudged = await nudgeUntouched(supabase);
   const lessons = await remindAboutLessons(supabase);
 
-  return { reminded, nudged, lessons };
+  return { reminded, lessons };
 }
 
 /**
@@ -255,83 +253,6 @@ async function sendDueReminders(supabase: Admin): Promise<number> {
 
 /** Статусы, при которых лид ещё в работе и напоминания уместны. */
 const OPEN_STATUSES = ['new', 'no_answer', 'contacted', 'in_progress', 'thinking'];
-
-/**
- * Лид назначен, но статус так и остался «новый» дольше положенного.
- * Раньше такой лид отбирали; теперь просто напоминаем — и только тому же
- * менеджеру, не чаще одного раза за тот же срок.
- */
-async function nudgeUntouched(supabase: Admin): Promise<number> {
-  const { data: companies } = await supabase
-    .from('companies')
-    .select('id, sla_minutes, funnel_type, timezone')
-    .eq('status', 'active')
-    .eq('auto_assign', true);
-
-  let sent = 0;
-
-  for (const company of companies ?? []) {
-    const deadline = new Date(Date.now() - company.sla_minutes * 60 * 1000).toISOString();
-
-    const { data: stale } = await supabase
-      .from('leads')
-      .select('id, name, phone, source, platform, status, assigned_to, assigned_at')
-      .eq('company_id', company.id)
-      .eq('status', 'new')
-      .not('assigned_to', 'is', null)
-      .lt('assigned_at', deadline)
-      .limit(50);
-
-    if (!stale || stale.length === 0) continue;
-
-    // Кому уже напоминали за последний срок — второй раз не трогаем.
-    const { data: recent } = await supabase
-      .from('lead_touches')
-      .select('lead_id')
-      .in(
-        'lead_id',
-        stale.map((lead) => lead.id),
-      )
-      .eq('kind', 'nudge')
-      .gt('notified_at', deadline);
-
-    const alreadyNudged = new Set((recent ?? []).map((row) => row.lead_id));
-    const funnelType: FunnelType = company.funnel_type === 'direct' ? 'direct' : 'trial';
-
-    for (const lead of stale) {
-      if (alreadyNudged.has(lead.id) || !lead.assigned_to) continue;
-
-      const chatId = await telegramOf(supabase, lead.assigned_to);
-      if (!chatId) continue;
-
-      const waiting = lead.assigned_at
-        ? Math.round((Date.now() - new Date(lead.assigned_at).getTime()) / 60000)
-        : 0;
-
-      await supabase.from('lead_touches').insert({
-        company_id: company.id,
-        lead_id: lead.id,
-        employee_id: lead.assigned_to,
-        kind: 'nudge',
-        notified_at: new Date().toISOString(),
-        done_at: new Date().toISOString(),
-        note: `Лид ждёт ${waiting} мин`,
-      });
-
-      await sendMessage(
-        chatId,
-        // Без нотаций: менеджеру нужен повод позвонить, а не напоминание
-        // о том, что заявка за ним закреплена.
-        leadCard(lead, '⏳ <b>Ждёт звонка</b>'),
-        { inline: [...statusButtons(lead.id, funnelType), ...touchButtons(lead.id)] },
-      );
-
-      sent += 1;
-    }
-  }
-
-  return sent;
-}
 
 // -----------------------------------------------------------------------------
 // Общее

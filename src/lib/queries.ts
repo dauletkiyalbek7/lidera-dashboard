@@ -955,6 +955,9 @@ export type TeamMember = {
   reached: number;
   won: number;
   revenue: number;
+  /** Сколько раз возвращался к лидам и сколько обещаний просрочил. */
+  touches: number;
+  overdue: number;
 };
 
 /**
@@ -1021,11 +1024,11 @@ export async function getTeam(
   // кто вёл клиента, даже если продажу занесли позже.
   const leadOwner = new Map((leads ?? []).map((lead) => [lead.id, lead.assigned_to]));
 
-  const stats = new Map<string, { leads: number; reached: number; won: number; revenue: number }>();
+  const stats = new Map<string, TeamStats>();
   const bucket = (id: string) => {
     let value = stats.get(id);
     if (!value) {
-      value = { leads: 0, reached: 0, won: 0, revenue: 0 };
+      value = { ...EMPTY_TEAM_STATS };
       stats.set(id, value);
     }
     return value;
@@ -1044,8 +1047,32 @@ export async function getTeam(
     if (ownerId) bucket(ownerId).revenue += Number(sale.amount);
   }
 
+  // Касания и просроченные обещания: главный вопрос к менеджеру не «сколько
+  // лидов», а «сколько раз он к ним возвращался и всё ли выполнил».
+  const { data: touches } = await supabase
+    .from('lead_touches')
+    .select('employee_id, remind_at, done_at, kind')
+    .eq('company_id', companyId)
+    .eq('kind', 'promise')
+    .gte('created_at', `${from}T00:00:00Z`)
+    .lte('created_at', `${to}T23:59:59Z`);
+
+  const now = Date.now();
+  for (const touch of touches ?? []) {
+    if (!touch.employee_id) continue;
+    const target = bucket(touch.employee_id);
+    target.touches += 1;
+    if (
+      touch.done_at === null &&
+      touch.remind_at !== null &&
+      new Date(touch.remind_at).getTime() < now
+    ) {
+      target.overdue += 1;
+    }
+  }
+
   return (employees ?? []).map((employee) => {
-    const value = stats.get(employee.id) ?? { leads: 0, reached: 0, won: 0, revenue: 0 };
+    const value = stats.get(employee.id) ?? EMPTY_TEAM_STATS;
     return {
       id: employee.id,
       fullName: employee.full_name,
@@ -1068,6 +1095,24 @@ export async function getTeam(
     };
   });
 }
+
+type TeamStats = {
+  leads: number;
+  reached: number;
+  won: number;
+  revenue: number;
+  touches: number;
+  overdue: number;
+};
+
+const EMPTY_TEAM_STATS: TeamStats = {
+  leads: 0,
+  reached: 0,
+  won: 0,
+  revenue: 0,
+  touches: 0,
+  overdue: 0,
+};
 
 /** Активные сотрудники для выпадающих списков назначения. */
 export async function getAssignableEmployees(companyId: string) {

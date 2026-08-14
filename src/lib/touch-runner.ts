@@ -320,10 +320,9 @@ async function nudgeUntouched(supabase: Admin): Promise<number> {
 
       await sendMessage(
         chatId,
-        leadCard(
-          lead,
-          `⏳ <b>Лид ждёт ${waiting} мин</b>\nОн закреплён за вами и никуда не уйдёт — но чем позже звонок, тем холоднее клиент.`,
-        ),
+        // Без нотаций: менеджеру нужен повод позвонить, а не напоминание
+        // о том, что заявка за ним закреплена.
+        leadCard(lead, '⏳ <b>Ждёт звонка</b>'),
         { inline: [...statusButtons(lead.id, funnelType), ...touchButtons(lead.id)] },
       );
 

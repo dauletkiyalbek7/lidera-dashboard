@@ -340,7 +340,7 @@ async function assignTo(
       manager.telegram_user_id,
       leadCard(
         { ...lead, creativeLabel: lead.creativeLabel, touchCount: lead.touch_count ?? 0 },
-        '🔔 <b>Новый лид</b>\nПозвоните сейчас — он закреплён за вами.',
+        '🔔 <b>Новый клиент</b>',
       ),
       {
         inline: [

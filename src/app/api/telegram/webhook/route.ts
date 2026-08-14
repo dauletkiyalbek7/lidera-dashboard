@@ -26,6 +26,7 @@ import {
   isBotConfigured,
   sendMessage,
   webhookSecret,
+  type InlineButton,
   type KeyboardButton,
 } from '@/lib/telegram';
 
@@ -434,56 +435,93 @@ const ACTIVE_STATUSES: LeadStatus[] = [
   'thinking',
 ];
 
-async function listLeads(chatId: number, employee: Employee) {
+/**
+ * Очередь клиентов: по одному за раз.
+ *
+ * Раньше бот вываливал в чат все заявки подряд — работать с этим невозможно,
+ * менеджер тонет в ленте и теряет место. Теперь один клиент — одна карточка,
+ * а дальше кнопка «Следующий». Порядок — по обещаниям: сначала тот, кому
+ * обещали перезвонить раньше всех.
+ */
+async function listLeads(chatId: number, employee: Employee, offset = 0) {
   const supabase = createAdminSupabase();
 
-  const { data: leads } = await supabase
+  // Заявки — рабочая информация, и выдаются они только на смене. Иначе бот
+  // отдаёт номера человеку, который не работает, и никто не знает, звонит он
+  // или нет.
+  const company = await companyOf(employee.company_id);
+  const needsShift = company
+    ? resolveShiftRules(employee, company).mode !== 'always'
+    : true;
+
+  if (needsShift && !(await openShiftOf(employee.id))) {
+    return sendMessage(
+      chatId,
+      'Сначала откройте смену — кнопка «Я на смене» ниже.\nЗаявки выдаются только тем, кто на работе.',
+      { keyboard: KEYBOARD_OFF },
+    );
+  }
+
+  const { data: leads, count } = await supabase
     .from('leads')
-    .select('id, name, phone, source, platform, status, touch_count, next_touch_at')
+    .select('id, name, phone, source, platform, status, touch_count, next_touch_at', {
+      count: 'exact',
+    })
     .eq('company_id', employee.company_id)
     .eq('assigned_to', employee.id)
     .in('status', ACTIVE_STATUSES)
-    // Сначала те, кому обещали позвонить раньше всех: это и есть очередь дня.
     .order('next_touch_at', { ascending: true, nullsFirst: true })
-    .limit(10);
+    .range(offset, offset);
 
-  if (!leads || leads.length === 0) {
-    return sendMessage(chatId, 'Активных лидов нет. Как появятся — пришлю сюда.');
+  const total = count ?? 0;
+
+  if (total === 0) {
+    return sendMessage(chatId, 'Активных клиентов нет. Как появятся — пришлю сюда.', {
+      keyboard: KEYBOARD_ON,
+    });
   }
 
-  const { data: company } = await supabase
-    .from('companies')
-    .select('funnel_type, timezone')
-    .eq('id', employee.company_id)
-    .maybeSingle();
+  const lead = leads?.[0];
+  if (!lead) {
+    return sendMessage(chatId, 'Это был последний клиент в очереди.', {
+      keyboard: KEYBOARD_ON,
+    });
+  }
 
-  const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
   const timeZone = company?.timezone ?? 'Asia/Almaty';
+  const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
 
-  for (const lead of leads) {
-    const promise = lead.next_touch_at
-      ? `⏰ Обещали связаться: ${new Date(lead.next_touch_at).toLocaleString('ru-RU', {
-          timeZone,
-          day: 'numeric',
-          month: 'long',
-          hour: '2-digit',
-          minute: '2-digit',
-        })}`
-      : undefined;
+  const promise = lead.next_touch_at
+    ? `⏰ Обещали связаться: ${new Date(lead.next_touch_at).toLocaleString('ru-RU', {
+        timeZone,
+        day: 'numeric',
+        month: 'long',
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`
+    : undefined;
 
-    await sendMessage(
-      chatId,
-      leadCard({ ...lead, touchCount: lead.touch_count }, promise),
-      {
-        inline: [
-          ...copyPhoneButton(lead.phone),
-          ...statusButtons(lead.id, funnelType),
-        ],
-      },
-    );
-  }
+  const header = [`👤 <b>Клиент ${offset + 1} из ${total}</b>`, promise]
+    .filter(Boolean)
+    .join('\n');
+
+  const next: InlineButton[][] =
+    offset + 1 < total
+      ? [[{ text: '➡️ Следующий клиент', callback_data: `nx:${offset + 1}` }]]
+      : [];
+
+  return sendMessage(
+    chatId,
+    leadCard({ ...lead, touchCount: lead.touch_count }, header),
+    {
+      inline: [
+        ...copyPhoneButton(lead.phone),
+        ...statusButtons(lead.id, funnelType),
+        ...next,
+      ],
+    },
+  );
 }
-
 
 async function handleCallback(query: TelegramCallbackQuery) {
   const userId = query.from?.id;
@@ -494,7 +532,15 @@ async function handleCallback(query: TelegramCallbackQuery) {
   if (!employee) return answerCallback(query.id, 'Вы не подключены к платформе.');
 
   const [kind, leadId, value] = (query.data ?? '').split(':');
-  if (!leadId || !value) return answerCallback(query.id);
+  if (!leadId) return answerCallback(query.id);
+
+  // «Следующий клиент»: во втором поле не лид, а место в очереди, третьего нет.
+  if (kind === 'nx') {
+    await answerCallback(query.id);
+    return listLeads(chatId, employee, Number(leadId) || 0);
+  }
+
+  if (!value) return answerCallback(query.id);
 
   if (kind === 's') return applyStatus(query, chatId, employee, leadId, value);
   if (kind === 't') return applyTouch(query, chatId, employee, leadId, value);

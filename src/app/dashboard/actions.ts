@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
+import { zonedIsoDate } from '@/lib/period';
 import { sendPurchaseForSale } from '@/lib/capi';
 import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
@@ -109,6 +110,31 @@ export async function updateLeadStatus(
     .eq('company_id', company.id);
 
   if (error) return { error: 'Не удалось изменить статус.' };
+
+  // Статус лида и разделы воронки должны совпадать: иначе менеджер отмечает
+  // «пробный», а в разделе «Пробные» пусто, и записи приходится дублировать.
+  if (parsed.data.status === 'trial' || parsed.data.status === 'sale') {
+    const { data: existing } = await supabase
+      .from('trials')
+      .select('id, status')
+      .eq('company_id', company.id)
+      .eq('lead_id', parsed.data.leadId)
+      .maybeSingle();
+
+    if (!existing && parsed.data.status === 'trial') {
+      await supabase.from('trials').insert({
+        company_id: company.id,
+        lead_id: parsed.data.leadId,
+        date: zonedIsoDate(new Date(), company.timezone),
+        status: 'scheduled',
+      });
+    }
+
+    // Купил — значит пробное состоялось: до продажи иначе не доходят.
+    if (parsed.data.status === 'sale' && existing && existing.status !== 'completed') {
+      await supabase.from('trials').update({ status: 'completed' }).eq('id', existing.id);
+    }
+  }
 
   revalidateCabinet();
   return { success: 'Статус обновлён.' };

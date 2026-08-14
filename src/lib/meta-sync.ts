@@ -219,48 +219,51 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     `${GRAPH}/${actId}/campaigns?fields=name,status,objective&limit=100&access_token=${token}`,
   );
 
+  // Пишем одной пачкой: в крупном кабинете кампаний сотни, и запись по одной
+  // не укладывается в отведённое функции время.
   const campaignIdByExternal = new Map<string, string>();
 
-  for (const campaign of campaigns) {
-    const { data: saved } = await supabase
+  if (campaigns.length > 0) {
+    const { data: savedCampaigns } = await supabase
       .from('campaigns')
       .upsert(
-        {
+        campaigns.map((campaign) => ({
           company_id: account.company_id,
           ad_account_id: account.id,
           external_id: campaign.id,
           name: campaign.name,
-          platform: 'meta',
+          platform: 'meta' as const,
           status: campaignStatus(campaign.status),
           objective: campaign.objective ?? null,
           // Номер не затираем: если Meta его не отдала, остаётся прежний.
           ...(numberByCampaign.has(campaign.id)
             ? { whatsapp_number: numberByCampaign.get(campaign.id) }
             : {}),
-        },
+        })),
         { onConflict: 'company_id,platform,external_id' },
       )
-      .select('id')
-      .maybeSingle();
+      .select('id, external_id');
 
-    if (saved) campaignIdByExternal.set(campaign.id, saved.id);
+    for (const row of savedCampaigns ?? []) {
+      if (row.external_id) campaignIdByExternal.set(row.external_id, row.id);
+    }
   }
 
   // --- 3. Дневная статистика по объявлениям -------------------------------
   // Идём на уровень объявления: только там видно, какой креатив принёс
   // переписки. Период режем неделями — за месяц разом крупный кабинет
   // отвечает отказом «слишком много данных».
-  const insights: MetaInsight[] = [];
-
-  for (const window of weekWindows(since, until)) {
-    const chunk = await graph<MetaInsight>(
-      `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
-        `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start` +
-        `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
-        `&limit=100&access_token=${token}`,
-    );
-    insights.push(...chunk);
-  }
+  const weeks = await Promise.all(
+    weekWindows(since, until).map((window) =>
+      graph<MetaInsight>(
+        `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
+          `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start` +
+          `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
+          `&limit=100&access_token=${token}`,
+      ),
+    ),
+  );
+  const insights = weeks.flat();
 
   // --- 4. Объявления и креативы -------------------------------------------
   // Забираем только те объявления, что за период работали: в кабинете их
@@ -277,6 +280,8 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   );
 
   const creativeIdByAd = new Map<string, string>();
+  const adsByCreative = new Map<string, string[]>();
+  const creativeRows = new Map<string, Record<string, unknown>>();
 
   for (const ad of ads) {
     const creative = ad.creative;
@@ -290,30 +295,37 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     // копия, к которой у приложения нет доступа.
     const videoId = videoData?.video_id ?? creative.video_id ?? null;
 
-    const { data: saved } = await supabase
-      .from('creatives')
-      .upsert(
-        {
-          company_id: account.company_id,
-          external_id: creative.id,
-          name: videoData?.title || linkData?.name || creative.name || ad.name,
-          platform: 'meta',
-          format: videoId ? 'video' : 'image',
-          status: adStatus(ad.status),
-          video_id: videoId,
-          title: videoData?.title ?? linkData?.name ?? null,
-          body: videoData?.message ?? linkData?.message ?? null,
-          // Обложка — полноразмерный кадр объявления, а не превью 64×64,
-          // которое Meta обрезает по центру и режет людям лица.
-          thumbnail_url:
-            videoData?.image_url ?? linkData?.picture ?? creative.image_url ?? null,
-        },
-        { onConflict: 'company_id,platform,external_id' },
-      )
-      .select('id')
-      .maybeSingle();
+    adsByCreative.set(creative.id, [...(adsByCreative.get(creative.id) ?? []), ad.id]);
+    creativeRows.set(creative.id, {
+      company_id: account.company_id,
+      external_id: creative.id,
+      name: videoData?.title || linkData?.name || creative.name || ad.name,
+      platform: 'meta' as const,
+      format: videoId ? 'video' : 'image',
+      status: adStatus(ad.status),
+      video_id: videoId,
+      title: videoData?.title ?? linkData?.name ?? null,
+      body: videoData?.message ?? linkData?.message ?? null,
+      // Обложка — полноразмерный кадр объявления, а не превью 64×64,
+      // которое Meta обрезает по центру и режет людям лица.
+      thumbnail_url:
+        videoData?.image_url ?? linkData?.picture ?? creative.image_url ?? null,
+    });
+  }
 
-    if (saved) creativeIdByAd.set(ad.id, saved.id);
+  if (creativeRows.size > 0) {
+    const { data: savedCreatives } = await supabase
+      .from('creatives')
+      .upsert(Array.from(creativeRows.values()) as never, {
+        onConflict: 'company_id,platform,external_id',
+      })
+      .select('id, external_id');
+
+    for (const row of savedCreatives ?? []) {
+      for (const adId of adsByCreative.get(row.external_id ?? '') ?? []) {
+        creativeIdByAd.set(adId, row.id);
+      }
+    }
   }
 
   // --- 5. Складываем строки метрик ----------------------------------------
@@ -524,8 +536,13 @@ async function graphByIds<T>(
 ): Promise<T[]> {
   const items: T[] = [];
 
+  const batches: string[][] = [];
   for (let start = 0; start < ids.length; start += batchSize) {
-    const batch = ids.slice(start, start + batchSize);
+    batches.push(ids.slice(start, start + batchSize));
+  }
+
+  const results = await Promise.all(
+    batches.map(async (batch) => {
     const response = await fetch(
       `${GRAPH}/?ids=${batch.join(',')}&fields=${encodeURIComponent(fields)}` +
         `&access_token=${token}`,
@@ -540,9 +557,11 @@ async function graphByIds<T>(
       throw new Error(`Meta API: ${payload.error.message} (код ${payload.error.code})`);
     }
 
-    items.push(...(Object.values(payload) as T[]));
-  }
+    return Object.values(payload) as T[];
+    }),
+  );
 
+  items.push(...results.flat());
   return items;
 }
 

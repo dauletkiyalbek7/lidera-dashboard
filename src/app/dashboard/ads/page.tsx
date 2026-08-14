@@ -26,6 +26,7 @@ import {
   getCurrencyNote,
 } from '@/lib/queries';
 import { SyncMetaButton } from '@/app/dashboard/integrations/sync-button';
+import { CampaignToggle } from './campaign-toggle';
 
 export const metadata: Metadata = { title: 'Реклама' };
 
@@ -38,6 +39,7 @@ const CAMPAIGN_COLUMNS = [
   { key: 'cost', label: 'Цена', align: 'right' as const },
   { key: 'clicks', label: 'Клики', align: 'right' as const },
   { key: 'days', label: 'Дней', align: 'right' as const },
+  { key: 'counted', label: 'В отчёте', align: 'right' as const },
 ];
 
 const NUMBER_COLUMNS = [
@@ -174,7 +176,7 @@ export default async function AdsPage({
             title="Кампании"
             subtitle={
               breakdown.campaigns.length
-                ? `Те, что откручивались за ${range.label}`
+                ? `Те, что откручивались за ${range.label}. Выключите переключатель у кампаний найма — они перестанут влиять на итоги и цену лида`
                 : 'За выбранный период открутки не было'
             }
           />
@@ -187,9 +189,19 @@ export default async function AdsPage({
               {breakdown.campaigns.map((row) => {
                 const status = row.status ? CAMPAIGN_STATUS[row.status] : null;
                 return (
-                  <tr key={row.key} className="transition-colors hover:bg-surface-2/60">
+                  <tr
+                    key={row.key}
+                    className={`transition-colors hover:bg-surface-2/60 ${
+                      row.counted === false ? 'opacity-55' : ''
+                    }`}
+                  >
                     <Td first className="font-medium text-ink">
                       {row.title}
+                      {row.counted === false ? (
+                        <span className="mt-0.5 block text-[11.5px] font-normal text-faint">
+                          не входит в итоги
+                        </span>
+                      ) : null}
                     </Td>
                     <Td className="tabular text-ink-soft">{row.subtitle ?? '—'}</Td>
                     <Td>{status ? <Badge tone={status.tone}>{status.label}</Badge> : '—'}</Td>
@@ -205,8 +217,17 @@ export default async function AdsPage({
                     <Td align="right" className="tabular text-ink-soft">
                       {formatNumber(row.clicks)}
                     </Td>
-                    <Td last align="right" className="tabular text-muted">
+                    <Td align="right" className="tabular text-muted">
                       {formatNumber(row.activeDays)}
+                    </Td>
+                    <Td last align="right">
+                      <span className="flex justify-end">
+                        <CampaignToggle
+                          campaignId={row.key}
+                          counted={row.counted !== false}
+                          disabled={profile.role !== 'DIRECTOR'}
+                        />
+                      </span>
                     </Td>
                   </tr>
                 );

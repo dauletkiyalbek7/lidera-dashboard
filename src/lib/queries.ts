@@ -64,6 +64,31 @@ async function toCompanyCurrency<T extends SpendRow>(
   });
 }
 
+/**
+ * Убирает строки кампаний, выключенных из отчётов.
+ *
+ * В одном кабинете рядом крутятся курсы и наём: соискатель — не клиент, и в
+ * цене лида ему не место.
+ */
+async function withoutSkippedCampaigns<T extends { campaign_id?: string | null }>(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  rows: T[],
+): Promise<T[]> {
+  if (rows.length === 0) return rows;
+
+  const { data } = await supabase
+    .from('campaigns')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('counted', false);
+
+  if (!data || data.length === 0) return rows;
+
+  const skipped = new Set(data.map((row) => row.id));
+  return rows.filter((row) => !row.campaign_id || !skipped.has(row.campaign_id));
+}
+
 export type CurrencyNote = {
   /** Валюта рекламного кабинета. */
   source: string;
@@ -135,7 +160,7 @@ export async function getDashboardData(
     await Promise.all([
       supabase
         .from('ad_metrics')
-        .select('creative_id, date, spend, impressions, clicks, leads, currency')
+        .select('creative_id, campaign_id, date, spend, impressions, clicks, leads, currency')
         .eq('company_id', companyId)
         .gte('date', from)
         .lte('date', to),
@@ -164,7 +189,11 @@ export async function getDashboardData(
         .lte('created_at', `${to}T23:59:59Z`),
     ]);
 
-  const metrics = await toCompanyCurrency(supabase, companyId, metricsResult.data ?? []);
+  const metrics = await withoutSkippedCampaigns(
+    supabase,
+    companyId,
+    await toCompanyCurrency(supabase, companyId, metricsResult.data ?? []),
+  );
   const creatives = creativesResult.data ?? [];
   const trials = trialsResult.data ?? [];
   const sales = salesResult.data ?? [];
@@ -382,8 +411,13 @@ export async function getCreativeCards(
   const campaignById = new Map((campaignRows ?? []).map((row) => [row.id, row]));
   const placement = new Map<string, { campaigns: Set<string>; numbers: Set<string> }>();
 
-  // Расход приходит в валюте кабинета — приводим к валюте компании.
-  const spendRows = await toCompanyCurrency(supabase, companyId, metrics ?? []);
+  // Расход приходит в валюте кабинета — приводим к валюте компании, а кампании
+  // найма из отчёта убираем.
+  const spendRows = await withoutSkippedCampaigns(
+    supabase,
+    companyId,
+    await toCompanyCurrency(supabase, companyId, metrics ?? []),
+  );
 
   const stats = new Map<
     string,
@@ -482,6 +516,8 @@ export async function getCreativeCards(
 }
 
 export type AdBreakdownRow = {
+  /** Учитывается ли кампания в итогах: найм обычно выключают. */
+  counted?: boolean;
   key: string;
   title: string;
   subtitle: string | null;
@@ -532,12 +568,20 @@ export async function getAdBreakdown(
       .lte('date', to),
     supabase
       .from('campaigns')
-      .select('id, name, status, whatsapp_number')
+      .select('id, name, status, whatsapp_number, counted')
       .eq('company_id', companyId),
   ]);
 
   const campaignById = new Map((campaigns ?? []).map((row) => [row.id, row]));
-  const spendRows = await toCompanyCurrency(supabase, companyId, metrics ?? []);
+  // Кампании найма и прочие непродажные в отчёт не идут: иначе цена лида
+  // смешивает соискателей с клиентами.
+  const skipped = new Set(
+    (campaigns ?? []).filter((row) => row.counted === false).map((row) => row.id),
+  );
+  const converted = await toCompanyCurrency(supabase, companyId, metrics ?? []);
+  const spendRows = converted.filter(
+    (row) => !row.campaign_id || !skipped.has(row.campaign_id),
+  );
 
   type MetricRow = {
     campaign_id: string | null;
@@ -567,8 +611,13 @@ export async function getAdBreakdown(
     if (Number(row.spend) > 0) bucket.days.add(row.date);
   };
 
-  for (const row of spendRows) {
+  // В таблицу кампаний попадают и выключенные — директор должен видеть, что
+  // они крутились, и понимать, почему их нет в итогах.
+  for (const row of converted) {
     if (row.campaign_id) add(byCampaign, row.campaign_id, row);
+  }
+
+  for (const row of spendRows) {
     const number = row.campaign_id
       ? campaignById.get(row.campaign_id)?.whatsapp_number
       : null;
@@ -596,13 +645,16 @@ export async function getAdBreakdown(
 
   const campaignRows = Array.from(byCampaign, ([id, bucket]) => {
     const campaign = campaignById.get(id);
-    return toRow(
-      id,
-      bucket,
-      campaign?.name ?? 'Без названия',
-      campaign?.whatsapp_number ?? null,
-      campaign?.status ?? null,
-    );
+    return {
+      ...toRow(
+        id,
+        bucket,
+        campaign?.name ?? 'Без названия',
+        campaign?.whatsapp_number ?? null,
+        campaign?.status ?? null,
+      ),
+      counted: campaign?.counted !== false,
+    };
   }).sort((a, b) => b.spend - a.spend);
 
   const numberRows = Array.from(byNumber, ([number, bucket]) =>

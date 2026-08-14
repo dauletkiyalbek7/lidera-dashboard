@@ -107,7 +107,9 @@ export async function syncAllMetaAccounts(): Promise<{
 async function noteSync(
   companyId: string,
   accountId: string | null,
-  outcome: { ok: true; result: MetaSyncResult } | { ok: false; message: string },
+  outcome:
+    | { ok: true; result: MetaSyncResult }
+    | { ok: false; message: string; transient?: boolean },
 ) {
   const supabase = createAdminSupabase();
 
@@ -116,7 +118,7 @@ async function noteSync(
       company_id: companyId,
       platform: 'meta',
       account_id: accountId,
-      status: outcome.ok ? 'connected' : 'error',
+      status: outcome.ok || outcome.transient ? 'connected' : 'error',
       last_sync_at: new Date().toISOString(),
       config: outcome.ok
         ? {
@@ -126,7 +128,9 @@ async function noteSync(
             spend: outcome.result.spend,
             error: null,
           }
-        : { error: outcome.message },
+        : outcome.transient
+          ? { error: null, warning: outcome.message }
+          : { error: outcome.message },
     },
     { onConflict: 'company_id,platform' },
   );
@@ -158,10 +162,40 @@ export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncR
     return result;
   } catch (error) {
     const message = error instanceof Error ? error.message : 'неизвестная ошибка';
-    await supabase.from('ad_accounts').update({ status: 'error' }).eq('id', account.id);
-    await noteSync(account.company_id, account.account_id, { ok: false, message });
+
+    // Временный отказ — не повод объявлять кабинет сломанным. Если данные
+    // свежие, а Meta просто попросила подождать, подключение исправно:
+    // «Ошибка» рядом с кабинетом должна означать, что цифры не идут.
+    const transient = isTransient(message) && (await hasFreshData(account.company_id));
+
+    if (!transient) {
+      await supabase.from('ad_accounts').update({ status: 'error' }).eq('id', account.id);
+    }
+
+    await noteSync(account.company_id, account.account_id, { ok: false, message, transient });
     throw error;
   }
+}
+
+/** Ограничение частоты и подобные «попробуйте позже» проходят сами. */
+function isTransient(message: string): boolean {
+  return /код (1|2|4|17|32|613)\)|limit reached|reduce the amount of data|temporarily/i.test(
+    message,
+  );
+}
+
+/** Есть ли у компании данные за последние сутки. */
+async function hasFreshData(companyId: string): Promise<boolean> {
+  const supabase = createAdminSupabase();
+  const yesterday = isoDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
+
+  const { count } = await supabase
+    .from('ad_metrics')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .gte('date', yesterday);
+
+  return (count ?? 0) > 0;
 }
 
 type AdAccount = {

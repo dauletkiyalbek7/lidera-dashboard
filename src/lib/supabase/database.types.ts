@@ -126,6 +126,8 @@ export type CampaignRow = Timestamps & {
   objective: string | null;
   /** Номер WhatsApp, на который ведёт кампания в переписки. */
   whatsapp_number: string | null;
+  /** Учитывать в отчётах: кампании найма выключают, чтобы не портить цену лида. */
+  counted: boolean;
 }
 
 export type AdSetRow = Timestamps & {

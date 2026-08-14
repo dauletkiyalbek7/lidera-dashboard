@@ -43,15 +43,6 @@ export function AdAccountForm({
     );
   }
 
-  if (accounts.length === 0) {
-    return (
-      <p className="px-5 py-6 text-[13.5px] text-muted sm:px-6">
-        Токен платформы не видит ни одного рекламного кабинета. Выдайте ему доступ в
-        Business Manager — и кабинеты появятся здесь.
-      </p>
-    );
-  }
-
   const current = accounts.find((account) => account.accountId === selected);
 
   return (
@@ -71,9 +62,10 @@ export function AdAccountForm({
           className={selectClass}
           value={selected}
           onChange={(event) => setSelected(event.target.value)}
-          required
         >
-          {free.length === 0 ? <option value="">Свободных кабинетов нет</option> : null}
+          {free.length === 0 ? (
+            <option value="">Токену платформы не выдан ни один свободный кабинет</option>
+          ) : null}
           {accounts.map((account) => (
             <option
               key={account.accountId}
@@ -89,6 +81,24 @@ export function AdAccountForm({
         <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
           После подключения платформа сразу заберёт последние 30 дней: кампании,
           креативы, расход и переписки. Дальше обновляется сама каждые два часа.
+        </p>
+      </div>
+
+      <div>
+        <label htmlFor="manualId" className="block text-[13px] font-medium text-ink-soft">
+          Или номер кабинета вручную
+        </label>
+        <input
+          id="manualId"
+          name="manualId"
+          inputMode="numeric"
+          placeholder="act_1497735681197831"
+          className={selectClass}
+        />
+        <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+          Нужно, когда кабинет выдан партнёрским доступом: в списке своих он не
+          появляется, но по номеру читается. Платформа проверит доступ и скажет, чего
+          не хватает.
         </p>
       </div>
 

@@ -367,6 +367,46 @@ const attachSchema = z.object({
 });
 
 /**
+ * Проверка кабинета, введённого руками.
+ *
+ * Кабинет, выданный через партнёрский доступ, не всегда виден в списке
+ * собственных, но читается по прямому номеру. Поэтому пробуем прочитать его и
+ * возвращаем ответ Meta как есть: «нет доступа» и «такого кабинета нет» — это
+ * разные беды с разным лечением.
+ */
+async function verifyMetaAccount(
+  accountId: string,
+): Promise<{ name: string; currency: string | null } | { error: string }> {
+  const token = process.env.META_ACCESS_TOKEN;
+  if (!token) return { error: 'Не задан META_ACCESS_TOKEN в переменных окружения.' };
+
+  const version = process.env.META_API_VERSION || 'v23.0';
+  const response = await fetch(
+    `https://graph.facebook.com/${version}/act_${accountId}` +
+      `?fields=name,currency&access_token=${token}`,
+    { cache: 'no-store' },
+  );
+
+  const payload = (await response.json()) as {
+    name?: string;
+    currency?: string;
+    error?: { message: string; code: number };
+  };
+
+  if (payload.error) {
+    const hint =
+      payload.error.code === 100 || payload.error.code === 200
+        ? ' Выдайте этот кабинет системному пользователю «Lidera» в Business Manager ' +
+          '(Настройки компании → Пользователи → Системные пользователи → Добавить активы → ' +
+          'Рекламные аккаунты → «Просмотр эффективности»).'
+        : '';
+    return { error: `Meta: ${payload.error.message}.${hint}` };
+  }
+
+  return { name: payload.name || `act_${accountId}`, currency: payload.currency ?? null };
+}
+
+/**
  * Подключение рекламного кабинета к компании и первая синхронизация.
  *
  * Синхронизируем сразу: владелец должен увидеть цифры в ту же минуту, а не
@@ -378,10 +418,24 @@ export async function attachMetaAccount(
 ): Promise<AdminState> {
   const admin = await requireSuperAdmin();
 
+  // Номер можно выбрать из списка или ввести руками: кабинет, полученный по
+  // партнёрскому доступу, в списке своих не появляется, но читается по номеру.
+  const manual = String(formData.get('manualId') ?? '')
+    .trim()
+    .replace(/^act_/i, '');
+
+  let accountName = String(formData.get('accountName') ?? '');
+
+  if (manual) {
+    const verified = await verifyMetaAccount(manual);
+    if ('error' in verified) return { error: verified.error };
+    accountName = verified.name;
+  }
+
   const parsed = attachSchema.safeParse({
     companyId: formData.get('companyId'),
-    accountId: formData.get('accountId'),
-    accountName: formData.get('accountName'),
+    accountId: manual || formData.get('accountId'),
+    accountName,
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };

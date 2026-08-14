@@ -147,6 +147,17 @@ export default async function CreativePage({
                 }
                 hint="Сколько обращений дошло до покупки"
               />
+              {company.funnel_type === 'trial' ? (
+                <StatTile
+                  label="Пробные занятия"
+                  value={formatNumber(creative.trials)}
+                  hint={
+                    creative.conversions
+                      ? `Дошли до пробного: ${formatPercent((creative.trials / creative.conversions) * 100, 1)}`
+                      : 'Проведённые занятия по заявкам этого ролика'
+                  }
+                />
+              ) : null}
               <StatTile
                 label="Цена клика"
                 value={
@@ -159,6 +170,45 @@ export default async function CreativePage({
                 }`}
               />
             </div>
+
+            {creative.hasVideo ? (
+              <Card>
+                <CardHeader
+                  title="Как смотрят ролик"
+                  subtitle="Где человек теряет интерес — видно по досмотрам"
+                />
+                <dl className="divide-y divide-line">
+                  <Row label="Начали смотреть" value={formatNumber(creative.videoPlays)} />
+                  <Row
+                    label="Досмотрели до конца"
+                    value={
+                      creative.videoPlays
+                        ? `${formatNumber(creative.videoCompletions)} · ${formatPercent(
+                            (creative.videoCompletions / creative.videoPlays) * 100,
+                            1,
+                          )}`
+                        : formatNumber(creative.videoCompletions)
+                    }
+                  />
+                  <Row
+                    label="Среднее время просмотра"
+                    value={
+                      creative.videoAvgSeconds
+                        ? `${formatNumber(creative.videoAvgSeconds, 1)} сек`
+                        : '—'
+                    }
+                  />
+                  <Row
+                    label="Из просмотра в клик"
+                    value={
+                      creative.videoPlays
+                        ? formatPercent((creative.clicks / creative.videoPlays) * 100, 1)
+                        : '—'
+                    }
+                  />
+                </dl>
+              </Card>
+            ) : null}
 
             <Card>
               <CardHeader

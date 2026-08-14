@@ -17,18 +17,22 @@ import { getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
 
-const COLUMNS = [
+const BASE_COLUMNS = [
   { key: 'creative', label: 'Креатив' },
   { key: 'spend', label: 'Расход', align: 'right' as const },
-  { key: 'impressions', label: 'Показы', align: 'right' as const },
   { key: 'ctr', label: 'CTR', align: 'right' as const },
   { key: 'leads', label: 'Лиды', align: 'right' as const },
   { key: 'cpl', label: 'Цена лида', align: 'right' as const },
+  { key: 'trials', label: 'Пробные', align: 'right' as const },
   { key: 'sales', label: 'Продажи', align: 'right' as const },
   { key: 'revenue', label: 'Выручка', align: 'right' as const },
   { key: 'roas', label: 'ROAS', align: 'right' as const },
   { key: 'profit', label: 'Прибыль', align: 'right' as const },
 ];
+
+/** Без пробных занятий столбец не нужен — воронка короче. */
+const columnsFor = (funnelType: string) =>
+  funnelType === 'trial' ? BASE_COLUMNS : BASE_COLUMNS.filter((c) => c.key !== 'trials');
 
 export default async function CreativesPage({
   searchParams,
@@ -97,7 +101,7 @@ export default async function CreativesPage({
                 title="Список креативов"
                 subtitle={`Отсортированы по расходу за ${range.label}. Нажмите строку — откроется ролик`}
               />
-              <TableShell columns={COLUMNS} minWidth={1100}>
+              <TableShell columns={columnsFor(company.funnel_type)} minWidth={1080}>
                 {shown.map((card) => {
                   const href = `/dashboard/creatives/${card.id}?${new URLSearchParams({
                     period: range.preset ?? '',
@@ -142,9 +146,6 @@ export default async function CreativesPage({
                         {formatMoney(card.spend, { currency })}
                       </Td>
                       <Td align="right" className="tabular text-ink-soft">
-                        {formatNumber(card.impressions)}
-                      </Td>
-                      <Td align="right" className="tabular text-ink-soft">
                         {formatPercent(card.ctr, 2)}
                       </Td>
                       <Td align="right" className="tabular font-medium text-lime">
@@ -155,6 +156,11 @@ export default async function CreativesPage({
                           ? formatMoney(card.costPerConversion, { currency })
                           : '—'}
                       </Td>
+                      {company.funnel_type === 'trial' ? (
+                        <Td align="right" className="tabular text-ink-soft">
+                          {card.trials ? formatNumber(card.trials) : '—'}
+                        </Td>
+                      ) : null}
                       <Td align="right" className="tabular text-ink-soft">
                         {card.sales ? formatNumber(card.sales) : '—'}
                       </Td>

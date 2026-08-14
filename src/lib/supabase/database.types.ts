@@ -187,6 +187,10 @@ export type AdMetricRow = {
   cpl: number;
   /** Валюта поля spend. NULL — валюта компании (демо и ручные записи). */
   currency: string | null;
+  /** Как смотрели ролик: начатые просмотры, досмотры и среднее время. */
+  video_plays: number;
+  video_completions: number;
+  video_avg_seconds: number;
   created_at: string;
 }
 

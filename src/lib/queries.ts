@@ -370,6 +370,11 @@ export type CreativeCard = {
   ctr: number;
   /** Лиды по данным площадки: заявки с сайта плюс начатые переписки. */
   conversions: number;
+  /** Пробные занятия и просмотры ролика. */
+  trials: number;
+  videoPlays: number;
+  videoCompletions: number;
+  videoAvgSeconds: number;
   costPerConversion: number;
   /** Из CRM: заявки, продажи и деньги, дошедшие до кассы. */
   crmLeads: number;
@@ -392,7 +397,13 @@ export async function getCreativeCards(
 ): Promise<CreativeCard[]> {
   const supabase = await createServerSupabase();
 
-  const [{ data: creatives }, { data: metrics }, { data: leads }, { data: sales }] =
+  const [
+    { data: creatives },
+    { data: metrics },
+    { data: leads },
+    { data: sales },
+    { data: trials },
+  ] =
     await Promise.all([
       supabase
         .from('creatives')
@@ -403,7 +414,9 @@ export async function getCreativeCards(
         .order('created_at'),
       supabase
         .from('ad_metrics')
-        .select('creative_id, campaign_id, date, spend, impressions, clicks, leads, currency')
+        .select(
+          'creative_id, campaign_id, date, spend, impressions, clicks, leads, currency, video_plays, video_completions, video_avg_seconds',
+        )
         .eq('company_id', companyId)
         .not('creative_id', 'is', null)
         .gte('date', from)
@@ -422,6 +435,12 @@ export async function getCreativeCards(
         .eq('status', 'paid')
         .gte('sale_date', from)
         .lte('sale_date', to),
+      supabase
+        .from('trials')
+        .select('lead_id, status')
+        .eq('company_id', companyId)
+        .gte('date', from)
+        .lte('date', to),
     ]);
 
   const creativeOfLead = new Map((leads ?? []).map((lead) => [lead.id, lead.creative_id]));
@@ -452,6 +471,10 @@ export async function getCreativeCards(
       crmLeads: number;
       sales: number;
       revenue: number;
+      trials: number;
+      plays: number;
+      completions: number;
+      avgSeconds: number;
     }
   >();
 
@@ -466,6 +489,10 @@ export async function getCreativeCards(
         crmLeads: 0,
         sales: 0,
         revenue: 0,
+        trials: 0,
+        plays: 0,
+        completions: 0,
+        avgSeconds: 0,
       };
       stats.set(id, value);
     }
@@ -479,6 +506,9 @@ export async function getCreativeCards(
     target.impressions += Number(row.impressions);
     target.clicks += Number(row.clicks);
     target.conversions += Number(row.leads);
+    target.plays += Number(row.video_plays ?? 0);
+    target.completions += Number(row.video_completions ?? 0);
+    target.avgSeconds = Math.max(target.avgSeconds, Number(row.video_avg_seconds ?? 0));
 
     const campaign = row.campaign_id ? campaignById.get(row.campaign_id) : null;
     if (campaign) {
@@ -494,6 +524,12 @@ export async function getCreativeCards(
 
   for (const lead of leads ?? []) {
     if (lead.creative_id) bucket(lead.creative_id).crmLeads += 1;
+  }
+
+  // Пробное занятие — середина воронки: между обращением и покупкой.
+  for (const trial of trials ?? []) {
+    const creativeId = trial.lead_id ? creativeOfLead.get(trial.lead_id) : null;
+    if (creativeId && trial.status === 'completed') bucket(creativeId).trials += 1;
   }
 
   for (const sale of sales ?? []) {
@@ -522,6 +558,10 @@ export async function getCreativeCards(
         status: creative.status,
         format: creative.format,
         platform: creative.platform,
+        trials: value?.trials ?? 0,
+        videoPlays: value?.plays ?? 0,
+        videoCompletions: value?.completions ?? 0,
+        videoAvgSeconds: value?.avgSeconds ?? 0,
         thumbnailUrl: creative.thumbnail_url,
         hasVideo: Boolean(creative.video_id),
         campaigns: Array.from(placement.get(creative.id)?.campaigns ?? []),

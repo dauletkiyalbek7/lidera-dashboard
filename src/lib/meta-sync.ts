@@ -302,7 +302,8 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     weekWindows(since, until).map((window) =>
       graph<MetaInsight>(
         `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
-          `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start` +
+          `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start,` +
+          `video_play_actions,video_p100_watched_actions,video_avg_time_watched_actions` +
           `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
           `&limit=100&access_token=${token}`,
       ),
@@ -407,6 +408,10 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     // В одном кабинете рядом живут кампании на сайт и кампании в переписки:
     // заявки и написавшие — разные люди, поэтому их складываем. Раньше при
     // наличии переписок заявки с сайта терялись целиком.
+    const plays = actionValue(row.video_play_actions, ['video_view']);
+    const completions = actionValue(row.video_p100_watched_actions, ['video_view']);
+    const avgSeconds = actionValue(row.video_avg_time_watched_actions, ['video_view']);
+
     const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
     const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
 
@@ -426,6 +431,9 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
       cpm: 0,
       leads: 0,
       cpl: 0,
+      video_plays: 0,
+      video_completions: 0,
+      video_avg_seconds: 0,
     };
 
     current.spend += spend;
@@ -433,6 +441,11 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     current.reach += Number(row.reach ?? 0);
     current.clicks += Number(row.clicks ?? 0);
     current.leads += leads;
+    current.video_plays += plays;
+    current.video_completions += completions;
+    // Среднее время у Meta уже усреднено по дню: берём наибольшее из строк,
+    // складывать секунды разных объявлений бессмысленно.
+    current.video_avg_seconds = Math.max(current.video_avg_seconds, avgSeconds);
 
     merged.set(key, current);
   }
@@ -490,6 +503,9 @@ type MetricRow = {
   cpm: number;
   leads: number;
   cpl: number;
+  video_plays: number;
+  video_completions: number;
+  video_avg_seconds: number;
 };
 
 type MetaAd = {
@@ -532,6 +548,9 @@ type MetaInsight = {
   cpc?: string;
   cpm?: string;
   actions?: { action_type: string; value: string }[];
+  video_play_actions?: { action_type: string; value: string }[];
+  video_p100_watched_actions?: { action_type: string; value: string }[];
+  video_avg_time_watched_actions?: { action_type: string; value: string }[];
 };
 
 /** Сумма нужных действий из массива actions. Первое совпадение и есть результат. */

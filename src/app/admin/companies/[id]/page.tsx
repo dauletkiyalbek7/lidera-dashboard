@@ -7,11 +7,12 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
-import { getCompany } from '@/lib/admin-queries';
+import { getCompany, getCompanyAdAccounts } from '@/lib/admin-queries';
 import { requireSuperAdmin } from '@/lib/auth';
 import { formatDate, formatNumber } from '@/lib/format';
 import { COMPANY_STATUS, PLAN_LABELS, ROLE_LABELS, statusOf } from '@/lib/labels';
-import { observeCompany } from '../../actions';
+import { listMetaAccounts, observeCompany } from '../../actions';
+import { AdAccountForm, AdAccountList } from './ad-account-form';
 import {
   CompanyEditForm,
   CompanyStatusToggle,
@@ -33,6 +34,8 @@ export default async function CompanyDetailPage({
 
   const { company, members, subscription, counts } = result;
   const status = statusOf(COMPANY_STATUS, company.status);
+  const meta = await listMetaAccounts();
+  const attached = await getCompanyAdAccounts(company.id);
 
   return (
     <>
@@ -126,6 +129,21 @@ export default async function CompanyDetailPage({
                 subtitle="Создаст учётную запись и привяжет её к этой компании"
               />
               <DirectorCreateForm companyId={company.id} />
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="Рекламный кабинет Meta"
+                subtitle="Откуда компания берёт расход, кампании и креативы"
+              />
+              <AdAccountList companyId={company.id} accounts={attached} />
+              <div className="border-t border-line">
+                <AdAccountForm
+                  companyId={company.id}
+                  accounts={meta.accounts}
+                  error={meta.error}
+                />
+              </div>
             </Card>
 
             <Card>

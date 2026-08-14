@@ -97,6 +97,25 @@ export async function getCompany(companyId: string) {
   };
 }
 
+/** Рекламные кабинеты, подключённые к компании. */
+export async function getCompanyAdAccounts(companyId: string) {
+  const supabase = await createServerSupabase();
+
+  const { data } = await supabase
+    .from('ad_accounts')
+    .select('id, account_name, account_id, currency, status')
+    .eq('company_id', companyId)
+    .order('created_at');
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    name: row.account_name,
+    accountId: row.account_id,
+    currency: row.currency,
+    status: row.status,
+  }));
+}
+
 export async function listAuditLogs(limit = 100) {
   const supabase = await createServerSupabase();
 

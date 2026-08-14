@@ -6,6 +6,7 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 
 import { requireSuperAdmin, VIEW_COMPANY_COOKIE } from '@/lib/auth';
+import { syncMetaAccount } from '@/lib/meta-sync';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 
 export type AdminState = { error?: string; success?: string };
@@ -290,6 +291,195 @@ export async function createDirector(
 
   revalidatePath(`/admin/companies/${parsed.data.companyId}`);
   return { success: 'Директор добавлен и может входить в кабинет.' };
+}
+
+/** Рекламный кабинет Meta, доступный токену платформы. */
+export type MetaAccountOption = {
+  accountId: string;
+  name: string;
+  currency: string | null;
+  /** Название компании, к которой кабинет уже подключён, если он занят. */
+  takenBy: string | null;
+};
+
+/**
+ * Какие рекламные кабинеты видит токен платформы.
+ *
+ * Список берём у самой Meta, а не просим вводить номер руками: ошибиться в
+ * шестнадцати цифрах легко, а найти потом причину пустого отчёта — трудно.
+ */
+export async function listMetaAccounts(): Promise<{
+  accounts: MetaAccountOption[];
+  error?: string;
+}> {
+  await requireSuperAdmin();
+
+  const token = process.env.META_ACCESS_TOKEN;
+  if (!token) {
+    return { accounts: [], error: 'Не задан META_ACCESS_TOKEN в переменных окружения.' };
+  }
+
+  const version = process.env.META_API_VERSION || 'v23.0';
+  const response = await fetch(
+    `https://graph.facebook.com/${version}/me/adaccounts` +
+      `?fields=name,currency,account_id&limit=200&access_token=${token}`,
+    { cache: 'no-store' },
+  );
+
+  const payload = (await response.json()) as {
+    data?: { name?: string; currency?: string; account_id?: string }[];
+    error?: { message: string };
+  };
+
+  if (payload.error) return { accounts: [], error: `Meta API: ${payload.error.message}` };
+
+  const supabase = createAdminSupabase();
+  const { data: attached } = await supabase
+    .from('ad_accounts')
+    .select('account_id, companies(name)')
+    .eq('platform', 'meta');
+
+  const takenBy = new Map(
+    (attached ?? []).map((row) => [
+      row.account_id,
+      (row as unknown as { companies?: { name?: string } }).companies?.name ?? 'другая компания',
+    ]),
+  );
+
+  const accounts = (payload.data ?? [])
+    .filter((item): item is { name?: string; currency?: string; account_id: string } =>
+      Boolean(item.account_id),
+    )
+    .map((item) => ({
+      accountId: item.account_id,
+      name: item.name || `act_${item.account_id}`,
+      currency: item.currency ?? null,
+      takenBy: takenBy.get(item.account_id) ?? null,
+    }));
+
+  return { accounts };
+}
+
+const attachSchema = z.object({
+  companyId: z.string().uuid(),
+  accountId: z.string().regex(/^\d{5,20}$/, 'Некорректный номер рекламного кабинета'),
+  accountName: z.string().trim().min(1).max(160),
+});
+
+/**
+ * Подключение рекламного кабинета к компании и первая синхронизация.
+ *
+ * Синхронизируем сразу: владелец должен увидеть цифры в ту же минуту, а не
+ * гадать до ночи, правильный ли кабинет он выбрал.
+ */
+export async function attachMetaAccount(
+  _prevState: AdminState,
+  formData: FormData,
+): Promise<AdminState> {
+  const admin = await requireSuperAdmin();
+
+  const parsed = attachSchema.safeParse({
+    companyId: formData.get('companyId'),
+    accountId: formData.get('accountId'),
+    accountName: formData.get('accountName'),
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const supabase = createAdminSupabase();
+
+  // Один кабинет — одна компания: иначе расход задвоится в двух отчётах.
+  const { data: busy } = await supabase
+    .from('ad_accounts')
+    .select('company_id')
+    .eq('platform', 'meta')
+    .eq('account_id', parsed.data.accountId)
+    .maybeSingle();
+
+  if (busy && busy.company_id !== parsed.data.companyId) {
+    return { error: 'Этот рекламный кабинет уже подключён к другой компании.' };
+  }
+
+  const { data: saved, error } = await supabase
+    .from('ad_accounts')
+    .upsert(
+      {
+        company_id: parsed.data.companyId,
+        platform: 'meta',
+        account_id: parsed.data.accountId,
+        account_name: parsed.data.accountName,
+        status: 'disconnected',
+      },
+      { onConflict: 'company_id,platform,account_id' },
+    )
+    .select('id')
+    .maybeSingle();
+
+  if (error || !saved) return { error: 'Не удалось сохранить рекламный кабинет.' };
+
+  await logAction(
+    admin.userId,
+    parsed.data.companyId,
+    'ad_account.attached',
+    'ad_account',
+    saved.id,
+    { account_id: parsed.data.accountId, name: parsed.data.accountName },
+  );
+
+  revalidatePath(`/admin/companies/${parsed.data.companyId}`);
+
+  try {
+    const result = await syncMetaAccount(saved.id);
+    return {
+      success:
+        `Кабинет «${result.account}» подключён: ${result.campaigns} кампаний, ` +
+        `${result.days} дней данных, расход ${result.spend}.`,
+    };
+  } catch (syncError) {
+    return {
+      error:
+        'Кабинет сохранён, но данные не загрузились: ' +
+        (syncError instanceof Error ? syncError.message : 'неизвестная ошибка'),
+    };
+  }
+}
+
+/** Отключение рекламного кабинета: строки метрик остаются, новые не приходят. */
+export async function detachMetaAccount(
+  _prevState: AdminState,
+  formData: FormData,
+): Promise<AdminState> {
+  const admin = await requireSuperAdmin();
+
+  const parsed = z
+    .object({ companyId: z.string().uuid(), adAccountRowId: z.string().uuid() })
+    .safeParse({
+      companyId: formData.get('companyId'),
+      adAccountRowId: formData.get('adAccountRowId'),
+    });
+
+  if (!parsed.success) return { error: 'Некорректный запрос.' };
+
+  const supabase = createAdminSupabase();
+  const { error } = await supabase
+    .from('ad_accounts')
+    .delete()
+    .eq('id', parsed.data.adAccountRowId)
+    .eq('company_id', parsed.data.companyId);
+
+  if (error) return { error: 'Не удалось отключить кабинет.' };
+
+  await logAction(
+    admin.userId,
+    parsed.data.companyId,
+    'ad_account.detached',
+    'ad_account',
+    parsed.data.adAccountRowId,
+    {},
+  );
+
+  revalidatePath(`/admin/companies/${parsed.data.companyId}`);
+  return { success: 'Кабинет отключён. Уже загруженные цифры остались в отчётах.' };
 }
 
 /**

@@ -384,6 +384,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
       name: ad.name || `Объявление ${ad.id}`,
       status: adStatus(ad.status),
       creative_id: creativeIdByAd.get(ad.id) ?? null,
+      campaign_id: ad.campaign_id ? (campaignIdByExternal.get(ad.campaign_id) ?? null) : null,
     }));
 
   if (adRows.length > 0) {

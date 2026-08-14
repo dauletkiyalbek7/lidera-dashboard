@@ -518,6 +518,11 @@ export async function getCreativeCards(
 export type AdBreakdownRow = {
   /** Учитывается ли кампания в итогах: найм обычно выключают. */
   counted?: boolean;
+  /** Продажи и выручка по заявкам этой кампании — из CRM, а не из рекламы. */
+  sales?: number;
+  revenue?: number;
+  /** Выручка ÷ расход. Ноль, пока продаж нет. */
+  roas?: number;
   key: string;
   title: string;
   subtitle: string | null;
@@ -540,6 +545,10 @@ export type AdBreakdown = {
     costPerConversion: number;
     ctr: number;
     cpc: number;
+    /** Из CRM: заполняется, когда продажи начинают отмечать в кабинете. */
+    revenue: number;
+    sales: number;
+    roas: number;
   };
   campaigns: AdBreakdownRow[];
   numbers: AdBreakdownRow[];
@@ -573,6 +582,38 @@ export async function getAdBreakdown(
   ]);
 
   const campaignById = new Map((campaigns ?? []).map((row) => [row.id, row]));
+
+  // Выручка приходит из CRM: продажа привязана к заявке, заявка знает свою
+  // кампанию. Без продаж колонка честно пустует, а не показывает ноль-обман.
+  const [{ data: leadRows }, { data: saleRows }] = await Promise.all([
+    supabase
+      .from('leads')
+      .select('id, campaign_id')
+      .eq('company_id', companyId)
+      .not('campaign_id', 'is', null),
+    supabase
+      .from('sales')
+      .select('amount, lead_id')
+      .eq('company_id', companyId)
+      .eq('status', 'paid')
+      .gte('sale_date', from)
+      .lte('sale_date', to),
+  ]);
+
+  const campaignOfLead = new Map(
+    (leadRows ?? []).map((row) => [row.id, row.campaign_id as string]),
+  );
+  const salesByCampaign = new Map<string, { sales: number; revenue: number }>();
+
+  for (const sale of saleRows ?? []) {
+    const campaignId = sale.lead_id ? campaignOfLead.get(sale.lead_id) : null;
+    if (!campaignId) continue;
+    const bucket = salesByCampaign.get(campaignId) ?? { sales: 0, revenue: 0 };
+    bucket.sales += 1;
+    bucket.revenue += Number(sale.amount);
+    salesByCampaign.set(campaignId, bucket);
+  }
+
   // Кампании найма и прочие непродажные в отчёт не идут: иначе цена лида
   // смешивает соискателей с клиентами.
   const skipped = new Set(
@@ -654,6 +695,9 @@ export async function getAdBreakdown(
         campaign?.status ?? null,
       ),
       counted: campaign?.counted !== false,
+      sales: salesByCampaign.get(id)?.sales ?? 0,
+      revenue: salesByCampaign.get(id)?.revenue ?? 0,
+      roas: bucket.spend ? (salesByCampaign.get(id)?.revenue ?? 0) / bucket.spend : 0,
     };
   }).sort((a, b) => b.spend - a.spend);
 
@@ -668,6 +712,13 @@ export async function getAdBreakdown(
   const clicks = sum(spendRows, (row) => Number(row.clicks));
   const conversions = sum(spendRows, (row) => Number(row.leads));
 
+  const revenue = Array.from(salesByCampaign.entries())
+    .filter(([id]) => !skipped.has(id))
+    .reduce((total, [, bucket]) => total + bucket.revenue, 0);
+  const salesCount = Array.from(salesByCampaign.entries())
+    .filter(([id]) => !skipped.has(id))
+    .reduce((total, [, bucket]) => total + bucket.sales, 0);
+
   return {
     totals: {
       spend,
@@ -677,6 +728,9 @@ export async function getAdBreakdown(
       costPerConversion: conversions ? spend / conversions : 0,
       ctr: impressions ? (clicks / impressions) * 100 : 0,
       cpc: clicks ? spend / clicks : 0,
+      revenue,
+      sales: salesCount,
+      roas: spend ? revenue / spend : 0,
     },
     campaigns: campaignRows,
     numbers: numberRows,

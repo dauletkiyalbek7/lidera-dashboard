@@ -10,7 +10,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconArrowRight, IconCreatives } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
-import { formatMoney, formatNumber, formatPercent } from '@/lib/format';
+import { formatMoney, formatNumber, formatRatio } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
 import { getCreativeCards } from '@/lib/queries';
 
@@ -41,7 +41,7 @@ export default async function CreativesPage({
     <>
       <PageHeader
         title="Креативы"
-        description="Что крутилось за период: расход, сколько людей привёл и почём. Нажмите на строку — откроется сам ролик."
+        description="Что крутилось за период: расход, лиды, выручка и отдача. Нажмите на строку — откроется сам ролик."
         action={<DateRangePicker range={range} />}
       />
 
@@ -149,10 +149,12 @@ export default async function CreativesPage({
 
                       <span className="hidden shrink-0 text-right lg:block">
                         <span className="tabular block text-[14px] text-ink">
-                          {formatNumber(card.clicks)}
+                          {card.revenue ? formatMoney(card.revenue, { currency }) : '—'}
                         </span>
                         <span className="block text-[11.5px] text-faint">
-                          CTR {formatPercent(card.ctr, 2)}
+                          {card.revenue && card.spend
+                            ? `ROAS ×${formatRatio(card.revenue / card.spend)}`
+                            : 'выручка'}
                         </span>
                       </span>
 

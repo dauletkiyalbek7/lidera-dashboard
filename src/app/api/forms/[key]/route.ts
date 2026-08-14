@@ -69,8 +69,13 @@ export async function POST(
 
   const utmContent = pick(payload, ['utm_content']) ?? null;
 
+  // Объявление знает и свой креатив, и свою кампанию — заявка попадёт в оба
+  // отчёта сразу.
+  const placement = await adPlacement(supabase, company.id, utmContent);
+
   const { error } = await supabase.from('leads').insert({
     company_id: company.id,
+    campaign_id: placement.campaignId,
     name: name || 'Заявка с сайта',
     phone,
     email,
@@ -78,7 +83,7 @@ export async function POST(
     platform: fbc ? 'meta' : null,
     // Объявление подставляем, если в utm_content стоит его номер: в Meta это
     // подстановка {{ad.id}}. Не нашли — лид всё равно сохраняем.
-    creative_id: await creativeByAdId(supabase, company.id, utmContent),
+    creative_id: placement.creativeId,
     utm_source: pick(payload, ['utm_source']) ?? null,
     utm_medium: pick(payload, ['utm_medium']) ?? null,
     utm_campaign: pick(payload, ['utm_campaign']) ?? null,
@@ -137,19 +142,19 @@ function pick(payload: Record<string, string>, keys: string[]): string | null {
   return null;
 }
 
-async function creativeByAdId(
+async function adPlacement(
   supabase: ReturnType<typeof createAdminSupabase>,
   companyId: string,
   adId: string | null,
-): Promise<string | null> {
-  if (!adId || !/^\d{5,25}$/.test(adId)) return null;
+): Promise<{ creativeId: string | null; campaignId: string | null }> {
+  if (!adId || !/^\d{5,25}$/.test(adId)) return { creativeId: null, campaignId: null };
 
   const { data } = await supabase
     .from('ads')
-    .select('creative_id')
+    .select('creative_id, campaign_id')
     .eq('company_id', companyId)
     .eq('external_id', adId)
     .maybeSingle();
 
-  return data?.creative_id ?? null;
+  return { creativeId: data?.creative_id ?? null, campaignId: data?.campaign_id ?? null };
 }

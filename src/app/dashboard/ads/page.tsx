@@ -16,6 +16,7 @@ import {
   formatMoney,
   formatNumber,
   formatPercent,
+  formatRatio,
 } from '@/lib/format';
 import { INTEGRATION_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
 import { resolveRange } from '@/lib/period';
@@ -37,8 +38,8 @@ const CAMPAIGN_COLUMNS = [
   { key: 'spend', label: 'Расход', align: 'right' as const },
   { key: 'conversions', label: 'Лиды', align: 'right' as const },
   { key: 'cost', label: 'Цена', align: 'right' as const },
-  { key: 'clicks', label: 'Клики', align: 'right' as const },
-  { key: 'days', label: 'Дней', align: 'right' as const },
+  { key: 'revenue', label: 'Выручка', align: 'right' as const },
+  { key: 'roas', label: 'ROAS', align: 'right' as const },
   { key: 'counted', label: 'В отчёте', align: 'right' as const },
 ];
 
@@ -134,6 +135,31 @@ export default async function AdsPage({
             value={formatNumber(totals.clicks)}
             hint={`CTR ${formatPercent(totals.ctr, 2)} · CPC ${formatMoney(totals.cpc, { currency })}`}
           />
+          <StatTile
+            label="Выручка"
+            value={totals.revenue ? formatMoney(totals.revenue, { currency }) : '—'}
+            hint={
+              totals.sales
+                ? `Продаж: ${formatNumber(totals.sales)}`
+                : 'Появится, когда продажи начнут отмечать в кабинете'
+            }
+          />
+          <StatTile
+            label="ROAS"
+            value={totals.roas ? `×${formatRatio(totals.roas)}` : '—'}
+            hint="Выручка ÷ расход"
+          />
+          <StatTile
+            label="Прибыль"
+            value={
+              totals.revenue ? formatMoney(totals.revenue - totals.spend, { currency }) : '—'
+            }
+            hint={
+              totals.revenue
+                ? `ROMI ${formatPercent(((totals.revenue - totals.spend) / totals.spend) * 100, 0)}`
+                : 'Выручка минус расход на рекламу'
+            }
+          />
         </div>
 
         {breakdown.numbers.length > 0 ? (
@@ -215,10 +241,10 @@ export default async function AdsPage({
                       {row.conversions ? formatMoney(row.costPerConversion, { currency }) : '—'}
                     </Td>
                     <Td align="right" className="tabular text-ink-soft">
-                      {formatNumber(row.clicks)}
+                      {row.revenue ? formatMoney(row.revenue, { currency }) : '—'}
                     </Td>
-                    <Td align="right" className="tabular text-muted">
-                      {formatNumber(row.activeDays)}
+                    <Td align="right" className="tabular text-ink-soft">
+                      {row.roas ? `×${formatRatio(row.roas)}` : '—'}
                     </Td>
                     <Td last align="right">
                       <span className="flex justify-end">

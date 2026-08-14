@@ -9,7 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
-import { formatMoney, formatNumber, formatPercent } from '@/lib/format';
+import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
 import { getCreativeCards } from '@/lib/queries';
 
@@ -102,9 +102,27 @@ export default async function CreativePage({
                 value={formatNumber(creative.sales)}
                 hint={
                   creative.sales
-                    ? formatMoney(creative.revenue, { currency })
-                    : 'Появятся, когда продажи начнут попадать в CRM'
+                    ? `Выручка ${formatMoney(creative.revenue, { currency })}`
+                    : 'Появятся, когда продажи начнут отмечать в кабинете'
                 }
+              />
+              <StatTile
+                label="ROAS"
+                value={
+                  creative.revenue && creative.spend
+                    ? `×${formatRatio(creative.revenue / creative.spend)}`
+                    : '—'
+                }
+                hint="Выручка ÷ расход"
+              />
+              <StatTile
+                label="Прибыль"
+                value={
+                  creative.revenue
+                    ? formatMoney(creative.revenue - creative.spend, { currency })
+                    : '—'
+                }
+                hint="Выручка минус расход на этот ролик"
               />
             </div>
 

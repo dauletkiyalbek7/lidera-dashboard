@@ -159,6 +159,7 @@ export type AdRow = Timestamps & {
   id: string;
   company_id: string;
   ad_set_id: string | null;
+  campaign_id: string | null;
   creative_id: string | null;
   external_id: string | null;
   name: string;

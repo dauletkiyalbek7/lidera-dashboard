@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { LEAD_STATUS, isLeadStatus, type LeadStatus } from '@/lib/lead-status';
+import { TRIAL_STATUS, isTrialStatus } from '@/lib/trial-status';
 import {
   formatSchedule,
   resolveShiftRules,
@@ -533,36 +534,47 @@ async function applyTrial(
 
   const name = escapeHtml(lead?.name || 'Клиент');
 
-  if (outcome === 'completed' || outcome === 'no_show') {
-    await supabase.from('trials').update({ status: outcome }).eq('id', trial.id);
-
-    const label = outcome === 'completed' ? 'занятие проведено' : 'не пришёл';
-    await answerCallback(query.id, label);
-    return sendMessage(chatId, `✅ <b>${name}</b> — ${label}.`);
+  if (!isTrialStatus(outcome) || outcome === 'scheduled') {
+    return answerCallback(query.id, 'Неизвестный исход урока.');
   }
 
-  if (outcome === 'sale') {
-    await supabase.from('trials').update({ status: 'completed' }).eq('id', trial.id);
+  await supabase.from('trials').update({ status: outcome }).eq('id', trial.id);
 
-    if (trial.lead_id) {
-      await supabase
-        .from('leads')
-        .update({ status: 'sale' })
-        .eq('id', trial.lead_id)
-        .eq('company_id', employee.company_id);
+  // Купил курс — двигаем и лид: продажа считается по нему, и от него же
+  // уходит событие в Meta.
+  if (outcome === 'sale' && trial.lead_id) {
+    await supabase
+      .from('leads')
+      .update({ status: 'sale' })
+      .eq('id', trial.lead_id)
+      .eq('company_id', employee.company_id);
 
-      await closeOpenTouches(supabase, trial.lead_id);
-    }
+    await closeOpenTouches(supabase, trial.lead_id);
 
     await answerCallback(query.id, 'Продажа отмечена');
     return sendMessage(
       chatId,
-      `💰 <b>${name}</b> купил курс. Оформите продажу в кабинете, чтобы сумма попала в отчёты и ушла в Meta.`,
+      `💰 <b>${name}</b> купил курс. Оформите сумму в кабинете — тогда она попадёт в отчёты и уйдёт в Meta.`,
     );
   }
 
-  return answerCallback(query.id);
+  // Не одобрил — урок отработан, покупки не будет: лид закрываем отказом,
+  // иначе он навсегда останется висеть на шаге «Пробный».
+  if (outcome === 'rejected' && trial.lead_id) {
+    await supabase
+      .from('leads')
+      .update({ status: 'rejected' })
+      .eq('id', trial.lead_id)
+      .eq('company_id', employee.company_id);
+
+    await closeOpenTouches(supabase, trial.lead_id);
+  }
+
+  const label = TRIAL_STATUS[outcome].label;
+  await answerCallback(query.id, label);
+  return sendMessage(chatId, `✅ <b>${name}</b> — ${label.toLowerCase()}.`);
 }
+
 
 /** Смена статуса лида из чата. */
 async function applyStatus(

@@ -1,9 +1,10 @@
 'use client';
 
-import { useActionState, useState, useTransition } from 'react';
+import { useActionState, useEffect, useState, useTransition } from 'react';
 import { useFormStatus } from 'react-dom';
 
 import {
+  checkAvailability,
   createLead,
   distributeNow,
   planCallback,
@@ -312,7 +313,7 @@ export function LeadRowActions({
       <div className="flex items-center justify-end gap-1.5">
         {funnelType === 'trial' ? (
           <Button type="button" variant="ghost" size="sm" onClick={() => setDialog('trial')}>
-            Пробный
+            Урок
           </Button>
         ) : null}
         <Button type="button" variant="secondary" size="sm" onClick={() => setDialog('sale')}>
@@ -389,6 +390,13 @@ function SaleDialog({
   );
 }
 
+/**
+ * Запись на онлайн-урок.
+ *
+ * Менеджер уже согласовал время с клиентом, поэтому сначала выбирает час, и
+ * только потом — кто из продажников в этот час свободен. Занятые показаны
+ * серым: выбрать их нельзя, но видно, что человек есть и просто занят.
+ */
 function TrialDialog({
   onClose,
   leadId,
@@ -399,12 +407,25 @@ function TrialDialog({
   leadName: string;
 }) {
   const [state, formAction] = useActionState(registerTrial, {} as CrmState);
+  const [date, setDate] = useState(toIsoDate(new Date()));
+  const [time, setTime] = useState('18:00');
+  const [sellers, setSellers] = useState<Seller[] | null>(null);
+  const [checking, startChecking] = useTransition();
+
+  useEffect(() => {
+    startChecking(async () => {
+      const result = await checkAvailability(date, time);
+      setSellers(result.sellers);
+    });
+  }, [date, time]);
+
+  const free = sellers?.filter((seller) => !seller.busy) ?? [];
 
   return (
     <Modal
       open
       onClose={onClose}
-      title="Записать на пробное"
+      title="Записать на онлайн-урок"
       description={`Клиент: ${leadName || 'без имени'}`}
     >
       {state.success ? (
@@ -412,29 +433,81 @@ function TrialDialog({
       ) : (
         <form action={formAction} className="space-y-4 px-5 py-5 sm:px-6">
           <input type="hidden" name="leadId" value={leadId} />
+
+          <div className="grid grid-cols-2 gap-3">
+            <Field
+              label="Дата урока"
+              name="date"
+              type="date"
+              required
+              value={date}
+              onChange={(event) => setDate(event.target.value)}
+            />
+            <Field
+              label="Время"
+              name="time"
+              type="time"
+              required
+              step={300}
+              value={time}
+              onChange={(event) => setTime(event.target.value)}
+            />
+          </div>
+
+          <div>
+            <label
+              htmlFor="sellerId"
+              className="block text-[13px] font-medium text-ink-soft"
+            >
+              Продажник
+            </label>
+            <select
+              id="sellerId"
+              name="sellerId"
+              required
+              disabled={checking || free.length === 0}
+              className="mt-1.5 h-10 w-full rounded-control border border-line bg-surface-2 px-3 text-[14px] text-ink transition-colors hover:border-line-strong focus:outline-none disabled:opacity-60"
+            >
+              {sellers === null || checking ? (
+                <option value="">Смотрим, кто свободен…</option>
+              ) : null}
+              {sellers?.map((seller) => (
+                <option key={seller.id} value={seller.id} disabled={seller.busy}>
+                  {seller.fullName}
+                  {seller.busy ? ' — занят в это время' : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1.5 text-[12px] text-muted">
+              {sellers === null || checking
+                ? 'Проверяем занятость…'
+                : sellers.length === 0
+                  ? 'В компании нет продажников — добавьте их в разделе «Команда».'
+                  : free.length === 0
+                    ? 'В это время все заняты. Выберите другой час.'
+                    : `Свободны: ${free.length} из ${sellers.length}`}
+            </p>
+          </div>
+
           <Field
-            label="Дата пробного"
-            name="date"
-            type="date"
-            required
-            defaultValue={toIsoDate(new Date())}
+            label="Оплата за урок, ₸"
+            name="amount"
+            type="number"
+            min={0}
+            step={100}
+            defaultValue={0}
+            hint="Сколько клиент заплатил за пробный урок"
           />
-          <Select
-            label="Статус"
-            name="status"
-            defaultValue="scheduled"
-            options={[
-              { value: 'scheduled', label: 'Запланирован' },
-              { value: 'completed', label: 'Проведён' },
-            ]}
-          />
+
           <FormMessage error={state.error} />
-          <SubmitButton label="Записать" pendingLabel="Сохраняем…" />
+          <SubmitButton label="Записать на урок" pendingLabel="Записываем…" />
         </form>
       )}
     </Modal>
   );
 }
+
+type Seller = { id: string; fullName: string; busy: boolean };
 
 /** Экран «готово»: окно не закрывается само, чтобы результат было видно. */
 export function Done({ message, onClose }: { message: string; onClose: () => void }) {

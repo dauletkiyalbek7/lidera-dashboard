@@ -9,10 +9,11 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconTrials } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
-import { formatDate, formatNumber, formatPercent } from '@/lib/format';
+import { formatDate, formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { safeDivide } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
 import { getTrials } from '@/lib/queries';
+import { wasHeld } from '@/lib/trial-status';
 import { TrialStatusSelect } from './trial-controls';
 
 export const metadata: Metadata = { title: 'Пробные' };
@@ -20,7 +21,7 @@ export const metadata: Metadata = { title: 'Пробные' };
 const COLUMNS = [
   { key: 'lead', label: 'Клиент' },
   { key: 'phone', label: 'Телефон' },
-  { key: 'date', label: 'Дата' },
+  { key: 'date', label: 'Когда' },
   { key: 'seller', label: 'Проводит' },
   { key: 'status', label: 'Статус' },
 ];
@@ -38,27 +39,39 @@ export default async function TrialsPage({
   const range = resolveRange(await searchParams, company.timezone);
   const trials = await getTrials(company.id, range.from, range.to);
 
-  const completed = trials.filter((trial) => trial.status === 'completed').length;
+  // Урок состоялся — это и «Проведён», и любой исход после него: клиент
+  // купил или отказался уже после занятия.
+  const held = trials.filter((trial) => wasHeld(trial.status)).length;
   const noShow = trials.filter((trial) => trial.status === 'no_show').length;
+  const sold = trials.filter((trial) => trial.status === 'sale').length;
 
   return (
     <>
       <PageHeader
         title="Пробные"
-        description="Промежуточный шаг воронки: сколько записей дошли до реально проведённого пробного."
+        description="Онлайн-урок: время согласовано с клиентом и закреплено за свободным продажником."
         action={<DateRangePicker range={range} />}
       />
 
       <PageBody>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-4">
           <StatTile label="Всего записей" value={formatNumber(trials.length)} />
           <StatTile
-            label="Проведено"
-            value={formatNumber(completed)}
+            label="Урок состоялся"
+            value={formatNumber(held)}
             accent
-            hint={`Доходимость: ${formatPercent(safeDivide(completed, trials.length) * 100)}`}
+            hint={`Доходимость: ${formatPercent(safeDivide(held, trials.length) * 100)}`}
           />
-          <StatTile label="Не пришли" value={formatNumber(noShow)} />
+          <StatTile
+            label="Купили курс"
+            value={formatNumber(sold)}
+            hint={`Из проведённых: ${formatPercent(safeDivide(sold, held) * 100)}`}
+          />
+          <StatTile
+            label="Не вышли на связь"
+            value={formatNumber(noShow)}
+            hint="Урок был назначен, клиент не подключился"
+          />
         </div>
 
         <Card className="mt-4">
@@ -68,7 +81,7 @@ export default async function TrialsPage({
               <EmptyState
                 icon={<IconTrials className="size-5" />}
                 title="Пробных за этот период нет"
-                description="Записать лид на пробное можно кнопкой «Пробный» в разделе «Лиды»."
+                description="Записать клиента на урок можно кнопкой «Пробный» в разделе «Лиды» — там же выбирается время и свободный продажник."
               />
             </div>
           ) : (
@@ -79,7 +92,15 @@ export default async function TrialsPage({
                     {trial.leadName ?? 'Без имени'}
                   </Td>
                   <Td className="tabular text-ink-soft">{trial.leadPhone ?? '—'}</Td>
-                  <Td className="tabular text-ink-soft">{formatDate(trial.date)}</Td>
+                  <Td className="tabular text-ink-soft">
+                    {trial.startsAt ? (
+                      formatDateTime(trial.startsAt)
+                    ) : (
+                      <span className="text-faint">
+                        {formatDate(trial.date)} · время не назначено
+                      </span>
+                    )}
+                  </Td>
                   <Td className="text-ink-soft">
                     {trial.sellerName ?? (
                       <span className="text-faint">ждёт продажника</span>

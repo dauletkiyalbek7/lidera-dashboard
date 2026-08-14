@@ -7,11 +7,22 @@ import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { sendPurchaseForSale } from '@/lib/capi';
 import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
-import { isTouchPreset, resolveTouchTime, TOUCH_PRESETS } from '@/lib/lead-touches';
+import {
+  instantInZone,
+  isTouchPreset,
+  resolveTouchTime,
+  TOUCH_PRESETS,
+} from '@/lib/lead-touches';
+import { TRIAL_STATUS_ORDER } from '@/lib/trial-status';
 import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
-import { syncTrialForLead } from '@/lib/trials';
+import {
+  formatTrialTime,
+  notifyTrialBooked,
+  sellerAvailability,
+  syncTrialForLead,
+} from '@/lib/trials';
 
 /**
  * Ручная работа с CRM: завести лид, сдвинуть его по воронке, оформить продажу
@@ -25,7 +36,7 @@ import { syncTrialForLead } from '@/lib/trials';
 export type CrmState = { error?: string; success?: string };
 
 const LEAD_STATUSES = LEAD_STATUS_ORDER;
-const TRIAL_STATUSES = ['scheduled', 'completed', 'no_show', 'canceled'] as const;
+const TRIAL_STATUSES = TRIAL_STATUS_ORDER;
 const SALE_STATUSES = ['pending', 'paid', 'refunded', 'canceled'] as const;
 
 const optionalText = (max: number) =>
@@ -315,9 +326,18 @@ async function reportPurchase(companyId: string, saleId: string): Promise<void> 
 const trialSchema = z.object({
   leadId: z.string().uuid('Выберите лид'),
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Укажите дату'),
-  status: z.enum(TRIAL_STATUSES),
+  time: z.string().regex(/^\d{2}:\d{2}$/, 'Укажите время урока'),
+  sellerId: z.string().uuid('Выберите продажника'),
+  amount: z.coerce.number().min(0).max(1_000_000_000).optional(),
 });
 
+/**
+ * Запись на онлайн-урок.
+ *
+ * Время менеджер согласовывает с клиентом и назначает продажника, который в
+ * этот час свободен — очередь тут ничего не решает. Урок идёт по видеосвязи,
+ * поэтому час важен не меньше даты.
+ */
 export async function registerTrial(
   _prevState: CrmState,
   formData: FormData,
@@ -327,26 +347,62 @@ export async function registerTrial(
   if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (company.funnel_type !== 'trial') {
-    return { error: 'В вашей компании продажа идёт без пробных занятий.' };
+    return { error: 'В вашей компании продажа идёт без пробных уроков.' };
   }
 
   const parsed = trialSchema.safeParse({
     leadId: formData.get('leadId'),
     date: formData.get('date'),
-    status: formData.get('status'),
+    time: formData.get('time'),
+    sellerId: formData.get('sellerId'),
+    amount: formData.get('amount') || 0,
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
+  const startsAt = instantInZone(parsed.data.date, parsed.data.time, company.timezone);
+  if (!startsAt) return { error: 'Не удалось разобрать дату и время урока.' };
+
+  const admin = createAdminSupabase();
+
+  // Занятость проверяем на сервере: между открытием формы и отправкой этот
+  // час мог занять другой менеджер.
+  const availability = await sellerAvailability(admin, company.id, startsAt);
+  const seller = availability.find((item) => item.id === parsed.data.sellerId);
+
+  if (!seller) return { error: 'Такого продажника нет в компании.' };
+  if (seller.busy) {
+    return { error: `${seller.fullName} уже ведёт урок в это время. Выберите другого или другой час.` };
+  }
+
   const supabase = await createServerSupabase();
-  const { error } = await supabase.from('trials').insert({
+
+  // Черновик, созданный статусом «Пробный», дополняем, а не плодим второй.
+  const { data: draft } = await supabase
+    .from('trials')
+    .select('id')
+    .eq('company_id', company.id)
+    .eq('lead_id', parsed.data.leadId)
+    .is('starts_at', null)
+    .maybeSingle();
+
+  const payload = {
     company_id: company.id,
     lead_id: parsed.data.leadId,
     date: parsed.data.date,
-    status: parsed.data.status,
-  });
+    starts_at: startsAt.toISOString(),
+    assigned_to: parsed.data.sellerId,
+    assigned_at: new Date().toISOString(),
+    status: 'scheduled' as const,
+    amount: parsed.data.amount ?? 0,
+    reminded_at: null,
+  };
 
-  if (error) return { error: 'Не удалось записать пробное.' };
+  const { error } = draft
+    ? await supabase.from('trials').update(payload).eq('id', draft.id)
+    : await supabase.from('trials').insert(payload);
+
+  if (error) return { error: 'Не удалось записать урок.' };
 
   // Лид переходит на шаг «пробный», если он ещё не дошёл до продажи.
   await supabase
@@ -356,8 +412,24 @@ export async function registerTrial(
     .eq('company_id', company.id)
     .neq('status', 'sale');
 
+  await notifyTrialBooked(admin, company.id, parsed.data.leadId, startsAt, parsed.data.sellerId, company.timezone);
+
   revalidateCabinet();
-  return { success: 'Пробное записано.' };
+  return { success: `Урок записан на ${formatTrialTime(startsAt, company.timezone)}.` };
+}
+
+/** Свободен ли продажник в этот час — для формы записи. */
+export async function checkAvailability(
+  date: string,
+  time: string,
+): Promise<{ sellers: { id: string; fullName: string; busy: boolean }[]; error?: string }> {
+  const { company } = await requireCompanySession();
+
+  const startsAt = instantInZone(date, time, company.timezone);
+  if (!startsAt) return { sellers: [], error: 'Проверьте дату и время.' };
+
+  const list = await sellerAvailability(createAdminSupabase(), company.id, startsAt);
+  return { sellers: list.map(({ id, fullName, busy }) => ({ id, fullName, busy })) };
 }
 
 export async function updateTrialStatus(

@@ -120,6 +120,30 @@ function atLocalHour(base: Date, hour: number, timeZone: string): Date {
   return new Date(local.getTime() - offset * 60000);
 }
 
+/**
+ * Момент, когда в поясе компании наступит указанные дата и время.
+ * Нужен записи на урок: менеджер выбирает «завтра в 18:00» по местному,
+ * а хранить это надо абсолютным временем.
+ */
+export function instantInZone(
+  isoDate: string,
+  hhmm: string,
+  timeZone: string = DEFAULT_TIME_ZONE,
+): Date | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate) || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
+
+  const [hours, minutes] = hhmm.split(':').map(Number);
+  if (hours > 23 || minutes > 59) return null;
+
+  // Первое приближение — как будто пояс совпадает с UTC, затем поправка на
+  // его смещение именно в эту дату.
+  const naive = new Date(`${isoDate}T${hhmm}:00Z`);
+  if (Number.isNaN(naive.getTime())) return null;
+
+  const offset = zoneOffsetMinutes(naive, timeZone);
+  return new Date(naive.getTime() - offset * 60000);
+}
+
 function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * HOUR);
 }

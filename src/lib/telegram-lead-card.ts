@@ -93,9 +93,13 @@ export function trialButtons(trialId: string): InlineButton[][] {
   return [
     [
       { text: '✅ Провёл', callback_data: `tr:${trialId}:completed` },
-      { text: '🚫 Не пришёл', callback_data: `tr:${trialId}:no_show` },
+      { text: '📵 Не вышел на связь', callback_data: `tr:${trialId}:no_show` },
     ],
-    [{ text: '💰 Купил курс', callback_data: `tr:${trialId}:sale` }],
+    [
+      { text: '💰 Купил курс', callback_data: `tr:${trialId}:sale` },
+      { text: '🚫 Не одобрил', callback_data: `tr:${trialId}:rejected` },
+    ],
+    [{ text: '🔄 Отменён', callback_data: `tr:${trialId}:canceled` }],
   ];
 }
 

@@ -7,6 +7,7 @@
 import type { AttendanceStatus, ShiftMode } from '@/lib/attendance';
 import type { EmployeeRole } from '@/lib/employee-role';
 import type { LeadStatus as LeadStatusValue } from '@/lib/lead-status';
+import type { TrialStatus as TrialStatusValue } from '@/lib/trial-status';
 
 export type Json =
   | string
@@ -23,7 +24,8 @@ export type FunnelType = 'trial' | 'direct';
 export type AdPlatform = 'meta' | 'tiktok' | 'google' | 'other';
 /** Набор статусов лида ведётся в lib/lead-status.ts — там же их смысл и стадии. */
 export type LeadStatus = LeadStatusValue;
-export type TrialStatus = 'scheduled' | 'completed' | 'no_show' | 'canceled';
+/** Набор статусов урока ведётся в lib/trial-status.ts. */
+export type TrialStatus = TrialStatusValue;
 export type SaleStatus = 'pending' | 'paid' | 'refunded' | 'canceled';
 export type IntegrationStatus = 'connected' | 'disconnected' | 'error' | 'pending';
 
@@ -311,9 +313,12 @@ export type TrialRow = Timestamps & {
   status: TrialStatus;
   date: string;
   amount: number;
-  /** Продажник, который проводит занятие. Раздаётся автоматически. */
+  /** Продажник, который проводит урок. Назначает менеджер при записи. */
   assigned_to: string | null;
   assigned_at: string | null;
+  /** Точное начало урока: онлайн важен час, а не только день. */
+  starts_at: string | null;
+  reminded_at: string | null;
 }
 
 export type SaleRow = Timestamps & {

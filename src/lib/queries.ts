@@ -4,6 +4,7 @@ import type { TrendPoint } from '@/components/charts/trend-chart';
 import { resolveShiftRules, type ShiftRules } from '@/lib/attendance';
 import { createRateLookup } from '@/lib/currency';
 import { countUntouched, isReached, leadStage } from '@/lib/lead-status';
+import { wasHeld } from '@/lib/trial-status';
 import { eachDay } from '@/lib/period';
 import {
   emptyPerformance,
@@ -209,7 +210,9 @@ export async function getDashboardData(
     impressions: sum(metrics, (row) => Number(row.impressions)),
     clicks: sum(metrics, (row) => Number(row.clicks)),
     leads: leads.length,
-    trials: trials.filter((trial) => trial.status === 'completed').length,
+    // Урок состоялся — это и «Проведён», и исходы после него: клиент купил
+    // или отказался уже после занятия.
+    trials: trials.filter((trial) => wasHeld(trial.status)).length,
     processed: leads.filter((lead) => isReached(lead.status)).length,
     sales: sales.length,
     revenue: sum(sales, (row) => Number(row.amount)),
@@ -1142,8 +1145,10 @@ export type TrialListItem = {
   amount: number;
   leadName: string | null;
   leadPhone: string | null;
-  /** Продажник, который проводит занятие. */
+  /** Продажник, который проводит урок. */
   sellerName: string | null;
+  /** Точное начало урока: онлайн важен час, а не только день. */
+  startsAt: string | null;
 };
 
 export async function getTrials(
@@ -1155,7 +1160,7 @@ export async function getTrials(
 
   const { data: trials } = await supabase
     .from('trials')
-    .select('id, date, status, amount, lead_id, assigned_to')
+    .select('id, date, status, amount, lead_id, assigned_to, starts_at')
     .eq('company_id', companyId)
     .gte('date', from)
     .lte('date', to)
@@ -1177,6 +1182,7 @@ export async function getTrials(
     leadName: trial.lead_id ? (leads.get(trial.lead_id)?.name ?? null) : null,
     leadPhone: trial.lead_id ? (leads.get(trial.lead_id)?.phone ?? null) : null,
     sellerName: trial.assigned_to ? (sellerNames.get(trial.assigned_to) ?? null) : null,
+    startsAt: trial.starts_at,
   }));
 }
 

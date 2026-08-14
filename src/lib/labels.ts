@@ -1,14 +1,23 @@
 /** Человекочитаемые подписи статусов. Одно место для всего интерфейса. */
 
+import {
+  TRIAL_STATUS as TRIAL_STATUS_META,
+  TRIAL_STATUS_ORDER,
+} from '@/lib/trial-status';
+
 // Статусы лида живут отдельно — у них есть стадии и правила воронки:
 // см. lib/lead-status.ts.
 
-export const TRIAL_STATUS: Record<string, { label: string; tone: Tone }> = {
-  scheduled: { label: 'Запланирован', tone: 'neutral' },
-  completed: { label: 'Проведён', tone: 'positive' },
-  no_show: { label: 'Не пришёл', tone: 'negative' },
-  canceled: { label: 'Отменён', tone: 'neutral' },
-};
+// Статусы онлайн-урока тоже живут отдельно: у них есть признаки «урок
+// состоялся» и «итог подведён». Здесь — только подписи для интерфейса,
+// собранные из того же справочника, чтобы наборы не разъезжались.
+export const TRIAL_STATUS: Record<string, { label: string; tone: Tone }> =
+  Object.fromEntries(
+    TRIAL_STATUS_ORDER.map((status) => [
+      status,
+      { label: TRIAL_STATUS_META[status].label, tone: TRIAL_STATUS_META[status].tone },
+    ]),
+  );
 
 export const SALE_STATUS: Record<string, { label: string; tone: Tone }> = {
   pending: { label: 'Ожидает оплаты', tone: 'warning' },

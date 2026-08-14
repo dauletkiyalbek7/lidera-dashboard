@@ -8,12 +8,7 @@ import type { FunnelType } from '@/lib/metrics';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
-import {
-  leadCard,
-  copyPhoneButton,
-  statusButtons,
-  trialButtons,
-} from '@/lib/telegram-lead-card';
+import { leadCard, copyPhoneButton, statusButtons } from '@/lib/telegram-lead-card';
 
 /**
  * Авто-раздача лидов.
@@ -54,11 +49,15 @@ const ACTIVE_STATUSES: LeadStatus[] = [
 export type DistributionResult = {
   assigned: number;
   queued: number;
-  /** Пробные занятия, разданные продажникам. */
-  trials: number;
 };
 
-/** Раздача по одной компании: сначала лиды менеджерам, потом пробные продажникам. */
+/**
+ * Раздача по одной компании.
+ *
+ * Раздаются только лиды. Урок продажнику назначает менеджер вручную: время
+ * он согласовывает с клиентом и выбирает того, кто в этот час свободен —
+ * очередь тут ничего не решает.
+ */
 export async function runDistribution(companyId: string): Promise<DistributionResult> {
   const supabase = createAdminSupabase();
 
@@ -70,12 +69,9 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
     .eq('id', companyId)
     .maybeSingle();
 
-  if (!company || !company.auto_assign) return { assigned: 0, queued: 0, trials: 0 };
+  if (!company || !company.auto_assign) return { assigned: 0, queued: 0 };
 
-  const leads = await distributeQueue(supabase, company);
-  const trials = await distributeTrials(supabase, company);
-
-  return { ...leads, trials };
+  return distributeQueue(supabase, company);
 }
 
 /** Раздача по всем компаниям — то, что дёргает планировщик. */
@@ -89,13 +85,12 @@ export async function runDistributionForAll(): Promise<
     .eq('auto_assign', true)
     .eq('status', 'active');
 
-  const totals = { assigned: 0, queued: 0, trials: 0, companies: 0 };
+  const totals = { assigned: 0, queued: 0, companies: 0 };
 
   for (const company of companies ?? []) {
     const result = await runDistribution(company.id);
     totals.assigned += result.assigned;
     totals.queued += result.queued;
-    totals.trials += result.trials;
     totals.companies += 1;
   }
 
@@ -279,177 +274,6 @@ async function distributeQueue(supabase: Admin, company: CompanySettings) {
   }
 
   return { assigned, queued: queue.length - assigned };
-}
-
-// -----------------------------------------------------------------------------
-// Пробные занятия — продажникам
-// -----------------------------------------------------------------------------
-
-/**
- * Раздача записей на пробное.
- *
- * Цепочка «менеджер записал → продажник провёл» рвалась ровно посередине:
- * номер оставался у менеджера, а продажник узнавал о занятии на словах.
- * Правила те же, что у лидов: поровну между продажниками на смене, и назад
- * запись не отбирают.
- */
-async function distributeTrials(
-  supabase: Admin,
-  company: CompanySettings,
-): Promise<number> {
-  // Без пробных занятий продажников в компании нет вовсе.
-  if (company.funnel_type !== 'trial') return 0;
-
-  const { data: queue } = await supabase
-    .from('trials')
-    .select('id, lead_id, date')
-    .eq('company_id', company.id)
-    .is('assigned_to', null)
-    .eq('status', 'scheduled')
-    .order('created_at', { ascending: true })
-    .limit(50);
-
-  if (!queue || queue.length === 0) return 0;
-
-  const sellers = await eligibleSellers(supabase, company);
-  if (sellers.length === 0) return 0;
-
-  let assigned = 0;
-
-  for (const trial of queue) {
-    sellers.sort(byFairness);
-    const target = sellers[0];
-    if (!target) break;
-
-    const now = new Date().toISOString();
-
-    // Условие assigned_to is null защищает от гонки: параллельный запуск не
-    // отдаст то же занятие второму продажнику.
-    const { data: updated } = await supabase
-      .from('trials')
-      .update({ assigned_to: target.id, assigned_at: now })
-      .eq('id', trial.id)
-      .eq('company_id', company.id)
-      .is('assigned_to', null)
-      .select('id');
-
-    if (!updated || updated.length === 0) continue;
-
-    target.received += 1;
-    target.open += 1;
-    target.lastAssignedAt = Date.now();
-    assigned += 1;
-
-    if (target.telegram_user_id && trial.lead_id) {
-      await notifySeller(supabase, company, target.telegram_user_id, trial);
-    }
-  }
-
-  return assigned;
-}
-
-/** Продажники на смене, отсортированные по справедливости. */
-async function eligibleSellers(
-  supabase: Admin,
-  company: CompanySettings,
-): Promise<Candidate[]> {
-  const { data: employees } = await supabase
-    .from('employees')
-    .select(
-      'id, full_name, telegram_user_id, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
-    )
-    .eq('company_id', company.id)
-    .eq('role', 'salesperson')
-    .eq('status', 'active');
-
-  if (!employees || employees.length === 0) return [];
-
-  const ids = employees.map((employee) => employee.id);
-
-  const [{ data: openShifts }, { data: trials }] = await Promise.all([
-    supabase
-      .from('shifts')
-      .select('employee_id, started_at')
-      .in('employee_id', ids)
-      .is('ended_at', null),
-    supabase
-      .from('trials')
-      .select('assigned_to, assigned_at, status')
-      .eq('company_id', company.id)
-      .in('assigned_to', ids)
-      .gte('assigned_at', startOfToday(company.timezone)),
-  ]);
-
-  const shiftStart = new Map(
-    (openShifts ?? []).map((shift) => [shift.employee_id, shift.started_at] as const),
-  );
-
-  const received = new Map<string, number>();
-  const open = new Map<string, number>();
-  const lastAssigned = new Map<string, number>();
-
-  for (const trial of trials ?? []) {
-    if (!trial.assigned_to) continue;
-    received.set(trial.assigned_to, (received.get(trial.assigned_to) ?? 0) + 1);
-    if (trial.status === 'scheduled') {
-      open.set(trial.assigned_to, (open.get(trial.assigned_to) ?? 0) + 1);
-    }
-    const at = trial.assigned_at ? new Date(trial.assigned_at).getTime() : 0;
-    if (at > (lastAssigned.get(trial.assigned_to) ?? 0)) {
-      lastAssigned.set(trial.assigned_to, at);
-    }
-  }
-
-  return employees
-    .filter(
-      (employee) =>
-        resolveShiftRules(employee, company).mode === 'always' ||
-        shiftStart.has(employee.id),
-    )
-    .map((employee) => ({
-      id: employee.id,
-      full_name: employee.full_name,
-      telegram_user_id: employee.telegram_user_id,
-      received: received.get(employee.id) ?? 0,
-      open: open.get(employee.id) ?? 0,
-      lastAssignedAt: lastAssigned.get(employee.id) ?? 0,
-    }))
-    .sort(byFairness);
-}
-
-/** Карточка занятия продажнику: с кем говорить, по какому номеру и о чём. */
-async function notifySeller(
-  supabase: Admin,
-  company: CompanySettings,
-  chatId: number,
-  trial: { id: string; lead_id: string | null; date: string },
-): Promise<void> {
-  if (!trial.lead_id) return;
-
-  const { data: lead } = await supabase
-    .from('leads')
-    .select('name, phone, source, platform, status, creative_id')
-    .eq('id', trial.lead_id)
-    .eq('company_id', company.id)
-    .maybeSingle();
-
-  if (!lead) return;
-
-  const labels = await creativeLabels(supabase, company.id, [lead.creative_id]);
-
-  await sendMessage(
-    chatId,
-    leadCard(
-      {
-        ...lead,
-        creativeLabel: lead.creative_id ? (labels.get(lead.creative_id) ?? null) : null,
-      },
-      '🎓 <b>Новое пробное занятие</b>\nМенеджер записал — занятие за вами.',
-    ),
-    {
-      inline: [...copyPhoneButton(lead.phone), ...trialButtons(trial.id)],
-    },
-  );
 }
 
 /** Названия объявлений для карточки: менеджеру важно, на что человек откликнулся. */

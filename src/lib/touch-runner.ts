@@ -6,7 +6,14 @@ import { untilLabel } from '@/lib/lead-touches';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
-import { leadCard, touchButtons, statusButtons } from '@/lib/telegram-lead-card';
+import {
+  leadCard,
+  copyPhoneButton,
+  touchButtons,
+  statusButtons,
+  trialButtons,
+} from '@/lib/telegram-lead-card';
+import { formatTrialTime } from '@/lib/trials';
 import type { FunnelType } from '@/lib/metrics';
 
 /**
@@ -26,7 +33,10 @@ import type { FunnelType } from '@/lib/metrics';
 
 type Admin = SupabaseClient<Database>;
 
-export type TouchRunResult = { reminded: number; nudged: number };
+export type TouchRunResult = { reminded: number; nudged: number; lessons: number };
+
+/** За сколько минут до урока напомнить продажнику. */
+const LESSON_REMINDER_MINUTES = 60;
 
 /** Одно касание в базе + обновление лида. Возвращает время напоминания. */
 export async function scheduleTouch(
@@ -91,8 +101,85 @@ export async function runTouchReminders(): Promise<TouchRunResult> {
 
   const reminded = await sendDueReminders(supabase);
   const nudged = await nudgeUntouched(supabase);
+  const lessons = await remindAboutLessons(supabase);
 
-  return { reminded, nudged };
+  return { reminded, nudged, lessons };
+}
+
+/**
+ * Напоминание продажнику перед онлайн-уроком.
+ *
+ * Урок идёт по видеосвязи и назначается заранее — за час до начала о нём
+ * надо напомнить, иначе клиент выйдет на связь, а продажник забудет.
+ */
+async function remindAboutLessons(supabase: Admin): Promise<number> {
+  const now = Date.now();
+  const until = new Date(now + LESSON_REMINDER_MINUTES * 60 * 1000).toISOString();
+
+  const { data: soon } = await supabase
+    .from('trials')
+    .select('id, company_id, lead_id, assigned_to, starts_at')
+    .eq('status', 'scheduled')
+    .is('reminded_at', null)
+    .not('starts_at', 'is', null)
+    .not('assigned_to', 'is', null)
+    .gt('starts_at', new Date(now).toISOString())
+    .lte('starts_at', until)
+    .limit(50);
+
+  if (!soon || soon.length === 0) return 0;
+
+  let sent = 0;
+
+  for (const lesson of soon) {
+    // Отметку ставим до отправки: повторное напоминание раздражает сильнее,
+    // чем пропущенное.
+    await supabase
+      .from('trials')
+      .update({ reminded_at: new Date().toISOString() })
+      .eq('id', lesson.id);
+
+    if (!lesson.assigned_to || !lesson.lead_id || !lesson.starts_at) continue;
+
+    const chatId = await telegramOf(supabase, lesson.assigned_to);
+    if (!chatId) continue;
+
+    const [{ data: lead }, { data: company }] = await Promise.all([
+      supabase
+        .from('leads')
+        .select('name, phone, source, platform, status')
+        .eq('id', lesson.lead_id)
+        .maybeSingle(),
+      supabase
+        .from('companies')
+        .select('timezone')
+        .eq('id', lesson.company_id)
+        .maybeSingle(),
+    ]);
+
+    if (!lead) continue;
+
+    const minutes = Math.max(
+      1,
+      Math.round((new Date(lesson.starts_at).getTime() - Date.now()) / 60000),
+    );
+
+    await sendMessage(
+      chatId,
+      leadCard(
+        lead,
+        `⏰ <b>Урок через ${minutes} мин</b>\n🕒 ${formatTrialTime(
+          lesson.starts_at,
+          company?.timezone ?? 'Asia/Almaty',
+        )}`,
+      ),
+      { inline: [...copyPhoneButton(lead.phone), ...trialButtons(lesson.id)] },
+    );
+
+    sent += 1;
+  }
+
+  return sent;
 }
 
 // -----------------------------------------------------------------------------

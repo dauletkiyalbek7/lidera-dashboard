@@ -54,7 +54,10 @@ export default async function LeadsPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company, employee } = await requireCompanySession();
+  // Менеджер ведёт свои заявки, но не распоряжается чужими: раздача и смена
+  // ответственного — работа руководителя.
+  const isStaff = employee !== null;
   const range = resolveRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
@@ -81,7 +84,7 @@ export default async function LeadsPage({
         action={
           <div className="flex flex-wrap items-center gap-3">
             <DateRangePicker range={range} />
-            <DistributeButton queued={queued} />
+            {isStaff ? null : <DistributeButton queued={queued} />}
             <AddLeadButton creatives={creatives} funnelType={funnelType} />
           </div>
         }
@@ -178,11 +181,17 @@ export default async function LeadsPage({
                     )}
                   </Td>
                   <Td>
-                    <LeadOwnerSelect
-                      leadId={lead.id}
-                      assignedTo={lead.assignedTo}
-                      employees={owners}
-                    />
+                    {isStaff ? (
+                      <span className="text-[12.5px] text-ink-soft">
+                        {lead.assignedName ?? '—'}
+                      </span>
+                    ) : (
+                      <LeadOwnerSelect
+                        leadId={lead.id}
+                        assignedTo={lead.assignedTo}
+                        employees={owners}
+                      />
+                    )}
                   </Td>
                   <Td className="tabular text-muted">{formatDateTime(lead.created_at)}</Td>
                   <Td>

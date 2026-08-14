@@ -123,7 +123,40 @@ export default async function CreativePage({
                     ? formatMoney(creative.revenue - creative.spend, { currency })
                     : '—'
                 }
-                hint="Выручка минус расход на этот ролик"
+                hint={
+                  creative.revenue && creative.spend
+                    ? `ROMI ${formatPercent(((creative.revenue - creative.spend) / creative.spend) * 100, 0)}`
+                    : 'Выручка минус расход на этот ролик'
+                }
+              />
+              <StatTile
+                label="Цена клиента"
+                value={
+                  creative.sales
+                    ? formatMoney(creative.spend / creative.sales, { currency })
+                    : '—'
+                }
+                hint="Расход ÷ количество продаж"
+              />
+              <StatTile
+                label="Из лида в клиента"
+                value={
+                  creative.conversions
+                    ? formatPercent((creative.sales / creative.conversions) * 100, 1)
+                    : '—'
+                }
+                hint="Сколько обращений дошло до покупки"
+              />
+              <StatTile
+                label="Цена клика"
+                value={
+                  creative.clicks ? formatMoney(creative.spend / creative.clicks, { currency }) : '—'
+                }
+                hint={`1000 показов — ${
+                  creative.impressions
+                    ? formatMoney((creative.spend / creative.impressions) * 1000, { currency })
+                    : '—'
+                }`}
               />
             </div>
 

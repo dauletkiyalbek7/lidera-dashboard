@@ -3,18 +3,32 @@ import Link from 'next/link';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
+import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { IconArrowRight, IconCreatives } from '@/components/ui/icons';
+import { IconCreatives } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
-import { formatMoney, formatNumber, formatRatio } from '@/lib/format';
+import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
 import { getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
+
+const COLUMNS = [
+  { key: 'creative', label: 'Креатив' },
+  { key: 'spend', label: 'Расход', align: 'right' as const },
+  { key: 'impressions', label: 'Показы', align: 'right' as const },
+  { key: 'ctr', label: 'CTR', align: 'right' as const },
+  { key: 'leads', label: 'Лиды', align: 'right' as const },
+  { key: 'cpl', label: 'Цена лида', align: 'right' as const },
+  { key: 'sales', label: 'Продажи', align: 'right' as const },
+  { key: 'revenue', label: 'Выручка', align: 'right' as const },
+  { key: 'roas', label: 'ROAS', align: 'right' as const },
+  { key: 'profit', label: 'Прибыль', align: 'right' as const },
+];
 
 export default async function CreativesPage({
   searchParams,
@@ -81,88 +95,88 @@ export default async function CreativesPage({
             <Card className="mt-4">
               <CardHeader
                 title="Список креативов"
-                subtitle={`Отсортированы по расходу за ${range.label}`}
+                subtitle={`Отсортированы по расходу за ${range.label}. Нажмите строку — откроется ролик`}
               />
-              <ul className="divide-y divide-line">
-                {shown.map((card) => (
-                  <li key={card.id}>
-                    <Link
-                      href={`/dashboard/creatives/${card.id}?${new URLSearchParams({
-                        period: range.preset ?? '',
-                        from: range.from,
-                        to: range.to,
-                      })}`}
-                      className="flex items-center gap-4 px-5 py-3.5 transition-colors hover:bg-surface-2/60 sm:px-6"
-                    >
-                      <span className="flex h-14 w-11 shrink-0 items-center justify-center overflow-hidden rounded-control border border-line bg-surface-2">
-                        {card.thumbnailUrl ? (
-                          // eslint-disable-next-line @next/next/no-img-element
-                          <img
-                            src={card.thumbnailUrl}
-                            alt=""
-                            className="size-full object-contain"
-                            loading="lazy"
-                          />
-                        ) : (
-                          <IconCreatives className="size-4 text-faint" />
-                        )}
-                      </span>
+              <TableShell columns={COLUMNS} minWidth={1100}>
+                {shown.map((card) => {
+                  const href = `/dashboard/creatives/${card.id}?${new URLSearchParams({
+                    period: range.preset ?? '',
+                    from: range.from,
+                    to: range.to,
+                  })}`;
+                  const profit = card.revenue ? card.revenue - card.spend : 0;
 
-                      <span className="min-w-0 flex-1">
-                        <span className="flex flex-wrap items-center gap-2">
-                          <span className="whitespace-nowrap text-[14px] font-medium text-ink">
-                            {card.label}
+                  return (
+                    <tr key={card.id} className="transition-colors hover:bg-surface-2/60">
+                      <Td first>
+                        <Link href={href} className="flex items-center gap-3">
+                          <span className="flex h-12 w-9 shrink-0 items-center justify-center overflow-hidden rounded-control border border-line bg-surface-2">
+                            {card.thumbnailUrl ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img
+                                src={card.thumbnailUrl}
+                                alt=""
+                                className="size-full object-contain"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <IconCreatives className="size-4 text-faint" />
+                            )}
                           </span>
-                          {card.hasVideo ? <Badge tone="neutral">Видео</Badge> : null}
-                          {card.status === 'active' ? (
-                            <Badge tone="positive">Активен</Badge>
-                          ) : null}
-                        </span>
-                        <span className="mt-0.5 block truncate text-[12px] text-faint">
-                          {card.title || card.campaigns.slice(0, 2).join(', ') || 'Без кампании'}
-                          {card.numbers.length > 0 ? ` · ${card.numbers.join(', ')}` : ''}
-                        </span>
-                      </span>
-
-                      <span className="hidden shrink-0 text-right sm:block">
-                        <span className="tabular block text-[14px] text-ink">
-                          {formatMoney(card.spend, { currency })}
-                        </span>
-                        <span className="block text-[11.5px] text-faint">расход</span>
-                      </span>
-
-                      <span className="shrink-0 text-right">
-                        <span className="tabular block text-[14px] font-medium text-lime">
-                          {formatNumber(card.conversions)}
-                        </span>
-                        <span className="block text-[11.5px] text-faint">лиды</span>
-                      </span>
-
-                      <span className="hidden shrink-0 text-right md:block">
-                        <span className="tabular block text-[14px] text-ink">
-                          {card.conversions
-                            ? formatMoney(card.costPerConversion, { currency })
-                            : '—'}
-                        </span>
-                        <span className="block text-[11.5px] text-faint">цена</span>
-                      </span>
-
-                      <span className="hidden shrink-0 text-right lg:block">
-                        <span className="tabular block text-[14px] text-ink">
-                          {card.revenue ? formatMoney(card.revenue, { currency }) : '—'}
-                        </span>
-                        <span className="block text-[11.5px] text-faint">
-                          {card.revenue && card.spend
-                            ? `ROAS ×${formatRatio(card.revenue / card.spend)}`
-                            : 'выручка'}
-                        </span>
-                      </span>
-
-                      <IconArrowRight className="size-4 shrink-0 text-faint" />
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+                          <span className="min-w-0">
+                            <span className="flex items-center gap-2">
+                              <span className="whitespace-nowrap text-[14px] font-medium text-ink">
+                                {card.label}
+                              </span>
+                              {card.status === 'active' ? (
+                                <Badge tone="positive">Активен</Badge>
+                              ) : null}
+                            </span>
+                            <span className="mt-0.5 block max-w-[220px] truncate text-[12px] text-faint">
+                              {card.campaigns[0] ?? 'Без кампании'}
+                            </span>
+                          </span>
+                        </Link>
+                      </Td>
+                      <Td align="right" className="tabular text-ink">
+                        {formatMoney(card.spend, { currency })}
+                      </Td>
+                      <Td align="right" className="tabular text-ink-soft">
+                        {formatNumber(card.impressions)}
+                      </Td>
+                      <Td align="right" className="tabular text-ink-soft">
+                        {formatPercent(card.ctr, 2)}
+                      </Td>
+                      <Td align="right" className="tabular font-medium text-lime">
+                        {formatNumber(card.conversions)}
+                      </Td>
+                      <Td align="right" className="tabular text-ink">
+                        {card.conversions
+                          ? formatMoney(card.costPerConversion, { currency })
+                          : '—'}
+                      </Td>
+                      <Td align="right" className="tabular text-ink-soft">
+                        {card.sales ? formatNumber(card.sales) : '—'}
+                      </Td>
+                      <Td align="right" className="tabular text-ink">
+                        {card.revenue ? formatMoney(card.revenue, { currency }) : '—'}
+                      </Td>
+                      <Td align="right" className="tabular text-ink-soft">
+                        {card.revenue && card.spend
+                          ? `×${formatRatio(card.revenue / card.spend)}`
+                          : '—'}
+                      </Td>
+                      <Td
+                        last
+                        align="right"
+                        className={`tabular ${profit > 0 ? 'text-positive' : profit < 0 ? 'text-negative' : 'text-muted'}`}
+                      >
+                        {card.revenue ? formatMoney(profit, { currency }) : '—'}
+                      </Td>
+                    </tr>
+                  );
+                })}
+              </TableShell>
             </Card>
           </>
         )}

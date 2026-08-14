@@ -16,7 +16,7 @@ import {
   manualStatusesFor,
   type ShiftMode,
 } from '@/lib/attendance';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { employeeRoleLabel } from '@/lib/employee-role';
 import { formatNumber } from '@/lib/format';
 import { resolveRange, toIsoDate } from '@/lib/period';
@@ -41,7 +41,7 @@ export default async function AttendancePage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const range = resolveRange(await searchParams, company.timezone);
   const rows = await getAttendance(company.id, range.from, range.to);
 

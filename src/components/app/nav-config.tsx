@@ -25,6 +25,8 @@ export type NavItem = {
   soon?: boolean;
   /** Раздел показывается только компаниям с такой воронкой. */
   onlyFunnel?: FunnelType;
+  /** Раздел виден рядовому сотруднику, а не только руководству. */
+  staff?: true;
 };
 
 export type NavGroup = {
@@ -51,8 +53,14 @@ const COMPANY_NAV: NavGroup[] = [
   {
     title: 'Продажи',
     items: [
-      { href: '/dashboard/leads', label: 'Лиды', icon: IconLeads },
-      { href: '/dashboard/trials', label: 'Пробные', icon: IconTrials, onlyFunnel: 'trial' },
+      { href: '/dashboard/leads', label: 'Лиды', icon: IconLeads, staff: true },
+      {
+        href: '/dashboard/trials',
+        label: 'Пробные',
+        icon: IconTrials,
+        onlyFunnel: 'trial',
+        staff: true,
+      },
       { href: '/dashboard/sales', label: 'Продажи', icon: IconSales },
       { href: '/dashboard/team', label: 'Команда', icon: IconTeam },
       { href: '/dashboard/attendance', label: 'Посещение', icon: IconAttendance },
@@ -70,6 +78,7 @@ const COMPANY_NAV: NavGroup[] = [
     items: [
       { href: '/dashboard/integrations', label: 'Интеграции', icon: IconIntegrations },
       { href: '/dashboard/settings', label: 'Настройки', icon: IconSettings },
+      { href: '/dashboard/me', label: 'Мой профиль', icon: IconTeam, staff: true },
     ],
   },
 ];
@@ -95,14 +104,26 @@ const NAV_BY_KEY: Record<NavKey, NavGroup[]> = {
   admin: ADMIN_NAV,
 };
 
-/** Меню для конкретного рабочего пространства с учётом типа воронки. */
-export function navFor(key: NavKey, funnelType: FunnelType): NavGroup[] {
+/**
+ * Меню рабочего пространства с учётом воронки и роли.
+ *
+ * Рядовому сотруднику показываем только его рабочие разделы. Это удобство, а
+ * не защита: чужие заявки ему не отдаст сама база, даже если он наберёт адрес
+ * раздела руками.
+ */
+export function navFor(
+  key: NavKey,
+  funnelType: FunnelType,
+  staffOnly = false,
+): NavGroup[] {
   return NAV_BY_KEY[key]
     .map((group) => ({
       ...group,
       items: group.items.filter(
         (item) =>
-          !item.soon && (!item.onlyFunnel || item.onlyFunnel === funnelType),
+          !item.soon &&
+          (!item.onlyFunnel || item.onlyFunnel === funnelType) &&
+          (!staffOnly || item.staff === true),
       ),
     }))
     .filter((group) => group.items.length > 0);

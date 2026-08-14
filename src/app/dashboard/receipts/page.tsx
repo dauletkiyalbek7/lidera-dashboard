@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconReceipts } from '@/components/ui/icons';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { formatDate, formatMoney } from '@/lib/format';
 import { getReceipts } from '@/lib/queries';
 
@@ -33,7 +33,7 @@ const SOURCE_LABELS: Record<string, string> = {
 };
 
 export default async function ReceiptsPage() {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const currency = company.currency;
   const receipts = await getReceipts(company.id);
 

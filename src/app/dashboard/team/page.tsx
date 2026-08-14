@@ -15,7 +15,7 @@ import {
   shiftDurationMinutes,
   type ShiftMode,
 } from '@/lib/attendance';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { employeeRoleLabel } from '@/lib/employee-role';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import type { FunnelType } from '@/lib/metrics';
@@ -25,6 +25,7 @@ import {
   AddEmployeeButton,
   EmployeeRowActions,
   InviteButton,
+  LoginButton,
   ScheduleButton,
 } from './team-controls';
 
@@ -52,7 +53,7 @@ export default async function TeamPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const currency = company.currency;
   const range = resolveRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
@@ -236,6 +237,14 @@ export default async function TeamPage({
                           employeeId={member.id}
                           fullName={member.fullName}
                           linked={member.telegramLinked}
+                        />
+                      ) : null}
+                      {member.status === 'active' ? (
+                        <LoginButton
+                          employeeId={member.id}
+                          fullName={member.fullName}
+                          hasLogin={member.hasLogin}
+                          loginEmail={member.loginEmail}
                         />
                       ) : null}
                       <EmployeeRowActions

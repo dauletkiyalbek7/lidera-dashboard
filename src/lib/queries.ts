@@ -948,6 +948,9 @@ export type TeamMember = {
   firedAt: string | null;
   telegramUsername: string | null;
   telegramLinked: boolean;
+  /** Есть ли у сотрудника вход в кабинет. */
+  hasLogin: boolean;
+  loginEmail: string | null;
   /** Открыта ли смена прямо сейчас — только такие получают лиды. */
   onShift: boolean;
   shiftStartedAt: string | null;
@@ -1065,6 +1068,17 @@ export async function getTeam(
     .gte('created_at', `${from}T00:00:00Z`)
     .lte('created_at', `${to}T23:59:59Z`);
 
+  // Почта входа: она лежит в profiles, а карточка сотрудника ссылается туда.
+  const profileIds = (employees ?? [])
+    .map((employee) => employee.profile_id)
+    .filter((id): id is string => id !== null);
+
+  const { data: logins } = profileIds.length
+    ? await supabase.from('profiles').select('id, email').in('id', profileIds)
+    : { data: [] as { id: string; email: string | null }[] };
+
+  const loginEmails = new Map((logins ?? []).map((row) => [row.id, row.email]));
+
   const now = Date.now();
   for (const touch of touches ?? []) {
     if (!touch.employee_id) continue;
@@ -1091,6 +1105,10 @@ export async function getTeam(
       firedAt: employee.fired_at,
       telegramUsername: employee.telegram_username,
       telegramLinked: employee.telegram_user_id !== null,
+      hasLogin: employee.profile_id !== null,
+      loginEmail: employee.profile_id
+        ? (loginEmails.get(employee.profile_id) ?? null)
+        : null,
       onShift: shiftOf.has(employee.id),
       shiftStartedAt: shiftOf.get(employee.id) ?? null,
       shiftMode: employee.shift_mode,

@@ -13,6 +13,8 @@ type AppShellProps = {
   nav: NavKey;
   /** Тип воронки компании: от него зависит состав разделов. */
   funnelType: FunnelType;
+  /** Рядовой сотрудник: в меню только его разделы. */
+  staffOnly?: boolean;
   children: ReactNode;
   /** Название компании или «Платформа Lidera» для админа. */
   workspace: string;
@@ -26,6 +28,7 @@ type AppShellProps = {
 export function AppShell({
   nav,
   funnelType,
+  staffOnly = false,
   children,
   workspace,
   workspaceHint,
@@ -33,7 +36,7 @@ export function AppShell({
   userEmail,
   banner,
 }: AppShellProps) {
-  const groups = navFor(nav, funnelType);
+  const groups = navFor(nav, funnelType, staffOnly);
   // Внутри кабинета логотип ведёт на главную кабинета: попадать с рабочего
   // экрана на витрину продукта — неожиданно и раздражает.
   const home = nav === 'admin' ? '/admin' : '/dashboard';

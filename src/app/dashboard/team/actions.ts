@@ -7,6 +7,7 @@ import { SHIFT_MODE_ORDER, parseWorkDays } from '@/lib/attendance';
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { runDistribution } from '@/lib/lead-distribution';
 import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER } from '@/lib/employee-role';
+import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /**
@@ -363,4 +364,145 @@ export async function updateEmployeeSchedule(
 
   revalidateTeam();
   return { success: 'График сохранён.' };
+}
+
+// -----------------------------------------------------------------------------
+// Вход в кабинет
+// -----------------------------------------------------------------------------
+
+const loginSchema = z.object({
+  employeeId: z.string().uuid(),
+  email: z.string().trim().toLowerCase().email('Проверьте адрес почты'),
+  password: z
+    .string()
+    .min(10, 'Пароль короче 10 знаков подобрать слишком легко')
+    .max(72, 'Пароль длиннее 72 знаков Supabase не принимает'),
+});
+
+export type LoginState = { error?: string; success?: string };
+
+/**
+ * Выдать сотруднику вход в кабинет.
+ *
+ * Пароль задаёт директор и передаёт лично: почтового ящика у менеджера может
+ * не быть вовсе, а письмо-приглашение до него тогда не дойдёт. Адрес нужен
+ * только как логин и для восстановления пароля.
+ *
+ * Что сотрудник увидит внутри, решает не интерфейс, а политики базы:
+ * менеджеру видны лиды, где он ответственный, продажнику — его уроки.
+ */
+export async function createEmployeeLogin(
+  _prev: LoginState,
+  formData: FormData,
+): Promise<LoginState> {
+  const { company, readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  if (!isAdminConfigured()) {
+    return { error: 'Не настроен сервисный ключ — учётные записи создать нельзя.' };
+  }
+
+  const parsed = loginSchema.safeParse({
+    employeeId: formData.get('employeeId'),
+    email: formData.get('email'),
+    password: formData.get('password'),
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const supabase = await createServerSupabase();
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('id, full_name, status, profile_id')
+    .eq('id', parsed.data.employeeId)
+    .eq('company_id', company.id)
+    .maybeSingle();
+
+  if (!employee) return { error: 'Сотрудник не найден.' };
+  if (employee.status !== 'active') return { error: 'Сотрудник уволен.' };
+  if (employee.profile_id) return { error: 'У этого сотрудника вход уже есть.' };
+
+  const admin = createAdminSupabase();
+  const { data: created, error: userError } = await admin.auth.admin.createUser({
+    email: parsed.data.email,
+    password: parsed.data.password,
+    email_confirm: true,
+    user_metadata: { name: employee.full_name },
+  });
+
+  if (userError || !created.user) {
+    return {
+      error: userError?.message.includes('already')
+        ? 'Учётная запись с такой почтой уже есть.'
+        : 'Не удалось создать учётную запись.',
+    };
+  }
+
+  const { data: profile, error: profileError } = await admin
+    .from('profiles')
+    .insert({
+      user_id: created.user.id,
+      company_id: company.id,
+      role: 'EMPLOYEE',
+      name: employee.full_name,
+      email: parsed.data.email,
+    })
+    .select('id')
+    .maybeSingle();
+
+  // Учётная запись без профиля бесполезна и мешает завести её заново —
+  // откатываем, чтобы не оставлять мусор в auth.
+  if (profileError || !profile) {
+    await admin.auth.admin.deleteUser(created.user.id);
+    return { error: 'Не удалось привязать учётную запись к сотруднику.' };
+  }
+
+  const { error: linkError } = await admin
+    .from('employees')
+    .update({ profile_id: profile.id })
+    .eq('id', employee.id);
+
+  if (linkError) {
+    await admin.from('profiles').delete().eq('id', profile.id);
+    await admin.auth.admin.deleteUser(created.user.id);
+    return { error: 'Не удалось связать карточку сотрудника с учётной записью.' };
+  }
+
+  revalidateTeam();
+  return {
+    success: `Вход выдан. Логин: ${parsed.data.email}. Пароль передайте лично — на экране он больше не появится.`,
+  };
+}
+
+/** Закрыть сотруднику вход, не трогая его карточку и историю. */
+export async function revokeEmployeeLogin(employeeId: string): Promise<LoginState> {
+  const { company, readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  if (!isAdminConfigured()) return { error: 'Не настроен сервисный ключ.' };
+
+  const parsed = z.string().uuid().safeParse(employeeId);
+  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
+
+  const supabase = await createServerSupabase();
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('id, profile_id')
+    .eq('id', parsed.data)
+    .eq('company_id', company.id)
+    .maybeSingle();
+
+  if (!employee?.profile_id) return { error: 'У этого сотрудника входа нет.' };
+
+  const admin = createAdminSupabase();
+  const { data: profile } = await admin
+    .from('profiles')
+    .select('user_id')
+    .eq('id', employee.profile_id)
+    .maybeSingle();
+
+  await admin.from('employees').update({ profile_id: null }).eq('id', employee.id);
+  await admin.from('profiles').delete().eq('id', employee.profile_id);
+  if (profile?.user_id) await admin.auth.admin.deleteUser(profile.user_id);
+
+  revalidateTeam();
+  return { success: 'Вход закрыт. Карточка и история сотрудника сохранены.' };
 }

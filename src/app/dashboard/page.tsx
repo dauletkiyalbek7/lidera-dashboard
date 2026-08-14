@@ -10,7 +10,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconAds } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { FUNNEL_LABELS, middleStepValue, type FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
@@ -23,7 +23,7 @@ export default async function DashboardPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const currency = company.currency;
   const range = resolveRange(await searchParams, company.timezone);
   const { totals, trend, creatives, hasAdData } = await getDashboardData(

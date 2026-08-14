@@ -4,11 +4,14 @@ import { useActionState, useState, useTransition } from 'react';
 
 import {
   createEmployee,
+  createEmployeeLogin,
   createInvite,
   fireEmployee,
   rehireEmployee,
+  revokeEmployeeLogin,
   updateEmployeeSchedule,
   type InviteState,
+  type LoginState,
   type TeamState,
 } from '@/app/dashboard/team/actions';
 import { Done, SubmitButton } from '@/app/dashboard/leads/lead-controls';
@@ -410,5 +413,123 @@ export function EmployeeRowActions({
         </Modal>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Выдача сотруднику входа в кабинет.
+ *
+ * Пароль директор задаёт сам и передаёт лично: почтового ящика у менеджера
+ * может не быть, и письмо-приглашение до него просто не дойдёт. После
+ * сохранения пароль на экране больше не показывается — в базе его нет
+ * в открытом виде.
+ */
+export function LoginButton({
+  employeeId,
+  fullName,
+  hasLogin,
+  loginEmail,
+}: {
+  employeeId: string;
+  fullName: string;
+  hasLogin: boolean;
+  loginEmail: string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  const [state, formAction] = useActionState(createEmployeeLogin, {} as LoginState);
+  const [revoking, startRevoke] = useTransition();
+  const [revokeError, setRevokeError] = useState<string | null>(null);
+
+  if (hasLogin) {
+    return (
+      <>
+        <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(true)}>
+          Вход есть
+        </Button>
+
+        {open ? (
+          <Modal
+            open
+            onClose={() => setOpen(false)}
+            title={`Вход в кабинет — ${fullName}`}
+            description={loginEmail ? `Логин: ${loginEmail}` : undefined}
+          >
+            <div className="space-y-4 px-5 py-5 sm:px-6">
+              <p className="text-[13px] leading-relaxed text-ink-soft">
+                Пароль хранится только в зашифрованном виде — показать его нельзя.
+                Если сотрудник забыл пароль, он восстанавливает его сам по ссылке
+                «Забыли пароль» на странице входа.
+              </p>
+              <p className="text-[13px] leading-relaxed text-ink-soft">
+                Закрыть вход можно в любой момент: карточка, лиды и вся история
+                сотрудника при этом сохраняются.
+              </p>
+              {revokeError ? (
+                <p className="text-[12.5px] text-negative">{revokeError}</p>
+              ) : null}
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={revoking}
+                onClick={() =>
+                  startRevoke(async () => {
+                    const result = await revokeEmployeeLogin(employeeId);
+                    if (result.error) setRevokeError(result.error);
+                    else setOpen(false);
+                  })
+                }
+              >
+                {revoking ? 'Закрываем…' : 'Закрыть вход'}
+              </Button>
+            </div>
+          </Modal>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(true)}>
+        Выдать вход
+      </Button>
+
+      {open ? (
+        <Modal
+          open
+          onClose={() => setOpen(false)}
+          title={`Вход в кабинет — ${fullName}`}
+          description="Сотрудник войдёт по этой почте и увидит только свои заявки."
+        >
+          {state.success ? (
+            <Done message={state.success} onClose={() => setOpen(false)} />
+          ) : (
+            <form action={formAction} className="space-y-4 px-5 py-5 sm:px-6">
+              <input type="hidden" name="employeeId" value={employeeId} />
+              <Field
+                label="Почта — она же логин"
+                name="email"
+                type="email"
+                required
+                autoComplete="off"
+                placeholder="arman@company.kz"
+              />
+              <Field
+                label="Пароль"
+                name="password"
+                type="text"
+                required
+                minLength={10}
+                autoComplete="off"
+                placeholder="не короче 10 знаков"
+                hint="Передайте его сотруднику лично — на экране он больше не появится"
+              />
+              <FormMessage error={state.error} />
+              <SubmitButton label="Выдать вход" pendingLabel="Создаём…" />
+            </form>
+          )}
+        </Modal>
+      ) : null}
+    </>
   );
 }

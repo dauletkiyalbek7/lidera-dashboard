@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { IconAds, IconChain, IconCreatives, IconReceipts } from '@/components/ui/icons';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { publicEnv } from '@/lib/env';
 import { formatDateTime } from '@/lib/format';
 import { INTEGRATION_STATUS, statusOf } from '@/lib/labels';
@@ -46,7 +46,7 @@ const CATALOG = [
 ] as const;
 
 export default async function IntegrationsPage() {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const integrations = await getIntegrations(company.id);
   // Адрес берём из самого запроса: он верен и на боевом домене, и на превью,
   // и не зависит от того, что записано в переменных окружения.

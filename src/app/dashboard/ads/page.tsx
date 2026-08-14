@@ -9,7 +9,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconAds } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import {
   currencySymbol,
   formatDateShort,
@@ -62,7 +62,7 @@ export default async function AdsPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company, profile } = await requireCompanySession();
+  const { company, profile } = await requireFullAccess();
   const currency = company.currency;
   const range = resolveRange(await searchParams, company.timezone);
 

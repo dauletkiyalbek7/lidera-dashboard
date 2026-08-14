@@ -290,6 +290,8 @@ export type LeadRow = Timestamps & {
 export type EmployeeRow = Timestamps & {
   id: string;
   company_id: string;
+  /** Учётная запись сотрудника. Пусто — работает только через бота. */
+  profile_id: string | null;
   full_name: string;
   role: EmployeeRole;
   phone: string | null;

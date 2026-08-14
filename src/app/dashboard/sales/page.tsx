@@ -7,7 +7,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconSales } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { averageCheck } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
@@ -29,7 +29,7 @@ export default async function SalesPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const currency = company.currency;
   const range = resolveRange(await searchParams, company.timezone);
 

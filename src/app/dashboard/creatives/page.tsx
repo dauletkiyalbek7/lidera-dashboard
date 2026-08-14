@@ -10,7 +10,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconCreatives } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
 import { getCreativeCards } from '@/lib/queries';
@@ -39,7 +39,7 @@ export default async function CreativesPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const currency = company.currency;
   const range = resolveRange(await searchParams, company.timezone);
 

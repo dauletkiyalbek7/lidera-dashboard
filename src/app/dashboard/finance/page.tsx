@@ -5,7 +5,7 @@ import { DateRangePicker } from '@/components/app/date-range-picker';
 import { TrendChart } from '@/components/charts/trend-chart';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatPercent, formatRatio } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
 import { getDashboardData, getSubscription } from '@/lib/queries';
@@ -18,7 +18,7 @@ export default async function FinancePage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCompanySession();
+  const { company } = await requireFullAccess();
   const currency = company.currency;
   const range = resolveRange(await searchParams, company.timezone);
 

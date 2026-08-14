@@ -4,7 +4,7 @@ import { PageBody, PageHeader } from '@/components/app/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { formatDate } from '@/lib/format';
 import { COMPANY_STATUS, PLAN_LABELS, ROLE_LABELS, statusOf } from '@/lib/labels';
 import { getSubscription } from '@/lib/queries';
@@ -15,7 +15,7 @@ import { ShiftForm } from './shift-form';
 export const metadata: Metadata = { title: 'Настройки' };
 
 export default async function SettingsPage() {
-  const { company, profile, email } = await requireCompanySession();
+  const { company, profile, email } = await requireFullAccess();
   const subscription = await getSubscription(company.id);
   const status = statusOf(COMPANY_STATUS, company.status);
 

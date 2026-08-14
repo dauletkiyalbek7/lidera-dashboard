@@ -26,6 +26,11 @@ export type SessionContext = {
   company: CompanyRow | null;
   /** Кабинет открыт администратором платформы: смотреть можно, менять — нет. */
   readOnly: boolean;
+  /**
+   * Карточка сотрудника, если вход выдан менеджеру или продажнику.
+   * У директора её нет — он видит компанию целиком.
+   */
+  employee: { id: string; role: string; fullName: string; telegramLinked: boolean } | null;
 };
 
 /**
@@ -59,7 +64,35 @@ export async function getSessionContext(): Promise<SessionContext | null> {
     company = data ?? null;
   }
 
-  return { userId: user.id, email: user.email ?? null, profile, company, readOnly: false };
+  // Сотрудник видит только своё. Что именно — решает RLS по этой же карточке,
+  // поэтому здесь она нужна лишь для меню и подписей.
+  let employee: SessionContext['employee'] = null;
+  if (profile.company_id) {
+    const { data } = await supabase
+      .from('employees')
+      .select('id, role, full_name, telegram_user_id')
+      .eq('profile_id', profile.id)
+      .eq('status', 'active')
+      .maybeSingle();
+
+    employee = data
+      ? {
+          id: data.id,
+          role: data.role,
+          fullName: data.full_name,
+          telegramLinked: data.telegram_user_id !== null,
+        }
+      : null;
+  }
+
+  return {
+    userId: user.id,
+    email: user.email ?? null,
+    profile,
+    company,
+    readOnly: false,
+    employee,
+  };
 }
 
 /** Требует вход. Иначе — редирект на /login с возвратом на исходный путь. */
@@ -113,6 +146,21 @@ async function observedCompany(): Promise<CompanyRow | null> {
 }
 
 /** Админ-панель платформы. */
+/**
+ * Раздел только для руководства: директора, РОПа и администратора.
+ *
+ * Рядового сотрудника уводим к его заявкам. Данные компании и без этого
+ * закрыты политиками базы, но показывать менеджеру пустой отчёт по коллегам
+ * или чужую выручку незачем — это не его работа.
+ */
+export async function requireFullAccess(): Promise<
+  SessionContext & { company: CompanyRow }
+> {
+  const context = await requireCompanySession();
+  if (context.employee) redirect('/dashboard/leads');
+  return context;
+}
+
 export async function requireSuperAdmin(): Promise<SessionContext> {
   const context = await requireSession('/admin');
   if (context.profile.role !== 'SUPER_ADMIN') redirect('/dashboard');

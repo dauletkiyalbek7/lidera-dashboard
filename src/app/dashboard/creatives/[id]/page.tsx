@@ -9,7 +9,7 @@ import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireCompanySession } from '@/lib/auth';
+import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
 import { getCreativeCards } from '@/lib/queries';
@@ -23,7 +23,7 @@ export default async function CreativePage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company, profile } = await requireCompanySession();
+  const { company, profile } = await requireFullAccess();
   const currency = company.currency;
   const { id } = await params;
   const range = resolveRange(await searchParams, company.timezone);

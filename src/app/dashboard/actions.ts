@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
+import { sendPurchaseForSale } from '@/lib/capi';
 import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
 import { createServerSupabase } from '@/lib/supabase/server';
@@ -146,14 +147,18 @@ export async function registerSale(
   const supabase = await createServerSupabase();
   const leadId = parsed.data.leadId || null;
 
-  const { error } = await supabase.from('sales').insert({
-    company_id: company.id,
-    lead_id: leadId,
-    product: parsed.data.product,
-    amount: parsed.data.amount,
-    sale_date: parsed.data.saleDate,
-    status: parsed.data.status,
-  });
+  const { data: sale, error } = await supabase
+    .from('sales')
+    .insert({
+      company_id: company.id,
+      lead_id: leadId,
+      product: parsed.data.product,
+      amount: parsed.data.amount,
+      sale_date: parsed.data.saleDate,
+      status: parsed.data.status,
+    })
+    .select('id')
+    .maybeSingle();
 
   if (error) return { error: 'Не удалось сохранить продажу.' };
 
@@ -164,6 +169,8 @@ export async function registerSale(
       .eq('id', leadId)
       .eq('company_id', company.id);
   }
+
+  if (sale && parsed.data.status === 'paid') await reportPurchase(company.id, sale.id);
 
   revalidateCabinet();
   return { success: 'Продажа записана.' };
@@ -189,8 +196,25 @@ export async function updateSaleStatus(saleId: string, status: string): Promise<
 
   if (error) return { error: 'Не удалось изменить статус.' };
 
+  // Оплату сообщаем рекламной площадке: именно на покупателях она учится.
+  if (parsed.data.status === 'paid') await reportPurchase(company.id, parsed.data.saleId);
+
   revalidateCabinet();
   return { success: 'Статус обновлён.' };
+}
+
+/**
+ * Сообщить рекламной площадке об оплате.
+ *
+ * Отправка не должна мешать работе: если CAPI не настроен или Meta ответила
+ * отказом, продажа всё равно записана, а причина сохранена в журнале событий.
+ */
+async function reportPurchase(companyId: string, saleId: string): Promise<void> {
+  try {
+    await sendPurchaseForSale(companyId, saleId);
+  } catch {
+    // Молча: подробности уже легли в capi_events, а директор ждёт ответа формы.
+  }
 }
 
 const trialSchema = z.object({

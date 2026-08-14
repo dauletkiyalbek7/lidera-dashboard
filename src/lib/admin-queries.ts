@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { createAdminSupabase } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
 import type { CompanyRow, ProfileRow } from '@/lib/supabase/database.types';
 
@@ -114,6 +115,32 @@ export async function getCompanyAdAccounts(companyId: string) {
     currency: row.currency,
     status: row.status,
   }));
+}
+
+/**
+ * Настройки CAPI компании без самого токена: наружу он не выходит никогда.
+ *
+ * У таблицы нет политик RLS — она недоступна даже администратору через
+ * пользовательский ключ, поэтому читаем её серверным. Страница, которая это
+ * вызывает, уже закрыта requireSuperAdmin().
+ */
+export async function getCapiSettings(companyId: string) {
+  const supabase = createAdminSupabase();
+
+  const { data } = await supabase
+    .from('capi_settings')
+    .select('dataset_id, test_event_code, last_event_at, last_error')
+    .eq('company_id', companyId)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  return {
+    datasetId: data.dataset_id,
+    testEventCode: data.test_event_code,
+    lastEventAt: data.last_event_at,
+    lastError: data.last_error,
+  };
 }
 
 export async function listAuditLogs(limit = 100) {

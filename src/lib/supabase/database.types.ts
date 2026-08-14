@@ -194,6 +194,33 @@ export type ExchangeRateRow = {
   fetched_at: string;
 }
 
+/** Настройки Conversions API компании: токен лежит зашифрованным. */
+export type CapiSettingsRow = {
+  company_id: string;
+  dataset_id: string;
+  token_encrypted: string;
+  test_event_code: string | null;
+  enabled: boolean;
+  last_event_at: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Событие, отправленное в Meta. */
+export type CapiEventRow = {
+  id: string;
+  company_id: string;
+  sale_id: string | null;
+  event_name: string;
+  event_id: string;
+  value: number | null;
+  currency: string | null;
+  status: 'sent' | 'failed';
+  response: string | null;
+  created_at: string;
+}
+
 export type LeadRow = Timestamps & {
   id: string;
   company_id: string;
@@ -342,6 +369,8 @@ export type Database = {
       creatives: TableDef<CreativeRow, 'company_id' | 'name' | 'platform'>;
       ad_metrics: TableDef<AdMetricRow, 'company_id' | 'date'>;
       exchange_rates: TableDef<ExchangeRateRow, 'date' | 'code' | 'kzt_per_unit'>;
+      capi_settings: TableDef<CapiSettingsRow, 'company_id' | 'dataset_id' | 'token_encrypted'>;
+      capi_events: TableDef<CapiEventRow, 'company_id' | 'event_name' | 'event_id' | 'status'>;
       leads: TableDef<LeadRow, 'company_id'>;
       employees: TableDef<EmployeeRow, 'company_id' | 'full_name' | 'role'>;
       employee_invites: TableDef<

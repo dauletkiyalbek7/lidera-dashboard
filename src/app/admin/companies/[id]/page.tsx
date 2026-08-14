@@ -7,12 +7,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
-import { getCompany, getCompanyAdAccounts } from '@/lib/admin-queries';
+import { getCapiSettings, getCompany, getCompanyAdAccounts } from '@/lib/admin-queries';
 import { requireSuperAdmin } from '@/lib/auth';
 import { formatDate, formatNumber } from '@/lib/format';
 import { COMPANY_STATUS, PLAN_LABELS, ROLE_LABELS, statusOf } from '@/lib/labels';
 import { listMetaAccounts, observeCompany } from '../../actions';
 import { AdAccountForm, AdAccountList } from './ad-account-form';
+import { CapiForm } from './capi-form';
 import {
   CompanyEditForm,
   CompanyStatusToggle,
@@ -36,6 +37,7 @@ export default async function CompanyDetailPage({
   const status = statusOf(COMPANY_STATUS, company.status);
   const meta = await listMetaAccounts();
   const attached = await getCompanyAdAccounts(company.id);
+  const capi = await getCapiSettings(company.id);
 
   return (
     <>
@@ -144,6 +146,14 @@ export default async function CompanyDetailPage({
                   error={meta.error}
                 />
               </div>
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="Покупки в Meta (CAPI)"
+                subtitle="Оплата курса уходит в рекламный кабинет — реклама учится на покупателях"
+              />
+              <CapiForm companyId={company.id} current={capi} />
             </Card>
 
             <Card>

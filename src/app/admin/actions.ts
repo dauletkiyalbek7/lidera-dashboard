@@ -6,7 +6,9 @@ import { redirect } from 'next/navigation';
 import { z } from 'zod';
 
 import { requireSuperAdmin, VIEW_COMPANY_COOKIE } from '@/lib/auth';
+import { sendPurchase } from '@/lib/capi';
 import { syncMetaAccount } from '@/lib/meta-sync';
+import { encryptSecret, secretHint } from '@/lib/secrets';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 
 export type AdminState = { error?: string; success?: string };
@@ -534,6 +536,99 @@ export async function detachMetaAccount(
 
   revalidatePath(`/admin/companies/${parsed.data.companyId}`);
   return { success: 'Кабинет отключён. Уже загруженные цифры остались в отчётах.' };
+}
+
+const capiSchema = z.object({
+  companyId: z.string().uuid(),
+  datasetId: z.string().trim().regex(/^\d{5,25}$/, 'Номер набора данных — только цифры'),
+  token: z.string().trim().min(20, 'Токен слишком короткий').max(500),
+  testEventCode: z.string().trim().max(40).optional(),
+});
+
+/**
+ * Настройка отправки покупок в Meta.
+ *
+ * Токен вводится один раз и в базу попадает зашифрованным: обратно его не
+ * показывает ни один экран, при замене вводится заново.
+ */
+export async function saveCapiSettings(
+  _prevState: AdminState,
+  formData: FormData,
+): Promise<AdminState> {
+  const admin = await requireSuperAdmin();
+
+  const parsed = capiSchema.safeParse({
+    companyId: formData.get('companyId'),
+    datasetId: formData.get('datasetId'),
+    token: formData.get('token'),
+    testEventCode: formData.get('testEventCode') || undefined,
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  let encrypted: string;
+  try {
+    encrypted = encryptSecret(parsed.data.token);
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : 'Не удалось зашифровать токен.' };
+  }
+
+  const supabase = createAdminSupabase();
+  const { error } = await supabase.from('capi_settings').upsert(
+    {
+      company_id: parsed.data.companyId,
+      dataset_id: parsed.data.datasetId,
+      token_encrypted: encrypted,
+      test_event_code: parsed.data.testEventCode ?? null,
+      enabled: true,
+      last_error: null,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'company_id' },
+  );
+
+  if (error) return { error: 'Не удалось сохранить настройки.' };
+
+  // В журнал пишем факт, но не сам токен — журнал читают люди.
+  await logAction(admin.userId, parsed.data.companyId, 'capi.configured', 'company', null, {
+    dataset_id: parsed.data.datasetId,
+    token: secretHint(parsed.data.token),
+  });
+
+  revalidatePath(`/admin/companies/${parsed.data.companyId}`);
+  return { success: 'Отправка покупок настроена. Проверьте её тестовым событием.' };
+}
+
+/** Пробное событие: проверяет токен и набор данных, не дожидаясь реальной продажи. */
+export async function sendTestPurchase(
+  _prevState: AdminState,
+  formData: FormData,
+): Promise<AdminState> {
+  await requireSuperAdmin();
+
+  const companyId = z.string().uuid().safeParse(formData.get('companyId'));
+  if (!companyId.success) return { error: 'Некорректный запрос.' };
+
+  const result = await sendPurchase(companyId.data, {
+    saleId: `test-${Date.now()}`,
+    value: 1,
+    currency: 'KZT',
+    eventTime: new Date(),
+    phone: '+77000000000',
+    email: 'test@lidera.kz',
+    name: 'Тест',
+    fbc: null,
+    fbp: null,
+  });
+
+  revalidatePath(`/admin/companies/${companyId.data}`);
+
+  return result.ok
+    ? {
+        success:
+          'Тестовое событие отправлено. Проверьте его в Events Manager → «Тестирование событий».',
+      }
+    : { error: `Meta не приняла событие: ${result.error}` };
 }
 
 /**

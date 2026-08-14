@@ -272,7 +272,8 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     new Set(insights.map((row) => row.ad_id).filter((id): id is string => Boolean(id))),
   );
 
-  const ads = await graphByIds<MetaAd>(
+  const ads = await adsByIds<MetaAd>(
+    actId,
     workingAdIds,
     'name,status,campaign_id,' +
       'creative{id,name,object_type,video_id,image_url,thumbnail_url,object_story_spec}',
@@ -523,46 +524,44 @@ function weekWindows(since: string, until: string): { since: string; until: stri
 }
 
 /**
- * Чтение объектов по списку идентификаторов пачками.
+ * Объявления по списку идентификаторов.
  *
- * Graph API отдаёт их в виде словаря «id → объект», а не списка, поэтому
- * ответ разворачиваем сами.
+ * Забираем только те, что за период работали: в кабинете их могут быть тысячи.
+ * Просить их через `?ids=` нельзя — в свежих версиях API этот параметр убрали,
+ * поэтому идём по обычному списку объявлений с фильтром «идентификатор из
+ * списка».
  */
-async function graphByIds<T>(
+async function adsByIds<T>(
+  actId: string,
   ids: string[],
   fields: string,
   token: string,
-  batchSize = 40,
+  batchSize = 50,
 ): Promise<T[]> {
-  const items: T[] = [];
-
   const batches: string[][] = [];
   for (let start = 0; start < ids.length; start += batchSize) {
     batches.push(ids.slice(start, start + batchSize));
   }
 
-  const results = await Promise.all(
-    batches.map(async (batch) => {
-    const response = await fetch(
-      `${GRAPH}/?ids=${batch.join(',')}&fields=${encodeURIComponent(fields)}` +
-        `&access_token=${token}`,
-      { cache: 'no-store' },
+  const results: T[][] = [];
+
+  // Пачки идут по очереди: параллельные запросы к крупному кабинету упираются
+  // в ограничение частоты, и Meta отвечает отказом всему запуску.
+  for (const batch of batches) {
+    const filtering = JSON.stringify([
+      { field: 'ad.id', operator: 'IN', value: batch },
+    ]);
+
+    results.push(
+      await graph<T>(
+        `${GRAPH}/${actId}/ads?fields=${encodeURIComponent(fields)}` +
+          `&filtering=${encodeURIComponent(filtering)}` +
+          `&limit=${batchSize}&access_token=${token}`,
+      ),
     );
+  }
 
-    const payload = (await response.json()) as Record<string, unknown> & {
-      error?: { message: string; code: number };
-    };
-
-    if (payload.error) {
-      throw new Error(`Meta API: ${payload.error.message} (код ${payload.error.code})`);
-    }
-
-    return Object.values(payload) as T[];
-    }),
-  );
-
-  items.push(...results.flat());
-  return items;
+  return results.flat();
 }
 
 /**

@@ -45,6 +45,7 @@ const COMPANY_NAV: NavGroup[] = [
     items: [
       { href: '/dashboard/ads', label: 'Реклама', icon: IconAds },
       { href: '/dashboard/creatives', label: 'Креативы', icon: IconCreatives },
+      { href: '/dashboard/capi', label: 'CAPI', icon: IconIntegrations },
     ],
   },
   {

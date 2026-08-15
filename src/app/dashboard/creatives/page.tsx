@@ -11,28 +11,38 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconCreatives } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
-import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
+import {
+  currencySymbol,
+  formatMoney,
+  formatNumber,
+  formatPercent,
+  formatRatio,
+} from '@/lib/format';
+import { moneyView } from '@/lib/money-view';
 import { resolveRange } from '@/lib/period';
-import { getCreativeCards } from '@/lib/queries';
+import { getAdSpendCurrency, getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
 
-const BASE_COLUMNS = [
+/** Валюта живёт в шапке колонки: расход в одной, выручка в другой. */
+const baseColumns = (ad: string, own: string) => [
   { key: 'creative', label: 'Креатив' },
-  { key: 'spend', label: 'Расход', align: 'right' as const },
+  { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
   { key: 'ctr', label: 'CTR', align: 'right' as const },
   { key: 'leads', label: 'Лиды', align: 'right' as const },
-  { key: 'cpl', label: 'Цена лида', align: 'right' as const },
+  { key: 'cpl', label: `Цена лида, ${ad}`, align: 'right' as const },
   { key: 'trials', label: 'Пробные', align: 'right' as const },
   { key: 'sales', label: 'Продажи', align: 'right' as const },
-  { key: 'revenue', label: 'Выручка', align: 'right' as const },
+  { key: 'revenue', label: `Выручка, ${own}`, align: 'right' as const },
   { key: 'roas', label: 'ROAS', align: 'right' as const },
-  { key: 'profit', label: 'Прибыль', align: 'right' as const },
+  { key: 'profit', label: `Прибыль, ${own}`, align: 'right' as const },
 ];
 
 /** Без пробных занятий столбец не нужен — воронка короче. */
-const columnsFor = (funnelType: string) =>
-  funnelType === 'trial' ? BASE_COLUMNS : BASE_COLUMNS.filter((c) => c.key !== 'trials');
+const columnsFor = (funnelType: string, ad: string, own: string) =>
+  funnelType === 'trial'
+    ? baseColumns(ad, own)
+    : baseColumns(ad, own).filter((c) => c.key !== 'trials');
 
 export default async function CreativesPage({
   searchParams,
@@ -45,32 +55,27 @@ export default async function CreativesPage({
   const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
 
-  const cards = await getCreativeCards(company.id, range.from, range.to, company.timezone);
+  const [cards, accountCurrency] = await Promise.all([
+    getCreativeCards(company.id, range.from, range.to, company.timezone),
+    getAdSpendCurrency(company.id),
+  ]);
 
   // Показываем только то, что за период работало: тратило бюджет или приводило
   // людей. Креатив, который не крутился, в отчёте за этот период не при чём.
   const shown = cards.filter((card) => card.spend > 0 || card.conversions > 0);
 
-  const spend = shown.reduce((total, card) => total + card.spend, 0);
   const conversions = shown.reduce((total, card) => total + card.conversions, 0);
   const cheapest = [...shown]
     .filter((card) => card.conversions > 0)
     .sort((a, b) => a.costPerConversion - b.costPerConversion)[0];
 
-  // Расход в валюте кабинета, если директор выбрал её в настройках: именно
-  // эти суммы он сверяет с Ads Manager. Вторая валюта — подписью рядом.
-  const sourceCurrency = shown.find((card) => card.spendSource !== null)
-    ? (company.currency !== currency ? company.currency : null)
-    : null;
-  const fromSource = sourceCurrency !== null;
-  const adCurrency = fromSource ? sourceCurrency : currency;
-  const adMoney = (card: { spend: number; spendSource: number | null }) =>
-    fromSource ? (card.spendSource ?? 0) : card.spend;
+  // Расход в выбранной рекламной валюте, вторая — подписью рядом.
+  const view = moneyView(company.currency, currency, accountCurrency);
+  const { adCurrency, otherCurrency, showBoth } = view;
+  const adMoney = (card: { spend: number; spendSource: number | null }) => view.spendOf(card);
 
   const adSpend = shown.reduce((total, card) => total + adMoney(card), 0);
-  const showBoth = fromSource;
-  const otherCurrency = currency;
-  const otherSpend = spend;
+  const otherSpend = shown.reduce((total, card) => total + view.otherSpendOf(card), 0);
 
   return (
     <>
@@ -128,7 +133,11 @@ export default async function CreativesPage({
                 title="Список креативов"
                 subtitle={`Отсортированы по расходу за ${range.label}. Нажмите строку — откроется ролик`}
               />
-              <TableShell columns={columnsFor(company.funnel_type)} minWidth={1080}>
+              <TableShell columns={columnsFor(
+                  company.funnel_type,
+                  currencySymbol(adCurrency),
+                  currencySymbol(currency),
+                )} minWidth={1080}>
                 {shown.map((card) => {
                   const href = `/dashboard/creatives/${card.id}?${new URLSearchParams({
                     period: range.preset ?? '',
@@ -170,7 +179,7 @@ export default async function CreativesPage({
                         </Link>
                       </Td>
                       <Td align="right" className="tabular text-ink">
-                        {formatMoney(adMoney(card), { currency: adCurrency })}
+                        {formatNumber(adMoney(card), 2)}
                       </Td>
                       <Td align="right" className="tabular text-ink-soft">
                         {formatPercent(card.ctr, 2)}
@@ -180,9 +189,7 @@ export default async function CreativesPage({
                       </Td>
                       <Td align="right" className="tabular text-ink">
                         {card.conversions
-                          ? formatMoney(adMoney(card) / card.conversions, {
-                              currency: adCurrency,
-                            })
+                          ? formatNumber(adMoney(card) / card.conversions, 2)
                           : '—'}
                       </Td>
                       {company.funnel_type === 'trial' ? (
@@ -194,7 +201,7 @@ export default async function CreativesPage({
                         {card.sales ? formatNumber(card.sales) : '—'}
                       </Td>
                       <Td align="right" className="tabular text-ink">
-                        {card.revenue ? formatMoney(card.revenue, { currency }) : '—'}
+                        {card.revenue ? formatNumber(card.revenue, 0) : '—'}
                       </Td>
                       <Td align="right" className="tabular text-ink-soft">
                         {card.revenue && card.spend
@@ -206,7 +213,7 @@ export default async function CreativesPage({
                         align="right"
                         className={`tabular ${profit > 0 ? 'text-positive' : profit < 0 ? 'text-negative' : 'text-muted'}`}
                       >
-                        {card.revenue ? formatMoney(profit, { currency }) : '—'}
+                        {card.revenue ? formatNumber(profit, 0) : '—'}
                       </Td>
                     </tr>
                   );

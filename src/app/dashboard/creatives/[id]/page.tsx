@@ -11,8 +11,9 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
+import { moneyView, per } from '@/lib/money-view';
 import { resolveRange } from '@/lib/period';
-import { getCreativeCards } from '@/lib/queries';
+import { getAdSpendCurrency, getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креатив' };
 
@@ -24,14 +25,29 @@ export default async function CreativePage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company, profile } = await requireFullAccess();
-  const currency = company.currency;
+  // Выручка и прибыль — деньги компании; расход и всё, что от него считается,
+  // показываем в выбранной рекламной валюте со второй строкой рядом.
+  const currency = company.sales_currency;
   const { id } = await params;
   const range = resolveRange(await searchParams, company.timezone);
 
-  const cards = await getCreativeCards(company.id, range.from, range.to, company.timezone);
+  const [cards, accountCurrency] = await Promise.all([
+    getCreativeCards(company.id, range.from, range.to, company.timezone),
+    getAdSpendCurrency(company.id),
+  ]);
   const creative = cards.find((card) => card.id === id);
 
   if (!creative) notFound();
+
+  const view = moneyView(company.currency, currency, accountCurrency);
+  const spend = view.spendOf(creative);
+  const otherSpend = view.otherSpendOf(creative);
+  const ad = { currency: view.adCurrency };
+  /** Вторая строка под крупной цифрой: та же сумма в другой валюте. */
+  const also = (value: number | null) =>
+    view.showBoth && value !== null
+      ? formatMoney(value, { currency: view.otherCurrency })
+      : null;
 
   const status =
     creative.status === 'active'
@@ -77,7 +93,11 @@ export default async function CreativePage({
 
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-              <StatTile label="Расход" value={formatMoney(creative.spend, { currency })} />
+              <StatTile
+                label="Расход"
+                value={formatMoney(spend, ad)}
+                hint={also(otherSpend)}
+              />
               <StatTile
                 label="Лиды"
                 value={formatNumber(creative.conversions)}
@@ -87,10 +107,9 @@ export default async function CreativePage({
               <StatTile
                 label="Цена лида"
                 value={
-                  creative.conversions
-                    ? formatMoney(creative.costPerConversion, { currency })
-                    : '—'
+                  creative.conversions ? formatMoney(spend / creative.conversions, ad) : '—'
                 }
+                hint={also(per(otherSpend, creative.conversions))}
               />
               <StatTile
                 label="Клики"
@@ -131,12 +150,10 @@ export default async function CreativePage({
               />
               <StatTile
                 label="Цена клиента"
-                value={
-                  creative.sales
-                    ? formatMoney(creative.spend / creative.sales, { currency })
-                    : '—'
+                value={creative.sales ? formatMoney(spend / creative.sales, ad) : '—'}
+                hint={
+                  also(per(otherSpend, creative.sales)) ?? 'Расход ÷ количество продаж'
                 }
-                hint="Расход ÷ количество продаж"
               />
               <StatTile
                 label="Из лида в клиента"
@@ -160,14 +177,12 @@ export default async function CreativePage({
               ) : null}
               <StatTile
                 label="Цена клика"
-                value={
-                  creative.clicks ? formatMoney(creative.spend / creative.clicks, { currency }) : '—'
-                }
+                value={creative.clicks ? formatMoney(spend / creative.clicks, ad) : '—'}
                 hint={`1000 показов — ${
                   creative.impressions
-                    ? formatMoney((creative.spend / creative.impressions) * 1000, { currency })
+                    ? formatMoney((spend / creative.impressions) * 1000, ad)
                     : '—'
-                }`}
+                }${also(per(otherSpend, creative.clicks)) ? ` · клик ${also(per(otherSpend, creative.clicks))}` : ''}`}
               />
             </div>
 

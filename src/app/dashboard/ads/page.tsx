@@ -19,6 +19,7 @@ import {
   formatRatio,
 } from '@/lib/format';
 import { INTEGRATION_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
+import { moneyView } from '@/lib/money-view';
 import { resolveRange } from '@/lib/period';
 import {
   getAdAccounts,
@@ -81,21 +82,16 @@ export default async function AdsPage({
 
   const { totals } = breakdown;
 
-  // Расход показываем в той валюте, которую директор выбрал в настройках.
-  // Совпала с валютой кабинета — берём исходные суммы, сверять с Ads Manager
-  // можно без пересчёта. Вторая валюта в любом случае подписана рядом.
-  const view = spendView(totals, company.currency, currency);
-  const { adCurrency, adSpend, showBoth } = view;
+  // Расход показываем в валюте, выбранной в настройках; вторая идёт подписью.
+  const view = moneyView(company.currency, currency, totals.sourceCurrency);
+  const { adCurrency, otherCurrency, showBoth } = view;
+  const adSpend = view.spendOf(totals);
+  const otherSpend = view.otherSpendOf(totals);
   const adCostPerLead = totals.conversions ? adSpend / totals.conversions : 0;
   const adCpc = totals.clicks ? adSpend / totals.clicks : 0;
 
-  // Та же сумма во второй валюте — она идёт мелкой подписью под крупной.
-  const otherCurrency = view.fromSource ? currency : (totals.sourceCurrency ?? currency);
-  const otherSpend = view.fromSource ? totals.spend : (totals.spendSource ?? 0);
-
   /** Расход строки в той же валюте, что и заголовок колонки. */
-  const adMoney = (row: { spend: number; spendSource: number | null }) =>
-    view.fromSource ? (row.spendSource ?? 0) : row.spend;
+  const adMoney = (row: { spend: number; spendSource: number | null }) => view.spendOf(row);
 
   if (accounts.length === 0 && campaigns.length === 0) {
     return (
@@ -329,34 +325,4 @@ export default async function AdsPage({
       </PageBody>
     </>
   );
-}
-
-/**
- * В какой валюте показывать расход и сколько это во второй.
- *
- * Выбранная валюта совпала с валютой кабинета — показываем исходные суммы:
- * их директор и сверяет с Ads Manager. Иначе показываем пересчитанные.
- * Вторую валюту подписываем всегда, чтобы не переключать страницу ради неё.
- */
-function spendView(
-  totals: { spend: number; spendSource: number | null; sourceCurrency: string | null },
-  chosen: string,
-  salesCurrency: string,
-): {
-  adCurrency: string;
-  adSpend: number;
-  fromSource: boolean;
-  showBoth: boolean;
-} {
-  const fromSource =
-    totals.sourceCurrency !== null &&
-    totals.spendSource !== null &&
-    chosen === totals.sourceCurrency;
-
-  return {
-    adCurrency: fromSource ? chosen : salesCurrency,
-    adSpend: fromSource ? (totals.spendSource ?? 0) : totals.spend,
-    fromSource,
-    showBoth: totals.sourceCurrency !== null && totals.sourceCurrency !== salesCurrency,
-  };
 }

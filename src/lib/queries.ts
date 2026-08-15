@@ -152,6 +152,25 @@ export async function getCurrencyNote(
   return { source, target: companyCurrency, rate, date: latest.date };
 }
 
+/**
+ * Валюта рекламного кабинета компании.
+ *
+ * null, если кабинета нет или их несколько в разных валютах: складывать
+ * доллары с евро нельзя, и тогда честнее показывать всё в валюте продаж.
+ */
+export async function getAdSpendCurrency(companyId: string): Promise<string | null> {
+  const supabase = await createServerSupabase();
+
+  const { data } = await supabase
+    .from('ad_accounts')
+    .select('currency')
+    .eq('company_id', companyId)
+    .not('currency', 'is', null);
+
+  const codes = new Set((data ?? []).map((row) => row.currency).filter(Boolean));
+  return codes.size === 1 ? (codes.values().next().value ?? null) : null;
+}
+
 export type CreativePerformance = PerformanceSummary & {
   id: string;
   name: string;

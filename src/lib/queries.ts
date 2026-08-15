@@ -23,7 +23,13 @@ import { createServerSupabase } from '@/lib/supabase/server';
  */
 
 /** Строка расхода: сумма, её валюта и день, по курсу которого считаем. */
-type SpendRow = { spend: number | string; date: string; currency?: string | null };
+type SpendRow = {
+  spend: number | string;
+  date: string;
+  currency?: string | null;
+  /** Сумма до пересчёта — в валюте кабинета. Проставляется при конверсии. */
+  spend_source?: number;
+};
 
 /**
  * Приводит расход рекламного кабинета к валюте компании.
@@ -36,7 +42,7 @@ async function toCompanyCurrency<T extends SpendRow>(
   supabase: Awaited<ReturnType<typeof createServerSupabase>>,
   companyId: string,
   rows: T[],
-): Promise<T[]> {
+): Promise<(T & { spend_source?: number })[]> {
   if (rows.length === 0) return rows;
 
   const { data: company } = await supabase
@@ -58,10 +64,17 @@ async function toCompanyCurrency<T extends SpendRow>(
 
   const lookup = createRateLookup(rates ?? []);
 
+  // Исходную сумму сохраняем рядом: расход директор сверяет с рекламным
+  // кабинетом, а тот считает в своей валюте. Показать только пересчёт значит
+  // заставить его каждый раз делить в уме.
   return rows.map((row) => {
     const source = row.currency;
     if (!source || source === target) return row;
-    return { ...row, spend: lookup.convert(Number(row.spend), source, target, row.date) };
+    return {
+      ...row,
+      spend: lookup.convert(Number(row.spend), source, target, row.date),
+      spend_source: Number(row.spend),
+    };
   });
 }
 
@@ -600,6 +613,8 @@ export type AdBreakdownRow = {
   subtitle: string | null;
   status: string | null;
   spend: number;
+  /** Тот же расход в валюте кабинета — null, когда валюты совпадают. */
+  spendSource: number | null;
   impressions: number;
   clicks: number;
   /** Заявки с сайта и начатые переписки вместе: и то и другое — обращения. */
@@ -617,6 +632,12 @@ export type AdBreakdown = {
     costPerConversion: number;
     ctr: number;
     cpc: number;
+    /**
+     * Тот же расход в валюте рекламного кабинета — с ним директор сверяется
+     * с Ads Manager. null, когда кабинет и отчёт считают одинаково.
+     */
+    spendSource: number | null;
+    sourceCurrency: string | null;
     /** Из CRM: заполняется, когда продажи начинают отмечать в кабинете. */
     revenue: number;
     sales: number;
@@ -700,12 +721,21 @@ export async function getAdBreakdown(
     campaign_id: string | null;
     date: string;
     spend: number;
+    /** Расход до пересчёта — есть только когда валюты разные. */
+    spend_source?: number;
     impressions: number;
     clicks: number;
     leads: number;
   };
 
-  const empty = () => ({ spend: 0, impressions: 0, clicks: 0, conversions: 0, days: new Set<string>() });
+  const empty = () => ({
+    spend: 0,
+    spendSource: 0,
+    impressions: 0,
+    clicks: 0,
+    conversions: 0,
+    days: new Set<string>(),
+  });
   type Bucket = ReturnType<typeof empty>;
 
   const byCampaign = new Map<string, Bucket>();
@@ -718,6 +748,7 @@ export async function getAdBreakdown(
       map.set(key, bucket);
     }
     bucket.spend += Number(row.spend);
+    bucket.spendSource += Number(row.spend_source ?? 0);
     bucket.impressions += Number(row.impressions);
     bucket.clicks += Number(row.clicks);
     bucket.conversions += Number(row.leads);
@@ -749,6 +780,7 @@ export async function getAdBreakdown(
     subtitle,
     status,
     spend: bucket.spend,
+    spendSource: bucket.spendSource || null,
     impressions: bucket.impressions,
     clicks: bucket.clicks,
     conversions: bucket.conversions,
@@ -780,6 +812,18 @@ export async function getAdBreakdown(
   // Итоги считаем по тем же пересчитанным строкам, что и разбивку: иначе
   // карточки наверху и таблицы под ними разошлись бы в валюте.
   const spend = sum(spendRows, (row) => Number(row.spend));
+  // Расход глазами рекламного кабинета: суммируем то, что было до пересчёта.
+  // Складываем только одну валюту: два кабинета в разных валютах в одну сумму
+  // не сложить, и тогда честнее показать всё в валюте компании.
+  const sourceCurrency =
+    spendRows.find((row) => row.spend_source !== undefined)?.currency ?? null;
+  const mixed = spendRows.some(
+    (row) => row.spend_source !== undefined && row.currency !== sourceCurrency,
+  );
+  const spendSource = mixed
+    ? 0
+    : sum(spendRows, (row) => Number(row.spend_source ?? 0));
+
   const impressions = sum(spendRows, (row) => Number(row.impressions));
   const clicks = sum(spendRows, (row) => Number(row.clicks));
   const conversions = sum(spendRows, (row) => Number(row.leads));
@@ -800,6 +844,8 @@ export async function getAdBreakdown(
       costPerConversion: conversions ? spend / conversions : 0,
       ctr: impressions ? (clicks / impressions) * 100 : 0,
       cpc: clicks ? spend / clicks : 0,
+      spendSource: spendSource || null,
+      sourceCurrency: spendSource ? sourceCurrency : null,
       revenue,
       sales: salesCount,
       roas: spend ? revenue / spend : 0,

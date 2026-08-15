@@ -31,23 +31,28 @@ import { CampaignToggle } from './campaign-toggle';
 
 export const metadata: Metadata = { title: 'Реклама' };
 
-const CAMPAIGN_COLUMNS = [
+/**
+ * Валюту выносим в шапку колонки, а не повторяем в каждой ячейке: расход
+ * живёт в валюте кабинета, выручка — в валюте компании, и столбец из сотни
+ * значков читать невозможно.
+ */
+const campaignColumns = (ad: string, own: string) => [
   { key: 'name', label: 'Кампания' },
   { key: 'number', label: 'Номер' },
   { key: 'status', label: 'Статус' },
-  { key: 'spend', label: 'Расход', align: 'right' as const },
+  { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
   { key: 'conversions', label: 'Лиды', align: 'right' as const },
-  { key: 'cost', label: 'Цена', align: 'right' as const },
-  { key: 'revenue', label: 'Выручка', align: 'right' as const },
+  { key: 'cost', label: `Цена лида, ${ad}`, align: 'right' as const },
+  { key: 'revenue', label: `Выручка, ${own}`, align: 'right' as const },
   { key: 'roas', label: 'ROAS', align: 'right' as const },
   { key: 'counted', label: 'В отчёте', align: 'right' as const },
 ];
 
-const NUMBER_COLUMNS = [
+const numberColumns = (ad: string) => [
   { key: 'number', label: 'Номер WhatsApp' },
-  { key: 'spend', label: 'Расход', align: 'right' as const },
+  { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
   { key: 'conversions', label: 'Лиды', align: 'right' as const },
-  { key: 'cost', label: 'Цена лида', align: 'right' as const },
+  { key: 'cost', label: `Цена лида, ${ad}`, align: 'right' as const },
   { key: 'share', label: 'Доля расхода', align: 'right' as const },
 ];
 
@@ -75,6 +80,19 @@ export default async function AdsPage({
 
   const { totals } = breakdown;
 
+  // Расход директор сверяет с рекламным кабинетом, поэтому крупно показываем
+  // его валюту, а пересчёт в валюту компании уводим в подпись. Выручка и
+  // прибыль остаются в валюте компании: это деньги бизнеса, а не площадки.
+  const inAccountCurrency = totals.sourceCurrency !== null && totals.spendSource !== null;
+  const adCurrency = inAccountCurrency ? totals.sourceCurrency! : currency;
+  const adSpend = inAccountCurrency ? totals.spendSource! : totals.spend;
+  const adCostPerLead = totals.conversions ? adSpend / totals.conversions : 0;
+  const adCpc = totals.clicks ? adSpend / totals.clicks : 0;
+
+  /** Расход строки в той же валюте, что и заголовок колонки. */
+  const adMoney = (row: { spend: number; spendSource: number | null }) =>
+    inAccountCurrency ? (row.spendSource ?? 0) : row.spend;
+
   if (accounts.length === 0 && campaigns.length === 0) {
     return (
       <>
@@ -101,7 +119,7 @@ export default async function AdsPage({
         title="Реклама"
         description={
           currencyNote
-            ? `Сколько потратили, сколько лидов получили и почём вышел один. Кабинет считает в ${currencySymbol(currencyNote.source)}, отчёт — в ${currencySymbol(currencyNote.target)} по курсу Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
+            ? `Расход и цена лида — в ${currencySymbol(currencyNote.source)}, как в рекламном кабинете; в ${currencySymbol(currencyNote.target)} они подписаны ниже. Выручка и прибыль — только в ${currencySymbol(currencyNote.target)}. Курс Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
             : 'Сколько потратили, сколько лидов получили и почём вышел один.'
         }
         action={
@@ -116,8 +134,12 @@ export default async function AdsPage({
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatTile
             label="Расход"
-            value={formatMoney(totals.spend, { currency })}
-            hint={`За ${range.label}`}
+            value={formatMoney(adSpend, { currency: adCurrency })}
+            hint={
+              inAccountCurrency
+                ? `${formatMoney(totals.spend, { currency })} · за ${range.label}`
+                : `За ${range.label}`
+            }
           />
           <StatTile
             label="Лиды"
@@ -126,14 +148,18 @@ export default async function AdsPage({
           />
           <StatTile
             label="Цена лида"
-            value={formatMoney(totals.costPerConversion, { currency })}
-            hint="Расход ÷ количество лидов"
+            value={formatMoney(adCostPerLead, { currency: adCurrency })}
+            hint={
+              inAccountCurrency
+                ? `${formatMoney(totals.costPerConversion, { currency })} · расход ÷ лиды`
+                : 'Расход ÷ количество лидов'
+            }
             accent
           />
           <StatTile
             label="Клики"
             value={formatNumber(totals.clicks)}
-            hint={`CTR ${formatPercent(totals.ctr, 2)} · CPC ${formatMoney(totals.cpc, { currency })}`}
+            hint={`CTR ${formatPercent(totals.ctr, 2)} · CPC ${formatMoney(adCpc, { currency: adCurrency })}`}
           />
           <StatTile
             label="Выручка"
@@ -168,7 +194,7 @@ export default async function AdsPage({
               title="Номера WhatsApp"
               subtitle="На какой номер сколько людей написало и во сколько это обошлось"
             />
-            <TableShell columns={NUMBER_COLUMNS} minWidth={720}>
+            <TableShell columns={numberColumns(currencySymbol(adCurrency))} minWidth={720}>
               {breakdown.numbers.map((row) => (
                 <tr key={row.key} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="tabular font-medium text-ink">
@@ -180,13 +206,13 @@ export default async function AdsPage({
                     ) : null}
                   </Td>
                   <Td align="right" className="tabular text-ink">
-                    {formatMoney(row.spend, { currency })}
+                    {formatNumber(adMoney(row), 2)}
                   </Td>
                   <Td align="right" className="tabular text-ink">
                     {formatNumber(row.conversions)}
                   </Td>
                   <Td align="right" className="tabular font-medium text-ink">
-                    {row.conversions ? formatMoney(row.costPerConversion, { currency }) : '—'}
+                    {row.conversions ? formatNumber(adMoney(row) / row.conversions, 2) : '—'}
                   </Td>
                   <Td last align="right" className="tabular text-muted">
                     {totals.spend ? formatPercent((row.spend / totals.spend) * 100, 0) : '—'}
@@ -211,7 +237,10 @@ export default async function AdsPage({
               Возьмите период шире — например «Последние 30 дней».
             </p>
           ) : (
-            <TableShell columns={CAMPAIGN_COLUMNS} minWidth={1040}>
+            <TableShell
+              columns={campaignColumns(currencySymbol(adCurrency), currencySymbol(currency))}
+              minWidth={1040}
+            >
               {breakdown.campaigns.map((row) => {
                 const status = row.status ? CAMPAIGN_STATUS[row.status] : null;
                 return (
@@ -232,16 +261,16 @@ export default async function AdsPage({
                     <Td className="tabular text-ink-soft">{row.subtitle ?? '—'}</Td>
                     <Td>{status ? <Badge tone={status.tone}>{status.label}</Badge> : '—'}</Td>
                     <Td align="right" className="tabular text-ink">
-                      {formatMoney(row.spend, { currency })}
+                      {formatNumber(adMoney(row), 2)}
                     </Td>
                     <Td align="right" className="tabular text-ink">
                       {formatNumber(row.conversions)}
                     </Td>
                     <Td align="right" className="tabular font-medium text-ink">
-                      {row.conversions ? formatMoney(row.costPerConversion, { currency }) : '—'}
+                      {row.conversions ? formatNumber(adMoney(row) / row.conversions, 2) : '—'}
                     </Td>
                     <Td align="right" className="tabular text-ink-soft">
-                      {row.revenue ? formatMoney(row.revenue, { currency }) : '—'}
+                      {row.revenue ? formatNumber(row.revenue, 0) : '—'}
                     </Td>
                     <Td align="right" className="tabular text-ink-soft">
                       {row.roas ? `×${formatRatio(row.roas)}` : '—'}

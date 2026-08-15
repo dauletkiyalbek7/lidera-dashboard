@@ -138,6 +138,8 @@ export type AdAccountRow = Timestamps & {
   status: 'connected' | 'disconnected' | 'error';
   /** Валюта рекламного кабинета: в ней приходит расход. */
   currency: string | null;
+  /** Пояс кабинета: в его сутках Meta отдаёт дневную статистику. */
+  timezone: string | null;
 }
 
 export type CampaignRow = Timestamps & {

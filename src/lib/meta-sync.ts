@@ -1,6 +1,7 @@
 import 'server-only';
 
 import { syncExchangeRates } from '@/lib/currency';
+import { DEFAULT_TIME_ZONE, instantInZone, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 
 /**
@@ -43,6 +44,38 @@ const LEAD_ACTIONS = [
 
 /** Валюты, которые платформа умеет пересчитывать (курсы Нацбанка РК). */
 const SUPPORTED_CURRENCIES = ['KZT', 'USD', 'EUR', 'RUB'];
+
+/**
+ * Разбивка по часам — в поясе рекламного кабинета.
+ *
+ * Именно она позволяет разложить сутки кабинета по суткам компании: иначе
+ * день приходит одним куском и разрезать его нечем.
+ */
+const HOURLY_BREAKDOWN = 'hourly_stats_aggregated_by_advertiser_time_zone';
+
+/**
+ * День компании, на который приходится строка статистики.
+ *
+ * Meta отдаёт час в виде «23:00:00 - 23:59:59» по времени кабинета. Переводим
+ * его в абсолютное время, а оттуда — в дату компании. Кабинет в Asia/Omsk и
+ * компания в Asia/Almaty расходятся на час: расход за 23:00 по Алматы Meta
+ * относит к следующему дню, а заявки того же часа у нас лежат в текущем.
+ *
+ * Если пояса не известны или совпадают, день остаётся как пришёл.
+ */
+function companyDate(
+  row: MetaInsight,
+  accountTimeZone: string | null,
+  companyTimeZone: string,
+): string {
+  const hour = row[HOURLY_BREAKDOWN]?.slice(0, 5);
+  if (!hour || !accountTimeZone || accountTimeZone === companyTimeZone) {
+    return row.date_start;
+  }
+
+  const moment = instantInZone(row.date_start, hour, accountTimeZone);
+  return moment ? zonedIsoDate(moment, companyTimeZone) : row.date_start;
+}
 
 export type MetaSyncResult = {
   account: string;
@@ -231,23 +264,41 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   const since = isoDate(new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000));
   const until = isoDate(new Date());
 
-  // --- 0. Валюта кабинета -------------------------------------------------
-  // Расход приходит в ней, а не в валюте компании: доллары нельзя записать в
-  // отчёт тенге, не пересчитав по курсу.
-  const [profile] = await graph<{ currency?: string }>(
-    `${GRAPH}/${actId}?fields=currency&access_token=${token}`,
+  // --- 0. Валюта и часовой пояс кабинета ----------------------------------
+  // Валюта: расход приходит в ней, а не в валюте компании — доллары нельзя
+  // записать в отчёт тенге, не пересчитав по курсу.
+  //
+  // Пояс: Meta считает сутки по кабинету. У кабинета в Asia/Omsk (+6) день
+  // начинается в 23:00 по Алматы, и расход за этот час попадал бы в отчёт
+  // следующего дня, а пришедшие в тот же час заявки — в отчёт текущего.
+  // Поменять пояс кабинета в Meta нельзя, поэтому приводим цифры мы.
+  const [profile] = await graph<{ currency?: string; timezone_name?: string }>(
+    `${GRAPH}/${actId}?fields=currency,timezone_name&access_token=${token}`,
     { single: true },
   );
   const accountCurrency = SUPPORTED_CURRENCIES.includes(profile?.currency ?? '')
     ? (profile?.currency as string)
     : null;
 
-  if (accountCurrency) {
+  const accountTimeZone = profile?.timezone_name ?? null;
+
+  if (accountCurrency || accountTimeZone) {
     await supabase
       .from('ad_accounts')
-      .update({ currency: accountCurrency })
+      .update({
+        ...(accountCurrency ? { currency: accountCurrency } : {}),
+        ...(accountTimeZone ? { timezone: accountTimeZone } : {}),
+      })
       .eq('id', account.id);
   }
+
+  const { data: companyRow } = await supabase
+    .from('companies')
+    .select('timezone')
+    .eq('id', account.company_id)
+    .maybeSingle();
+
+  const companyTimeZone = companyRow?.timezone ?? DEFAULT_TIME_ZONE;
 
   // --- 1. Номера WhatsApp: они живут в настройках групп объявлений ---------
   const numberByCampaign = new Map<string, string>();
@@ -294,28 +345,56 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     }
   }
 
-  // --- 3. Дневная статистика по объявлениям -------------------------------
+  // --- 3. Статистика по объявлениям ---------------------------------------
   // Идём на уровень объявления: только там видно, какой креатив принёс
   // переписки. Период режем неделями — за месяц разом крупный кабинет
   // отвечает отказом «слишком много данных».
-  const weeks = await Promise.all(
-    weekWindows(since, until).map((window) =>
-      graph<MetaInsight>(
-        `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
-          `&fields=ad_id,campaign_id,spend,impressions,reach,clicks,ctr,cpc,cpm,actions,date_start,` +
-          `video_play_actions,video_p100_watched_actions,video_avg_time_watched_actions` +
-          `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
-          `&limit=100&access_token=${token}`,
+  //
+  // Запросов два, и это не дублирование:
+  //   почасовой — то, что складывается (расход, показы, клики, заявки).
+  //     Разбивка по часам и позволяет разложить сутки кабинета по нашим;
+  //   дневной — охват и среднее время просмотра. Охват это число людей, а
+  //     не сумма: один и тот же человек виден в нескольких часах, и сложение
+  //     часов дало бы цифру больше правды. Такие метрики оставляем дневными.
+  const windows = weekWindows(since, until);
+
+  const [hourlyPages, dailyPages] = await Promise.all([
+    Promise.all(
+      windows.map((window) =>
+        graph<MetaInsight>(
+          `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
+            `&breakdowns=${HOURLY_BREAKDOWN}` +
+            `&fields=ad_id,campaign_id,spend,impressions,clicks,actions,date_start,` +
+            `video_play_actions,video_p100_watched_actions` +
+            `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
+            `&limit=500&access_token=${token}`,
+        ),
       ),
     ),
-  );
-  const insights = weeks.flat();
+    Promise.all(
+      windows.map((window) =>
+        graph<MetaInsight>(
+          `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
+            `&fields=ad_id,campaign_id,reach,date_start,video_avg_time_watched_actions` +
+            `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
+            `&limit=100&access_token=${token}`,
+        ),
+      ),
+    ),
+  ]);
+
+  const insights = hourlyPages.flat();
+  const dailyInsights = dailyPages.flat();
 
   // --- 4. Объявления и креативы -------------------------------------------
   // Забираем только те объявления, что за период работали: в кабинете их
   // могут быть тысячи, и тянуть все — верный способ получить отказ.
   const workingAdIds = Array.from(
-    new Set(insights.map((row) => row.ad_id).filter((id): id is string => Boolean(id))),
+    new Set(
+      [...insights, ...dailyInsights]
+        .map((row) => row.ad_id)
+        .filter((id): id is string => Boolean(id)),
+    ),
   );
 
   const ads = await adsByIds<MetaAd>(
@@ -401,8 +480,16 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
 
+    // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
+    // разбивку) остаётся на своём дне — это лучше, чем потерять её.
+    const date = companyDate(row, accountTimeZone, companyTimeZone);
+    // Крайние дни собрались бы из одного часа: остальные их часы лежат за
+    // границей запрошенного окна. Такой огрызок в отчёт не пускаем — заодно
+    // это держит записанные дни внутри окна, которое ниже перезаписывается.
+    if (date < since || date > until) continue;
+
     const creativeId = row.ad_id ? (creativeIdByAd.get(row.ad_id) ?? null) : null;
-    const key = `${creativeId ?? 'нет'}|${campaignId}|${row.date_start}`;
+    const key = `${creativeId ?? 'нет'}|${campaignId}|${date}`;
 
     const spend = Number(row.spend ?? 0);
     // В одном кабинете рядом живут кампании на сайт и кампании в переписки:
@@ -410,7 +497,6 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     // наличии переписок заявки с сайта терялись целиком.
     const plays = actionValue(row.video_play_actions, ['video_view']);
     const completions = actionValue(row.video_p100_watched_actions, ['video_view']);
-    const avgSeconds = actionValue(row.video_avg_time_watched_actions, ['video_view']);
 
     const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
     const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
@@ -421,7 +507,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
       campaign_id: campaignId,
       creative_id: creativeId,
       platform: 'meta' as const,
-      date: row.date_start,
+      date,
       spend: 0,
       impressions: 0,
       reach: 0,
@@ -438,16 +524,31 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
 
     current.spend += spend;
     current.impressions += Number(row.impressions ?? 0);
-    current.reach += Number(row.reach ?? 0);
     current.clicks += Number(row.clicks ?? 0);
     current.leads += leads;
     current.video_plays += plays;
     current.video_completions += completions;
-    // Среднее время у Meta уже усреднено по дню: берём наибольшее из строк,
-    // складывать секунды разных объявлений бессмысленно.
-    current.video_avg_seconds = Math.max(current.video_avg_seconds, avgSeconds);
 
     merged.set(key, current);
+  }
+
+  // Охват и среднее время просмотра — из дневного запроса. По часам их не
+  // разложить, поэтому день кабинета кладём на одноимённый наш день: из его
+  // 24 часов 23 приходятся именно на него.
+  for (const row of dailyInsights) {
+    const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
+    if (!campaignId) continue;
+
+    const creativeId = row.ad_id ? (creativeIdByAd.get(row.ad_id) ?? null) : null;
+    const current = merged.get(`${creativeId ?? 'нет'}|${campaignId}|${row.date_start}`);
+    if (!current) continue;
+
+    current.reach += Number(row.reach ?? 0);
+    // Секунды уже усреднены Meta: наибольшее из объявлений, а не сумма.
+    current.video_avg_seconds = Math.max(
+      current.video_avg_seconds,
+      actionValue(row.video_avg_time_watched_actions, ['video_view']),
+    );
   }
 
   const rows = Array.from(merged.values()).map((row) => ({
@@ -551,6 +652,8 @@ type MetaInsight = {
   video_play_actions?: { action_type: string; value: string }[];
   video_p100_watched_actions?: { action_type: string; value: string }[];
   video_avg_time_watched_actions?: { action_type: string; value: string }[];
+  /** Час кабинета в виде «23:00:00 - 23:59:59» — приходит с разбивкой. */
+  [HOURLY_BREAKDOWN]?: string;
 };
 
 /** Сумма нужных действий из массива actions. Первое совпадение и есть результат. */

@@ -810,7 +810,12 @@ async function pickTime(
     .update({ starts_at: startsAt.toISOString() })
     .eq('id', trial.id);
 
-  const sellers = await sellerAvailability(supabase, employee.company_id, startsAt);
+  const sellers = await sellerAvailability(
+    supabase,
+    employee.company_id,
+    startsAt,
+    trial.id,
+  );
 
   if (sellers.length === 0) {
     return sendMessage(
@@ -849,7 +854,12 @@ async function pickSeller(
   if (!trial?.starts_at) return answerCallback(query.id, 'Сначала выберите время.');
 
   const startsAt = new Date(trial.starts_at);
-  const sellers = await sellerAvailability(supabase, employee.company_id, startsAt);
+  const sellers = await sellerAvailability(
+    supabase,
+    employee.company_id,
+    startsAt,
+    trial.id,
+  );
   const seller = sellers[Number(index)];
 
   if (!seller) return answerCallback(query.id, 'Продажник не найден.');
@@ -870,21 +880,28 @@ async function pickSeller(
     .update({ assigned_to: seller.id, assigned_at: new Date().toISOString() })
     .eq('id', trial.id);
 
-  if (trial.lead_id) {
-    await notifyTrialBooked(
-      supabase,
-      employee.company_id,
-      trial.lead_id,
-      startsAt,
-      seller.id,
-      timeZone,
-    );
-  }
+  const sent = trial.lead_id
+    ? await notifyTrialBooked(
+        supabase,
+        employee.company_id,
+        trial.lead_id,
+        startsAt,
+        seller.id,
+        timeZone,
+      )
+    : { delivered: false, reason: 'у записи нет клиента' };
 
   await answerCallback(query.id, 'Урок записан');
+
+  // Молча терять уведомление нельзя: менеджер уйдёт уверенным, что продажник
+  // предупреждён, а тот об уроке не узнает.
+  const note = sent.delivered
+    ? `Продажник ${escapeHtml(seller.fullName)} предупреждён.`
+    : `⚠️ ${escapeHtml(seller.fullName)} не получил уведомление: ${sent.reason}. Сообщите ему сами.`;
+
   await sendMessage(
     chatId,
-    `✅ Урок записан: ${formatTrialTime(startsAt, timeZone)}, проводит ${escapeHtml(seller.fullName)}.`,
+    `✅ Урок записан: ${formatTrialTime(startsAt, timeZone)}, проводит ${escapeHtml(seller.fullName)}.\n${note}`,
   );
 
   return listLeads(chatId, employee);

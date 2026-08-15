@@ -90,7 +90,7 @@ export async function notifyTrialBooked(
   startsAt: Date,
   sellerId: string,
   timeZone: string,
-): Promise<void> {
+): Promise<{ delivered: boolean; reason?: string }> {
   const [{ data: seller }, { data: lead }] = await Promise.all([
     supabase
       .from('employees')
@@ -105,7 +105,10 @@ export async function notifyTrialBooked(
       .maybeSingle(),
   ]);
 
-  if (!seller?.telegram_user_id || !lead) return;
+  if (!lead) return { delivered: false, reason: 'заявка не найдена' };
+  if (!seller?.telegram_user_id) {
+    return { delivered: false, reason: 'у продажника не подключён Telegram' };
+  }
 
   const { data: creative } = lead.creative_id
     ? await supabase
@@ -125,7 +128,7 @@ export async function notifyTrialBooked(
     .limit(1)
     .maybeSingle();
 
-  if (!trial) return;
+  if (!trial) return { delivered: false, reason: 'запись урока не найдена' };
 
   await sendMessage(
     seller.telegram_user_id,
@@ -138,12 +141,20 @@ export async function notifyTrialBooked(
     ),
     { inline: trialButtons(trial.id) },
   );
+
+  return { delivered: true };
 }
 
 export async function sellerAvailability(
   supabase: Admin,
   companyId: string,
   startsAt: Date,
+  /**
+   * Урок, который сейчас записываем. Сам себя он занятым делать не должен:
+   * иначе после первого назначения ни продажника, ни время уже не поменять —
+   * список показал бы всех занятыми.
+   */
+  exceptTrialId?: string,
 ): Promise<{ id: string; fullName: string; busy: boolean; busyAt: string | null }[]> {
   const from = new Date(startsAt.getTime() - TRIAL_DURATION_MINUTES * 60 * 1000);
   const to = new Date(startsAt.getTime() + TRIAL_DURATION_MINUTES * 60 * 1000);
@@ -158,7 +169,7 @@ export async function sellerAvailability(
       .order('full_name'),
     supabase
       .from('trials')
-      .select('assigned_to, starts_at')
+      .select('id, assigned_to, starts_at')
       .eq('company_id', companyId)
       .eq('status', 'scheduled')
       .not('starts_at', 'is', null)
@@ -168,6 +179,7 @@ export async function sellerAvailability(
 
   const busy = new Map<string, string>();
   for (const trial of booked ?? []) {
+    if (trial.id === exceptTrialId) continue;
     if (trial.assigned_to && trial.starts_at) busy.set(trial.assigned_to, trial.starts_at);
   }
 

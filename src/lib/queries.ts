@@ -917,6 +917,8 @@ export type LeadListItem = {
   creativeId: string | null;
   assignedTo: string | null;
   assignedName: string | null;
+  /** Сумма оплаченной продажи, если чек уже проведён. */
+  saleAmount: number | null;
 };
 
 export type LeadStats = {
@@ -996,6 +998,25 @@ export async function getLeads(
   );
   const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
 
+  // Продажи по этим заявкам: чек мог быть проведён продажником в боте, и
+  // тогда предлагать «оформить продажу» второй раз нельзя — так и появляются
+  // задвоенные суммы в отчёте.
+  const leadIds = (leads ?? []).map((lead) => lead.id);
+  const { data: sales } = leadIds.length
+    ? await supabase
+        .from('sales')
+        .select('lead_id, amount')
+        .eq('company_id', companyId)
+        .eq('status', 'paid')
+        .in('lead_id', leadIds)
+    : { data: [] as { lead_id: string | null; amount: number }[] };
+
+  const saleByLead = new Map<string, number>();
+  for (const sale of sales ?? []) {
+    if (!sale.lead_id) continue;
+    saleByLead.set(sale.lead_id, (saleByLead.get(sale.lead_id) ?? 0) + Number(sale.amount));
+  }
+
   return (leads ?? []).map((lead) => ({
     id: lead.id,
     name: lead.name,
@@ -1008,6 +1029,7 @@ export async function getLeads(
     creativeId: lead.creative_id ?? null,
     assignedTo: lead.assigned_to,
     assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
+    saleAmount: saleByLead.get(lead.id) ?? null,
   }));
 }
 

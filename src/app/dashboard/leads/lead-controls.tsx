@@ -16,6 +16,7 @@ import { assignLead } from '@/app/dashboard/team/actions';
 import { Field, FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import { IconCheck, IconPlus } from '@/components/ui/icons';
+import { currencySymbol, formatMoney } from '@/lib/format';
 import { Modal, Select } from '@/components/ui/modal';
 import { LEAD_STATUS, leadStatusesFor } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
@@ -235,12 +236,30 @@ export function LeadRowActions({
   leadId,
   leadName,
   funnelType,
+  saleAmount,
+  currency,
 }: {
   leadId: string;
   leadName: string;
   funnelType: FunnelType;
+  /** Сумма уже проведённой продажи. null — чека ещё нет. */
+  saleAmount: number | null;
+  currency: string;
 }) {
   const [dialog, setDialog] = useState<'sale' | 'trial' | null>(null);
+
+  // Чек уже проведён — обычно продажником в боте. Вместо кнопки показываем
+  // сумму: предложить «оформить продажу» второй раз значит предложить
+  // задвоить выручку, и рано или поздно кто-нибудь согласится.
+  if (saleAmount !== null) {
+    return (
+      <div className="flex items-center justify-end gap-1.5">
+        <span className="tabular text-[13px] font-medium text-positive">
+          {formatMoney(saleAmount, { currency })}
+        </span>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -256,7 +275,12 @@ export function LeadRowActions({
       </div>
 
       {dialog === 'sale' ? (
-        <SaleDialog onClose={() => setDialog(null)} leadId={leadId} leadName={leadName} />
+        <SaleDialog
+          onClose={() => setDialog(null)}
+          leadId={leadId}
+          leadName={leadName}
+          currency={currency}
+        />
       ) : null}
 
       {dialog === 'trial' ? (
@@ -270,10 +294,12 @@ function SaleDialog({
   onClose,
   leadId,
   leadName,
+  currency,
 }: {
   onClose: () => void;
   leadId: string;
   leadName: string;
+  currency: string;
 }) {
   const [state, formAction] = useActionState(registerSale, {} as CrmState);
 
@@ -291,7 +317,7 @@ function SaleDialog({
           <input type="hidden" name="leadId" value={leadId} />
           <Field label="Товар или услуга" name="product" placeholder="Название продукта" />
           <Field
-            label="Сумма, ₸"
+            label={`Сумма, ${currencySymbol(currency)}`}
             name="amount"
             type="number"
             min={0}

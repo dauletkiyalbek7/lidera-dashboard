@@ -70,13 +70,12 @@ export async function updateCompany(
 
 const distributionSchema = z.object({
   auto_assign: z.boolean(),
-  max_open_leads: z.coerce.number().int().min(1, 'Минимум 1').max(200, 'Максимум 200'),
   sla_minutes: z.coerce.number().int().min(1, 'Минимум 1').max(1440, 'Максимум 1440'),
 });
 
 /**
- * Настройки авто-раздачи. Три числа, от которых зависит поведение очереди,
- * должны быть в руках директора: в разных нишах и «быстро» значит разное.
+ * Настройки авто-раздачи. От них зависит поведение очереди, поэтому они в
+ * руках директора: в разных нишах и «быстро» значит разное.
  */
 export async function updateDistribution(
   _prevState: SettingsState,
@@ -92,7 +91,6 @@ export async function updateDistribution(
 
   const parsed = distributionSchema.safeParse({
     auto_assign: formData.get('auto_assign') === 'on',
-    max_open_leads: formData.get('max_open_leads'),
     sla_minutes: formData.get('sla_minutes'),
   });
 

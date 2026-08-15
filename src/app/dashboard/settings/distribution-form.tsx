@@ -15,7 +15,7 @@ export function DistributionForm({
   defaults,
   disabled,
 }: {
-  defaults: { auto_assign: boolean; max_open_leads: number; sla_minutes: number };
+  defaults: { auto_assign: boolean; sla_minutes: number };
   disabled: boolean;
 }) {
   const [state, formAction] = useActionState(updateDistribution, {} as SettingsState);
@@ -35,21 +35,11 @@ export function DistributionForm({
               Раздавать лиды автоматически
             </span>
             <span className="mt-0.5 block text-[12.5px] leading-relaxed text-faint">
-              Новый лид уходит наименее загруженному менеджеру, который открыл смену.
-              Если на смене никого нет, лид ждёт в очереди.
+              Лид уходит тому, кто получил меньше всех за смену, и так до её конца —
+              потолка нет. Если на смене никого нет, лид ждёт в очереди.
             </span>
           </span>
         </label>
-
-        <Field
-          label="Лимит лидов на менеджера"
-          name="max_open_leads"
-          type="number"
-          min={1}
-          max={200}
-          defaultValue={String(defaults.max_open_leads)}
-          hint="Сколько активных лидов может висеть на одном человеке одновременно"
-        />
 
         <Field
           label="Время на первое касание, минут"

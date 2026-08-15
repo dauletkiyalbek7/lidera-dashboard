@@ -78,7 +78,6 @@ export default async function SettingsPage() {
               <DistributionForm
                 defaults={{
                   auto_assign: company.auto_assign,
-                  max_open_leads: company.max_open_leads,
                   sla_minutes: company.sla_minutes,
                 }}
                 disabled={profile.role !== 'DIRECTOR'}

@@ -65,7 +65,7 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
   const { data: company } = await supabase
     .from('companies')
     .select(
-      'id, funnel_type, auto_assign, max_open_leads, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
+      'id, funnel_type, auto_assign, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -101,7 +101,6 @@ export async function runDistributionForAll(): Promise<
 type CompanySettings = {
   id: string;
   funnel_type: string;
-  max_open_leads: number;
   shift_mode: string;
   timezone: string;
   work_start_time: string;
@@ -116,14 +115,16 @@ type Candidate = {
   telegram_user_id: number | null;
   /** Сколько лидов выдано за текущую смену — по нему и делим поровну. */
   received: number;
-  /** Сколько активных лидов висит сейчас — по нему работает ограничение. */
-  open: number;
   lastAssignedAt: number;
 };
 
 /**
- * Кому можно отдать лид: активный менеджер с открытой сменой, у которого ещё
- * есть место. Возвращается отсортированным — первый и есть получатель.
+ * Кому можно отдать лид: активный менеджер с открытой сменой. Возвращается
+ * отсортированным — первый и есть получатель.
+ *
+ * Потолка по числу заявок нет: менеджер получает лидов до конца смены.
+ * Ограничение только выглядело заботой — на деле лиды переставали
+ * раздаваться и лежали без ответственного, пока клиент ждал звонка.
  */
 async function eligibleManagers(
   supabase: Admin,
@@ -142,18 +143,12 @@ async function eligibleManagers(
 
   const ids = employees.map((employee) => employee.id);
 
-  const [{ data: openShifts }, { data: activeLeads }, { data: history }] = await Promise.all([
+  const [{ data: openShifts }, { data: history }] = await Promise.all([
     supabase
       .from('shifts')
       .select('employee_id, started_at')
       .in('employee_id', ids)
       .is('ended_at', null),
-    supabase
-      .from('leads')
-      .select('assigned_to')
-      .eq('company_id', company.id)
-      .in('assigned_to', ids)
-      .in('status', ACTIVE_STATUSES),
     supabase
       .from('lead_assignments')
       .select('employee_id, assigned_at')
@@ -166,11 +161,6 @@ async function eligibleManagers(
   const shiftStart = new Map(
     (openShifts ?? []).map((shift) => [shift.employee_id, shift.started_at] as const),
   );
-
-  const open = new Map<string, number>();
-  for (const lead of activeLeads ?? []) {
-    if (lead.assigned_to) open.set(lead.assigned_to, (open.get(lead.assigned_to) ?? 0) + 1);
-  }
 
   // Первая запись по сотруднику — самая свежая: список уже отсортирован.
   const lastAssigned = new Map<string, number>();
@@ -202,10 +192,8 @@ async function eligibleManagers(
       full_name: employee.full_name,
       telegram_user_id: employee.telegram_user_id,
       received: received.get(employee.id) ?? 0,
-      open: open.get(employee.id) ?? 0,
       lastAssignedAt: lastAssigned.get(employee.id) ?? 0,
     }))
-    .filter((employee) => employee.open < company.max_open_leads)
     .sort(byFairness);
 }
 
@@ -258,8 +246,7 @@ async function distributeQueue(supabase: Admin, company: CompanySettings) {
     // Пересортировка на каждом шаге: иначе весь пакет уйдёт одному человеку.
     managers.sort(byFairness);
 
-    const target = managers.find((manager) => manager.open < company.max_open_leads);
-    if (!target) break;
+    const target = managers[0];
 
     const alreadySent = sentTo.get(target.id) ?? 0;
 
@@ -275,7 +262,6 @@ async function distributeQueue(supabase: Admin, company: CompanySettings) {
 
     sentTo.set(target.id, alreadySent + 1);
     target.received += 1;
-    target.open += 1;
     target.lastAssignedAt = Date.now();
     assigned += 1;
   }

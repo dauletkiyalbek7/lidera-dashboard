@@ -8,7 +8,9 @@ import {
   weekdayInZone,
   type ShiftRules,
 } from '@/lib/attendance';
+import { createRateLookup } from '@/lib/currency';
 import { distanceMeters, formatDistance } from '@/lib/geo';
+import { parseSaleAmount } from '@/lib/sale-amount';
 import { runDistribution } from '@/lib/lead-distribution';
 import { instantInZone } from '@/lib/lead-touches';
 import { closeOpenTouches } from '@/lib/touch-runner';
@@ -626,9 +628,14 @@ async function applyTrial(
       .eq('id', employee.id);
 
     await answerCallback(query.id, 'Продажа отмечена');
+    // Валюту не спрашиваем: она одна на компанию и стоит в настройках. Иначе
+    // продажник выбирал бы её на каждой продаже, а ошибётся один раз — и в
+    // отчёте доход разойдётся в сотни раз.
+    const currency = (await companyOf(employee.company_id))?.currency ?? 'KZT';
     return sendMessage(
       chatId,
-      `💰 <b>${name}</b> купил курс.\nНа какую сумму? Отправьте число одним сообщением — например <code>390000</code>.`,
+      `💰 <b>${name}</b> купил курс.\nНа какую сумму? Отправьте число одним сообщением — например <code>390000</code>.\n` +
+        `Считаем в <b>${escapeHtml(currency)}</b>. Платили в другой валюте — напишите её рядом: <code>300$</code>.`,
     );
   }
 
@@ -737,13 +744,13 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
     return sendMessage(chatId, 'Хорошо, сумму не записываем.', { keyboard: KEYBOARD_ON });
   }
 
-  // Пробелы и разделители внутри числа люди ставят по-разному.
-  const amount = Number(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+  const parsed = parseSaleAmount(text);
 
-  if (!Number.isFinite(amount) || amount <= 0) {
+  if (!parsed) {
     return sendMessage(
       chatId,
-      'Не понял сумму. Пришлите число, например <code>390000</code>, или напишите «отмена».',
+      'Не понял сумму. Пришлите число, например <code>390000</code>. ' +
+        'В другой валюте — с её названием: <code>300$</code>. Или напишите «отмена».',
     );
   }
 
@@ -760,15 +767,36 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
   }
 
   const company = await companyOf(employee.company_id);
+  const currency = company?.currency ?? 'KZT';
+  const saleDate = localDate(company?.timezone ?? 'Asia/Almaty');
+
+  // Валюту не назвали — значит валюта компании, та самая, что в настройках.
+  // Назвали — переводим по курсу Нацбанка на день продажи: в отчётах и в
+  // событии для Meta сумма обязана быть в одной валюте, иначе доход
+  // компании складывается из тенге и долларов как из одинаковых чисел.
+  const converted = await toCompanyCurrency(
+    parsed.amount,
+    parsed.currency,
+    currency,
+    saleDate,
+  );
+
+  if (!converted) {
+    return sendMessage(
+      chatId,
+      `Не знаю курс ${escapeHtml(parsed.currency ?? '')} на ${saleDate}. ` +
+        `Пришлите сумму в ${escapeHtml(currency)}.`,
+    );
+  }
 
   const { data: sale } = await supabase
     .from('sales')
     .insert({
       company_id: employee.company_id,
       lead_id: trial.lead_id,
-      amount,
+      amount: converted.amount,
       status: 'paid',
-      sale_date: localDate(company?.timezone ?? 'Asia/Almaty'),
+      sale_date: saleDate,
     })
     .select('id')
     .maybeSingle();
@@ -777,14 +805,53 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
 
   if (!sale) return sendMessage(chatId, 'Не удалось сохранить продажу. Скажите директору.');
 
+  // Пересчёт показываем: продажник должен увидеть, что записалось, а не
+  // узнать о расхождении через неделю из отчёта.
+  const note = converted.rate
+    ? `\n<i>${formatAmount(parsed.amount)} ${escapeHtml(parsed.currency ?? '')} по курсу ${formatAmount(converted.rate)}</i>`
+    : '';
+
   // В Meta событие отсюда не уходит: сначала продажник оценивает клиента, а
   // отправляет его таргетолог. Обучать рекламу на случайном покупателе значит
   // просить её искать таких же.
   return sendMessage(
     chatId,
-    `✅ Продажа записана: <b>${formatAmount(amount)} ${company?.currency ?? 'KZT'}</b>.\n\nКакой это клиент? От этого зависит, отправлять ли покупку в рекламный кабинет.`,
+    `✅ Продажа записана: <b>${formatAmount(converted.amount)} ${escapeHtml(currency)}</b>.${note}\n\nКакой это клиент? От этого зависит, отправлять ли покупку в рекламный кабинет.`,
     { inline: qualityButtons(trial.lead_id) },
   );
+}
+
+/**
+ * Сумма в валюте компании. Курс берём на день продажи — Нацбанк публикует
+ * его каждый рабочий день, и бухгалтерия считает так же.
+ *
+ * null означает «курса нет»: молча записать доллары как тенге нельзя, разница
+ * в отчёте будет в сотни раз.
+ */
+async function toCompanyCurrency(
+  amount: number,
+  from: string | null,
+  to: string,
+  date: string,
+): Promise<{ amount: number; rate: number | null } | null> {
+  if (!from || from === to) return { amount, rate: null };
+
+  const supabase = createAdminSupabase();
+  const { data } = await supabase
+    .from('exchange_rates')
+    .select('date, code, kzt_per_unit')
+    .in('code', [from, to])
+    .lte('date', date)
+    .order('date', { ascending: false })
+    .limit(60);
+
+  const rates = createRateLookup(data ?? []);
+  const perUnit = rates.kztPerUnit(from, date);
+  const targetPerUnit = rates.kztPerUnit(to, date);
+  if (!perUnit || !targetPerUnit) return null;
+
+  const rate = perUnit / targetPerUnit;
+  return { amount: Math.round(amount * rate), rate: Math.round(rate * 100) / 100 };
 }
 
 /** Оценка клиента: её ставит тот, кто с ним разговаривал. */

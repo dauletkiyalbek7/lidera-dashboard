@@ -53,8 +53,11 @@ export function moneyView(
     adCurrency: fromSource ? accountCurrency : salesCurrency,
     otherCurrency: fromSource ? salesCurrency : (accountCurrency ?? salesCurrency),
     showBoth: differ,
-    spendOf: (row) => (fromSource ? (row.spendSource ?? 0) : row.spend),
-    otherSpendOf: (row) => (fromSource ? row.spend : (row.spendSource ?? 0)),
+    // Пустой spendSource означает «пересчёта не было», то есть сумма уже в
+    // валюте кабинета. Подставлять здесь ноль нельзя: раздел молча показал бы
+    // нулевую статистику вместо цифр, что однажды и произошло.
+    spendOf: (row) => (fromSource ? (row.spendSource ?? row.spend) : row.spend),
+    otherSpendOf: (row) => (fromSource ? row.spend : (row.spendSource ?? row.spend)),
   };
 }
 

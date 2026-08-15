@@ -2,6 +2,7 @@ import 'server-only';
 
 import type { TrendPoint } from '@/components/charts/trend-chart';
 import { resolveShiftRules, type ShiftRules } from '@/lib/attendance';
+import { creativeLabel } from '@/lib/creative-label';
 import { createRateLookup } from '@/lib/currency';
 import { countUntouched, isReached, leadStage } from '@/lib/lead-status';
 import { wasHeld } from '@/lib/trial-status';
@@ -13,6 +14,8 @@ import {
   type PerformanceSummary,
 } from '@/lib/metrics';
 import { createServerSupabase } from '@/lib/supabase/server';
+
+export { creativeLabel };
 
 /**
  * Запросы кабинета компании.
@@ -204,8 +207,10 @@ export async function getDashboardData(
         .lte('date', to),
       supabase
         .from('creatives')
-        .select('id, name, platform, format')
-        .eq('company_id', companyId),
+        .select('id, name, label, platform, format, created_at')
+        .eq('company_id', companyId)
+        // Порядок важен: номер в подписи «Видео 7» — это место в списке.
+        .order('created_at'),
       supabase
         .from('trials')
         .select('id, date, status, lead_id')
@@ -317,11 +322,13 @@ export async function getDashboardData(
   }
 
   const creativePerformance: CreativePerformance[] = creatives
-    .map((creative) => {
+    // Подпись короткая, как везде: длинное имя из Ads Manager занимает всю
+    // строку и ничего не говорит — в отчёте от него никакой пользы.
+    .map((creative, index) => {
       const input = perCreative.get(creative.id) ?? emptyPerformance;
       return {
         id: creative.id,
-        name: creative.name,
+        name: creativeLabel(creative, index + 1),
         platform: creative.platform,
         format: creative.format,
         ...summarize(input),
@@ -378,13 +385,7 @@ export async function getCampaigns(companyId: string) {
  * говорит. Поэтому у каждого ролика есть свой короткий номер, а полное имя из
  * кабинета остаётся на карточке.
  */
-export function creativeLabel(
-  creative: { label?: string | null; format?: string | null },
-  index: number,
-): string {
-  if (creative.label?.trim()) return creative.label.trim();
-  return `${creative.format === 'video' ? 'Видео' : 'Баннер'} ${index}`;
-}
+
 
 export type CreativeCard = {
   id: string;
@@ -550,6 +551,9 @@ export async function getCreativeCards(
     if (!row.creative_id) continue;
     const target = bucket(row.creative_id);
     target.spend += Number(row.spend);
+    // Без этой строки расход в валюте кабинета оставался нулём, и весь раздел
+    // показывал нули: карточки берут суммы именно отсюда.
+    target.spendSource += Number(row.spend_source ?? 0);
     target.impressions += Number(row.impressions);
     target.clicks += Number(row.clicks);
     target.conversions += Number(row.leads);

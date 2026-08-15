@@ -6,6 +6,7 @@ import { resolveShiftRules } from '@/lib/attendance';
 import type { LeadStatus } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
 import { instantInZone, zonedIsoDate } from '@/lib/period';
+import { creativeLabel } from '@/lib/creative-label';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
@@ -299,16 +300,25 @@ async function creativeLabels(
   companyId: string,
   ids: (string | null)[],
 ): Promise<Map<string, string>> {
-  const unique = [...new Set(ids.filter((id): id is string => id !== null))];
-  if (unique.length === 0) return new Map();
+  const unique = new Set(ids.filter((id): id is string => id !== null));
+  if (unique.size === 0) return new Map();
 
+  // Тянем весь список компании, а не только нужные: номер в подписи
+  // «Видео 7» — это место креатива в списке по дате создания, и по одной
+  // строке его не получить. Иначе менеджер видит в чате длинное имя из Ads
+  // Manager, а директор в отчёте — короткое, и говорят они о разном.
   const { data } = await supabase
     .from('creatives')
-    .select('id, label, name')
+    .select('id, label, format, created_at')
     .eq('company_id', companyId)
-    .in('id', unique);
+    .order('created_at');
 
-  return new Map((data ?? []).map((row) => [row.id, row.label || row.name] as const));
+  const labels = new Map<string, string>();
+  (data ?? []).forEach((row, index) => {
+    if (unique.has(row.id)) labels.set(row.id, creativeLabel(row, index + 1));
+  });
+
+  return labels;
 }
 
 /** Назначение одного лида: запись, журнал и сообщение в Telegram. */

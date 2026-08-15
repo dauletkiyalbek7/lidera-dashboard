@@ -3,7 +3,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { zonedIsoDate } from '@/lib/period';
-import { creativeLabel } from '@/lib/queries';
+import { creativeLabel } from '@/lib/creative-label';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
 import { leadCard, trialButtons } from '@/lib/telegram-lead-card';

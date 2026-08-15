@@ -1240,6 +1240,54 @@ export async function getIntegrations(companyId: string) {
   return data ?? [];
 }
 
+export type LostSubmission = {
+  id: string;
+  createdAt: string;
+  reason: string | null;
+  /** Что было в заявке — чтобы человека можно было найти и перезвонить. */
+  preview: string;
+};
+
+/**
+ * Заявки с сайта, которые не стали лидами.
+ *
+ * Пока их не было видно, расхождение с таблицей Tilda приходилось искать
+ * глазами. Здесь же сразу понятно, сколько потеряно и почему.
+ */
+export async function getLostSubmissions(companyId: string): Promise<LostSubmission[]> {
+  const supabase = await createServerSupabase();
+
+  const { data } = await supabase
+    .from('form_submissions')
+    .select('id, created_at, status, reason, payload')
+    .eq('company_id', companyId)
+    .in('status', ['rejected', 'error'])
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  return (data ?? []).map((row) => ({
+    id: row.id,
+    createdAt: row.created_at,
+    reason: row.reason,
+    preview: previewOf(row.payload),
+  }));
+}
+
+/** Короткая выжимка из тела запроса: служебные поля человеку не нужны. */
+function previewOf(payload: unknown): string {
+  if (typeof payload !== 'object' || payload === null) return '—';
+
+  const skip = ['test', 'formid', 'formname', 'tranid', 'cookies', 'referer'];
+  const parts = Object.entries(payload as Record<string, unknown>)
+    .filter(([field]) => !field.toLowerCase().startsWith('utm_'))
+    .filter(([field]) => !skip.includes(field.toLowerCase()))
+    .filter(([, value]) => typeof value === 'string' && value.trim())
+    .slice(0, 4)
+    .map(([field, value]) => `${field}: ${value}`);
+
+  return parts.length > 0 ? parts.join(' · ') : '—';
+}
+
 export async function getSubscription(companyId: string) {
   const supabase = await createServerSupabase();
   const { data } = await supabase

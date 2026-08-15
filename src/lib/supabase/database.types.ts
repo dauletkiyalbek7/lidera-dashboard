@@ -367,6 +367,22 @@ export type IntegrationRow = Timestamps & {
   last_sync_at: string | null;
 }
 
+/**
+ * Входящая заявка с сайта — как она пришла.
+ *
+ * Пишется на каждый вызов вебхука, включая отклонённые: без этого потерянную
+ * заявку невозможно ни увидеть, ни объяснить.
+ */
+export type FormSubmissionRow = {
+  id: string;
+  company_id: string | null;
+  lead_id: string | null;
+  status: 'saved' | 'duplicate' | 'rejected' | 'error';
+  reason: string | null;
+  payload: Json;
+  created_at: string;
+};
+
 export type AuditLogRow = {
   id: string;
   company_id: string | null;
@@ -445,6 +461,7 @@ export type Database = {
       sales: TableDef<SaleRow, 'company_id'>;
       receipts: TableDef<ReceiptRow, 'company_id'>;
       integrations: TableDef<IntegrationRow, 'company_id' | 'platform'>;
+      form_submissions: TableDef<FormSubmissionRow, 'status'>;
       audit_logs: TableDef<AuditLogRow, 'action'>;
     };
     Views: Record<never, never>;

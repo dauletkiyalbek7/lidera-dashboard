@@ -21,6 +21,29 @@ const NAME_KEYS = ['name', 'имя', 'fio', 'фио', 'fullname', 'full_name', '
 const PHONE_KEYS = ['phone', 'телефон', 'tel', 'phone_number', 'номер'];
 const EMAIL_KEYS = ['email', 'почта', 'e-mail', 'mail'];
 
+/** Служебные поля Tilda: числа в них за телефон принимать нельзя. */
+const SERVICE_KEYS = [
+  'formid',
+  'formname',
+  'tranid',
+  'transaction_id',
+  'external_id',
+  'test',
+  'utm_source',
+  'utm_medium',
+  'utm_campaign',
+  'utm_content',
+  'utm_term',
+  'fbclid',
+  'fbc',
+  'fbp',
+  '_fbc',
+  '_fbp',
+  'referer',
+  'referrer',
+  'cookies',
+];
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
@@ -45,17 +68,38 @@ export async function POST(
     .eq('lead_webhook_key', key)
     .maybeSingle();
 
-  if (!company) return NextResponse.json({ error: 'неверный ключ' }, { status: 404 });
+  // Заявку по чужому ключу тоже записываем, без компании: так видно, что
+  // какая-то форма стучится не туда, а не просто «лидов нет».
+  if (!company) {
+    await logSubmission(supabase, null, payload, {
+      status: 'rejected',
+      reason: 'вебхук вызван с неизвестным ключом',
+    });
+    return NextResponse.json({ error: 'неверный ключ' }, { status: 404 });
+  }
+
   if (company.status === 'inactive') {
+    await logSubmission(supabase, company.id, payload, {
+      status: 'rejected',
+      reason: 'компания отключена',
+    });
     return NextResponse.json({ error: 'компания отключена' }, { status: 403 });
   }
 
   const name = pick(payload, NAME_KEYS) ?? '';
-  const phone = pick(payload, PHONE_KEYS) ?? null;
+  // Поле телефона на разных лендингах называют по-разному — «Ваш телефон»,
+  // «Номер WhatsApp». Не нашли по названию — ищем по виду значения: заявка с
+  // живым номером не должна пропадать из-за подписи поля.
+  const phone = pick(payload, PHONE_KEYS) ?? guessPhone(payload);
   const email = pick(payload, EMAIL_KEYS) ?? null;
 
-  // Заявка без единого контакта бесполезна: звонить и писать некуда.
+  // Заявка без единого контакта бесполезна: звонить и писать некуда. Но в
+  // журнал она попадает — иначе о ней никто никогда не узнает.
   if (!phone && !email) {
+    await logSubmission(supabase, company.id, payload, {
+      status: 'rejected',
+      reason: 'не нашли ни телефона, ни почты',
+    });
     return NextResponse.json(
       { error: 'в заявке нет ни телефона, ни почты' },
       { status: 422 },
@@ -73,7 +117,7 @@ export async function POST(
   // отчёта сразу.
   const placement = await adPlacement(supabase, company.id, utmContent);
 
-  const { error } = await supabase.from('leads').insert({
+  const { data: created, error } = await supabase.from('leads').insert({
     company_id: company.id,
     campaign_id: placement.campaignId,
     name: name || 'Заявка с сайта',
@@ -93,15 +137,80 @@ export async function POST(
     fbp: pick(payload, ['fbp', '_fbp']) ?? null,
     external_id: pick(payload, ['tranid', 'transaction_id', 'external_id']) ?? null,
     status: 'new',
-  });
+  })
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     // Повтор той же отправки — не ошибка: вебхук мог прийти дважды.
-    if (error.code === '23505') return NextResponse.json({ ok: true, duplicate: true });
+    const duplicate = error.code === '23505';
+    await logSubmission(supabase, company.id, payload, {
+      status: duplicate ? 'duplicate' : 'error',
+      reason: duplicate ? 'такая заявка уже сохранена' : error.message,
+    });
+
+    if (duplicate) return NextResponse.json({ ok: true, duplicate: true });
     return NextResponse.json({ error: 'не удалось сохранить заявку' }, { status: 500 });
   }
 
+  await logSubmission(supabase, company.id, payload, {
+    status: 'saved',
+    leadId: created?.id ?? null,
+  });
+
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * Запись о вызове вебхука. Пишем всегда, чем бы он ни кончился: сверять
+ * список заявок в Tilda с нашим вручную — не работа для человека.
+ *
+ * Журнал не должен ронять приём: если запись не удалась, заявка всё равно
+ * сохранена, и терять её из-за отчётности нельзя.
+ */
+async function logSubmission(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  companyId: string | null,
+  payload: Record<string, string>,
+  outcome: {
+    status: 'saved' | 'duplicate' | 'rejected' | 'error';
+    reason?: string;
+    leadId?: string | null;
+  },
+): Promise<void> {
+  try {
+    await supabase.from('form_submissions').insert({
+      company_id: companyId,
+      lead_id: outcome.leadId ?? null,
+      status: outcome.status,
+      reason: outcome.reason ?? null,
+      payload,
+    });
+  } catch {
+    // Молча: заявка важнее записи о ней.
+  }
+}
+
+/**
+ * Похоже ли значение на телефон.
+ *
+ * Считаем цифры: казахстанский номер это 10–11 цифр, и разделители бывают
+ * любые. Служебные поля Tilda пропускаем — в них тоже лежат длинные числа,
+ * и без этого номером клиента стал бы идентификатор формы.
+ */
+function guessPhone(payload: Record<string, string>): string | null {
+  for (const [field, value] of Object.entries(payload)) {
+    if (SERVICE_KEYS.includes(field.trim().toLowerCase())) continue;
+    if (!value?.trim()) continue;
+
+    const digits = value.replace(/\D/g, '');
+    if (digits.length < 10 || digits.length > 15) continue;
+    // В строке не должно быть ничего, кроме номера и его оформления.
+    if (!/^[\d\s+()\-.]+$/.test(value.trim())) continue;
+
+    return value.trim();
+  }
+  return null;
 }
 
 /** Tilda шлёт форму как urlencoded, свои сайты — чаще JSON. Принимаем оба. */

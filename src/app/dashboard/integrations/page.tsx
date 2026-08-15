@@ -10,7 +10,7 @@ import { requireFullAccess } from '@/lib/auth';
 import { publicEnv } from '@/lib/env';
 import { formatDateTime } from '@/lib/format';
 import { INTEGRATION_STATUS, statusOf } from '@/lib/labels';
-import { getIntegrations } from '@/lib/queries';
+import { getIntegrations, getLostSubmissions } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Интеграции' };
 
@@ -47,7 +47,10 @@ const CATALOG = [
 
 export default async function IntegrationsPage() {
   const { company } = await requireFullAccess();
-  const integrations = await getIntegrations(company.id);
+  const [integrations, lost] = await Promise.all([
+    getIntegrations(company.id),
+    getLostSubmissions(company.id),
+  ]);
   // Адрес берём из самого запроса: он верен и на боевом домене, и на превью,
   // и не зависит от того, что записано в переменных окружения.
   const host = (await headers()).get('host');
@@ -156,6 +159,32 @@ export default async function IntegrationsPage() {
             </p>
           </div>
         </Card>
+
+        {lost.length > 0 ? (
+          <Card className="mt-4">
+            <CardHeader
+              title="Заявки, которые не сохранились"
+              subtitle="Форма достучалась до платформы, но лид создать не удалось — этим людям никто не позвонит"
+            />
+            <ul className="divide-y divide-line px-5 sm:px-6">
+              {lost.map((item) => (
+                <li key={item.id} className="py-3.5">
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="tabular text-[12.5px] text-muted">
+                      {formatDateTime(item.createdAt)}
+                    </span>
+                    <span className="text-[13px] font-medium text-ink">
+                      {item.reason ?? 'причина не записана'}
+                    </span>
+                  </div>
+                  <p className="mt-1 break-words text-[12.5px] leading-relaxed text-ink-soft">
+                    {item.preview}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </Card>
+        ) : null}
 
         <Card className="mt-4">
           <CardHeader

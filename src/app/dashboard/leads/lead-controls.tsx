@@ -236,12 +236,14 @@ export function LeadRowActions({
   leadId,
   leadName,
   funnelType,
+  status,
   saleAmount,
   currency,
 }: {
   leadId: string;
   leadName: string;
   funnelType: FunnelType;
+  status: string;
   /** Сумма уже проведённой продажи. null — чека ещё нет. */
   saleAmount: number | null;
   currency: string;
@@ -264,7 +266,9 @@ export function LeadRowActions({
   return (
     <>
       <div className="flex items-center justify-end gap-1.5">
-        {funnelType === 'trial' ? (
+        {/* Клиент купил курс — пробное занятие позади. Предлагать записать
+            его снова значит звать на этап, который человек уже прошёл. */}
+        {funnelType === 'trial' && status !== 'sale' ? (
           <Button type="button" variant="ghost" size="sm" onClick={() => setDialog('trial')}>
             Урок
           </Button>

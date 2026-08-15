@@ -27,6 +27,8 @@ export type NavItem = {
   onlyFunnel?: FunnelType;
   /** Раздел виден рядовому сотруднику, а не только руководству. */
   staff?: true;
+  /** Раздел нужен только сотруднику: у руководителя для этого есть настройки. */
+  onlyStaff?: true;
 };
 
 export type NavGroup = {
@@ -78,7 +80,15 @@ const COMPANY_NAV: NavGroup[] = [
     items: [
       { href: '/dashboard/integrations', label: 'Интеграции', icon: IconIntegrations },
       { href: '/dashboard/settings', label: 'Настройки', icon: IconSettings },
-      { href: '/dashboard/me', label: 'Мой профиль', icon: IconTeam, staff: true },
+      // Рабочее место сотрудника: подключить Telegram и сменить свой пароль.
+      // Директору не нужно — у него для этого «Настройки» и «Команда».
+      {
+        href: '/dashboard/me',
+        label: 'Мой профиль',
+        icon: IconTeam,
+        staff: true,
+        onlyStaff: true,
+      },
     ],
   },
 ];
@@ -128,6 +138,7 @@ export function navFor(
           !item.soon &&
           (!item.onlyFunnel || item.onlyFunnel === funnelType) &&
           (!staffOnly || item.staff === true) &&
+          (staffOnly || !item.onlyStaff) &&
           !(capiOnly && item.href === '/dashboard/capi'),
       ),
     }))

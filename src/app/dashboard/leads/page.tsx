@@ -204,6 +204,7 @@ export default async function LeadsPage({
                       leadId={lead.id}
                       leadName={lead.name}
                       funnelType={funnelType}
+                      status={lead.status}
                       saleAmount={lead.saleAmount}
                       currency={company.sales_currency}
                     />

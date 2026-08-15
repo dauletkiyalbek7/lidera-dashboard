@@ -3,7 +3,7 @@
 import { useActionState } from 'react';
 import { useFormStatus } from 'react-dom';
 
-import { Field, FormMessage } from '@/components/auth/field';
+import { FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import { updateDistribution, type SettingsState } from './actions';
 
@@ -15,7 +15,7 @@ export function DistributionForm({
   defaults,
   disabled,
 }: {
-  defaults: { auto_assign: boolean; sla_minutes: number };
+  defaults: { auto_assign: boolean };
   disabled: boolean;
 }) {
   const [state, formAction] = useActionState(updateDistribution, {} as SettingsState);
@@ -40,16 +40,6 @@ export function DistributionForm({
             </span>
           </span>
         </label>
-
-        <Field
-          label="Время на первое касание, минут"
-          name="sla_minutes"
-          type="number"
-          min={1}
-          max={1440}
-          defaultValue={String(defaults.sla_minutes)}
-          hint="Если за это время менеджер не сдвинул лид со статуса «Новый», лид вернётся в очередь и уйдёт другому"
-        />
       </fieldset>
 
       <FormMessage error={state.error} success={state.success} />

@@ -402,7 +402,6 @@ type CompanyRow = {
   work_days: number[];
   late_grace_minutes: number;
   funnel_type: string;
-  max_touches: number;
   currency: string;
 };
 
@@ -411,7 +410,7 @@ async function companyOf(companyId: string): Promise<CompanyRow | null> {
   const { data } = await supabase
     .from('companies')
     .select(
-      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, max_touches, currency',
+      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, currency',
     )
     .eq('id', companyId)
     .maybeSingle();

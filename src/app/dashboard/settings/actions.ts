@@ -70,7 +70,6 @@ export async function updateCompany(
 
 const distributionSchema = z.object({
   auto_assign: z.boolean(),
-  sla_minutes: z.coerce.number().int().min(1, 'Минимум 1').max(1440, 'Максимум 1440'),
 });
 
 /**
@@ -91,7 +90,6 @@ export async function updateDistribution(
 
   const parsed = distributionSchema.safeParse({
     auto_assign: formData.get('auto_assign') === 'on',
-    sla_minutes: formData.get('sla_minutes'),
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };

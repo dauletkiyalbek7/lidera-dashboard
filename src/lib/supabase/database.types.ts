@@ -46,10 +46,6 @@ export type CompanyRow = Timestamps & {
   lead_webhook_key: string | null;
   /** Настройки авто-раздачи лидов. */
   auto_assign: boolean;
-  /** Через сколько минут напомнить про нетронутый лид. Лид не отбирается. */
-  sla_minutes: number;
-  /** После скольких безрезультатных касаний бот предлагает закрыть лид. */
-  max_touches: number;
   /** Режим смены и геолокация офиса. */
   shift_mode: ShiftMode;
   office_lat: number | null;

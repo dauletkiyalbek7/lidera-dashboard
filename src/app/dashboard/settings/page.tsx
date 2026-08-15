@@ -76,10 +76,7 @@ export default async function SettingsPage() {
                 subtitle="Кому и как быстро уходят новые заявки"
               />
               <DistributionForm
-                defaults={{
-                  auto_assign: company.auto_assign,
-                  sla_minutes: company.sla_minutes,
-                }}
+                defaults={{ auto_assign: company.auto_assign }}
                 disabled={profile.role !== 'DIRECTOR'}
               />
             </Card>

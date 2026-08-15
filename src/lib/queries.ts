@@ -32,11 +32,14 @@ type SpendRow = {
 };
 
 /**
- * Приводит расход рекламного кабинета к валюте компании.
+ * Приводит расход рекламного кабинета к валюте продаж компании.
  *
- * Meta присылает суммы в валюте кабинета (у MIRAS — доллары). Показать их со
- * знаком тенге, не пересчитав, значит соврать в десятки раз, поэтому каждая
- * строка пересчитывается по курсу Нацбанка на свой день.
+ * Считать деньги надо в одной валюте: прибыль это выручка минус расход, а
+ * выручка приходит в тенге. Поэтому база расчёта — валюта продаж, и расход
+ * пересчитывается в неё по курсу Нацбанка на свой день.
+ *
+ * Показывать расход при этом можно в валюте кабинета — исходная сумма
+ * остаётся рядом, в spend_source.
  */
 async function toCompanyCurrency<T extends SpendRow>(
   supabase: Awaited<ReturnType<typeof createServerSupabase>>,
@@ -47,11 +50,11 @@ async function toCompanyCurrency<T extends SpendRow>(
 
   const { data: company } = await supabase
     .from('companies')
-    .select('currency')
+    .select('sales_currency')
     .eq('id', companyId)
     .maybeSingle();
 
-  const target = company?.currency ?? 'KZT';
+  const target = company?.sales_currency ?? 'KZT';
 
   // Пересчёт нужен, только если валюта расхода отличается от валюты компании.
   const foreign = rows.some((row) => row.currency && row.currency !== target);
@@ -383,6 +386,8 @@ export type CreativeCard = {
   numbers: string[];
   /** Из рекламного кабинета. */
   spend: number;
+  /** Тот же расход в валюте кабинета — null, когда валюты совпадают. */
+  spendSource: number | null;
   impressions: number;
   clicks: number;
   ctr: number;
@@ -495,6 +500,8 @@ export async function getCreativeCards(
       plays: number;
       completions: number;
       avgSeconds: number;
+      /** Расход в валюте кабинета — до пересчёта. */
+      spendSource: number;
     }
   >();
 
@@ -513,6 +520,7 @@ export async function getCreativeCards(
         plays: 0,
         completions: 0,
         avgSeconds: 0,
+        spendSource: 0,
       };
       stats.set(id, value);
     }
@@ -587,6 +595,7 @@ export async function getCreativeCards(
         campaigns: Array.from(placement.get(creative.id)?.campaigns ?? []),
         numbers: Array.from(placement.get(creative.id)?.numbers ?? []),
         spend,
+        spendSource: value?.spendSource || null,
         impressions,
         clicks,
         ctr: impressions ? (clicks / impressions) * 100 : 0,

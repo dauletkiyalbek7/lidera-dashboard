@@ -30,7 +30,7 @@ export default async function SalesPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireFullAccess();
-  const currency = company.currency;
+  const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
 
   const [sales, leads] = await Promise.all([

@@ -404,7 +404,8 @@ type CompanyRow = {
   work_days: number[];
   late_grace_minutes: number;
   funnel_type: string;
-  currency: string;
+  /** Валюта денег компании: в ней продажник и называет сумму. */
+  sales_currency: string;
 };
 
 async function companyOf(companyId: string): Promise<CompanyRow | null> {
@@ -412,7 +413,7 @@ async function companyOf(companyId: string): Promise<CompanyRow | null> {
   const { data } = await supabase
     .from('companies')
     .select(
-      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, currency',
+      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, sales_currency',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -631,7 +632,7 @@ async function applyTrial(
     // Валюту не спрашиваем: она одна на компанию и стоит в настройках. Иначе
     // продажник выбирал бы её на каждой продаже, а ошибётся один раз — и в
     // отчёте доход разойдётся в сотни раз.
-    const currency = (await companyOf(employee.company_id))?.currency ?? 'KZT';
+    const currency = (await companyOf(employee.company_id))?.sales_currency ?? 'KZT';
     return sendMessage(
       chatId,
       `💰 <b>${name}</b> купил курс.\nНа какую сумму? Отправьте число одним сообщением — например <code>390000</code>.\n` +
@@ -767,7 +768,7 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
   }
 
   const company = await companyOf(employee.company_id);
-  const currency = company?.currency ?? 'KZT';
+  const currency = company?.sales_currency ?? 'KZT';
   const saleDate = localDate(company?.timezone ?? 'Asia/Almaty');
 
   // Валюту не назвали — значит валюта компании, та самая, что в настройках.

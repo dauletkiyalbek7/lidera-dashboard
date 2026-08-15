@@ -19,6 +19,7 @@ export function CompanyForm({
     phone: string;
     funnel_type: string;
     currency: string;
+    sales_currency: string;
   };
   disabled: boolean;
 }) {
@@ -37,7 +38,7 @@ export function CompanyForm({
 
         <div>
           <label htmlFor="currency" className="block text-[13px] font-medium text-ink-soft">
-            Валюта отчётов
+            Валюта рекламных отчётов
           </label>
           <select
             id="currency"
@@ -52,10 +53,35 @@ export function CompanyForm({
             ))}
           </select>
           <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
-            В этой валюте кабинет показывает все деньги. Расход рекламного кабинета
-            пересчитывается в неё по курсу Нацбанка РК на день расхода. Сумму продажи
-            продажник присылает в бот просто числом — она считается этой валютой. Если
-            платили в другой, он пишет её рядом («300$»), и бот пересчитает по курсу.
+            Крупная валюта в разделах «Реклама» и «Креативы»: расход, цена лида, CPC.
+            Вторая валюта всегда подписана рядом мелким шрифтом, с курсом Нацбанка РК —
+            видно и то и другое, переключаться не нужно.
+          </p>
+        </div>
+
+        <div>
+          <label
+            htmlFor="sales_currency"
+            className="block text-[13px] font-medium text-ink-soft"
+          >
+            Валюта продаж и чеков
+          </label>
+          <select
+            id="sales_currency"
+            name="sales_currency"
+            defaultValue={defaults.sales_currency}
+            className="mt-2 h-11 w-full rounded-control border border-line bg-surface-2 px-3 text-[14.5px] text-ink focus:border-lime/50 focus:outline-none"
+          >
+            {(Object.keys(CURRENCIES) as (keyof typeof CURRENCIES)[]).map((key) => (
+              <option key={key} value={key}>
+                {CURRENCIES[key].label}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+            В ней приходят деньги: сумму продажи продажник присылает в бот просто числом
+            и считается она этой валютой. Выручка, прибыль, средний чек и «Главная»
+            всегда показываются в ней и никуда не пересчитываются.
           </p>
         </div>
 

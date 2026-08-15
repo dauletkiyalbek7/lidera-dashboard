@@ -24,7 +24,7 @@ export default async function DashboardPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireFullAccess();
-  const currency = company.currency;
+  const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
   const { totals, trend, creatives, hasAdData } = await getDashboardData(
     company.id,

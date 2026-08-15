@@ -200,7 +200,7 @@ export async function sendPurchaseForSale(
 
   const { data: company } = await supabase
     .from('companies')
-    .select('currency')
+    .select('sales_currency')
     .eq('id', companyId)
     .maybeSingle();
 
@@ -219,7 +219,7 @@ export async function sendPurchaseForSale(
   return sendPurchase(companyId, {
     saleId: sale.id,
     value: Number(sale.amount),
-    currency: company?.currency ?? 'KZT',
+    currency: company?.sales_currency ?? 'KZT',
     eventTime: new Date(sale.sale_date),
     phone: lead?.phone ?? null,
     email: lead?.email ?? null,

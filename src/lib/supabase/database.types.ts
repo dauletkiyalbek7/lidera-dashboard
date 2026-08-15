@@ -40,8 +40,10 @@ export type CompanyRow = Timestamps & {
   status: CompanyStatus;
   funnel_type: FunnelType;
   is_demo: boolean;
-  /** Валюта отчётов — совпадает с валютой рекламного кабинета. */
+  /** Валюта рекламных отчётов: расход, цена лида, CPC. */
   currency: string;
+  /** Валюта денег компании: продажи, чеки, выручка, прибыль. */
+  sales_currency: string;
   /** Ключ адреса приёма заявок с сайта: /api/forms/<key>. */
   lead_webhook_key: string | null;
   /** Настройки авто-раздачи лидов. */

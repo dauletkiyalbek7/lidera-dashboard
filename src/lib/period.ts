@@ -27,10 +27,13 @@ export type DateRange = {
 };
 
 /**
- * По умолчанию показываем сегодняшний день: директор заходит утром узнать,
- * что происходит сейчас, а не листать месяц назад.
+ * По умолчанию — последние семь полных дней.
+ *
+ * Сегодняшний день в них не входит намеренно: он ещё идёт, расход и заявки
+ * добираются весь вечер, и любая средняя по нему занижена. Неполный день в
+ * отчёте выглядит как провал, которого не было.
  */
-export const DEFAULT_PRESET: PresetKey = 'today';
+export const DEFAULT_PRESET: PresetKey = '7d';
 
 /** Часовой пояс по умолчанию: платформа работает в Казахстане. */
 export const DEFAULT_TIME_ZONE = 'Asia/Almaty';
@@ -207,10 +210,13 @@ export function presetRange(preset: PresetKey, today = new Date()): {
       const yesterday = shiftDays(start, -1);
       return { from: toIsoDate(yesterday), to: toIsoDate(yesterday) };
     }
+    // «Последние N дней» — это N полных дней, до вчерашнего включительно.
+    // Сегодняшний идёт отдельным пресетом: смешивать законченный период с
+    // недожитым днём значит портить все средние в нём.
     case '7d':
-      return { from: toIsoDate(shiftDays(start, -6)), to: toIsoDate(start) };
+      return { from: toIsoDate(shiftDays(start, -7)), to: toIsoDate(shiftDays(start, -1)) };
     case '90d':
-      return { from: toIsoDate(shiftDays(start, -89)), to: toIsoDate(start) };
+      return { from: toIsoDate(shiftDays(start, -90)), to: toIsoDate(shiftDays(start, -1)) };
     case 'this_week':
       return { from: toIsoDate(startOfWeek(start)), to: toIsoDate(start) };
     case 'last_week': {
@@ -229,7 +235,7 @@ export function presetRange(preset: PresetKey, today = new Date()): {
     }
     case '30d':
     default:
-      return { from: toIsoDate(shiftDays(start, -29)), to: toIsoDate(start) };
+      return { from: toIsoDate(shiftDays(start, -30)), to: toIsoDate(shiftDays(start, -1)) };
   }
 }
 

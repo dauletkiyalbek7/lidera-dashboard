@@ -34,7 +34,7 @@ const SOURCE_LABELS: Record<string, string> = {
 
 export default async function ReceiptsPage() {
   const { company } = await requireFullAccess();
-  const currency = company.currency;
+  const currency = company.sales_currency;
   const receipts = await getReceipts(company.id);
 
   return (

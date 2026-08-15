@@ -68,7 +68,8 @@ export default async function AdsPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company, profile } = await requireFullAccess();
-  const currency = company.currency;
+  // Выручка и прибыль — деньги компании, они всегда в валюте продаж.
+  const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
 
   const [accounts, campaigns, breakdown, currencyNote] = await Promise.all([
@@ -80,18 +81,21 @@ export default async function AdsPage({
 
   const { totals } = breakdown;
 
-  // Расход директор сверяет с рекламным кабинетом, поэтому крупно показываем
-  // его валюту, а пересчёт в валюту компании уводим в подпись. Выручка и
-  // прибыль остаются в валюте компании: это деньги бизнеса, а не площадки.
-  const inAccountCurrency = totals.sourceCurrency !== null && totals.spendSource !== null;
-  const adCurrency = inAccountCurrency ? totals.sourceCurrency! : currency;
-  const adSpend = inAccountCurrency ? totals.spendSource! : totals.spend;
+  // Расход показываем в той валюте, которую директор выбрал в настройках.
+  // Совпала с валютой кабинета — берём исходные суммы, сверять с Ads Manager
+  // можно без пересчёта. Вторая валюта в любом случае подписана рядом.
+  const view = spendView(totals, company.currency, currency);
+  const { adCurrency, adSpend, showBoth } = view;
   const adCostPerLead = totals.conversions ? adSpend / totals.conversions : 0;
   const adCpc = totals.clicks ? adSpend / totals.clicks : 0;
 
+  // Та же сумма во второй валюте — она идёт мелкой подписью под крупной.
+  const otherCurrency = view.fromSource ? currency : (totals.sourceCurrency ?? currency);
+  const otherSpend = view.fromSource ? totals.spend : (totals.spendSource ?? 0);
+
   /** Расход строки в той же валюте, что и заголовок колонки. */
   const adMoney = (row: { spend: number; spendSource: number | null }) =>
-    inAccountCurrency ? (row.spendSource ?? 0) : row.spend;
+    view.fromSource ? (row.spendSource ?? 0) : row.spend;
 
   if (accounts.length === 0 && campaigns.length === 0) {
     return (
@@ -136,8 +140,8 @@ export default async function AdsPage({
             label="Расход"
             value={formatMoney(adSpend, { currency: adCurrency })}
             hint={
-              inAccountCurrency
-                ? `${formatMoney(totals.spend, { currency })} · за ${range.label}`
+              showBoth
+                ? `${formatMoney(otherSpend, { currency: otherCurrency })} · за ${range.label}`
                 : `За ${range.label}`
             }
           />
@@ -150,8 +154,8 @@ export default async function AdsPage({
             label="Цена лида"
             value={formatMoney(adCostPerLead, { currency: adCurrency })}
             hint={
-              inAccountCurrency
-                ? `${formatMoney(totals.costPerConversion, { currency })} · расход ÷ лиды`
+              showBoth && totals.conversions
+                ? `${formatMoney(otherSpend / totals.conversions, { currency: otherCurrency })} · расход ÷ лиды`
                 : 'Расход ÷ количество лидов'
             }
             accent
@@ -325,4 +329,34 @@ export default async function AdsPage({
       </PageBody>
     </>
   );
+}
+
+/**
+ * В какой валюте показывать расход и сколько это во второй.
+ *
+ * Выбранная валюта совпала с валютой кабинета — показываем исходные суммы:
+ * их директор и сверяет с Ads Manager. Иначе показываем пересчитанные.
+ * Вторую валюту подписываем всегда, чтобы не переключать страницу ради неё.
+ */
+function spendView(
+  totals: { spend: number; spendSource: number | null; sourceCurrency: string | null },
+  chosen: string,
+  salesCurrency: string,
+): {
+  adCurrency: string;
+  adSpend: number;
+  fromSource: boolean;
+  showBoth: boolean;
+} {
+  const fromSource =
+    totals.sourceCurrency !== null &&
+    totals.spendSource !== null &&
+    chosen === totals.sourceCurrency;
+
+  return {
+    adCurrency: fromSource ? chosen : salesCurrency,
+    adSpend: fromSource ? (totals.spendSource ?? 0) : totals.spend,
+    fromSource,
+    showBoth: totals.sourceCurrency !== null && totals.sourceCurrency !== salesCurrency,
+  };
 }

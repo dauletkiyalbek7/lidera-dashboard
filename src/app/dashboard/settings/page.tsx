@@ -41,6 +41,7 @@ export default async function SettingsPage() {
                 phone: company.phone ?? '',
                 funnel_type: company.funnel_type,
                 currency: company.currency,
+                sales_currency: company.sales_currency,
               }}
               disabled={profile.role !== 'DIRECTOR'}
             />

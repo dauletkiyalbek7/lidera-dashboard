@@ -40,7 +40,9 @@ export default async function CreativesPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireFullAccess();
-  const currency = company.currency;
+  // Выручка и прибыль — деньги компании; расход показываем так же, как в
+  // «Рекламе»: в выбранной валюте, со второй мелкой подписью.
+  const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
 
   const cards = await getCreativeCards(company.id, range.from, range.to, company.timezone);
@@ -54,6 +56,21 @@ export default async function CreativesPage({
   const cheapest = [...shown]
     .filter((card) => card.conversions > 0)
     .sort((a, b) => a.costPerConversion - b.costPerConversion)[0];
+
+  // Расход в валюте кабинета, если директор выбрал её в настройках: именно
+  // эти суммы он сверяет с Ads Manager. Вторая валюта — подписью рядом.
+  const sourceCurrency = shown.find((card) => card.spendSource !== null)
+    ? (company.currency !== currency ? company.currency : null)
+    : null;
+  const fromSource = sourceCurrency !== null;
+  const adCurrency = fromSource ? sourceCurrency : currency;
+  const adMoney = (card: { spend: number; spendSource: number | null }) =>
+    fromSource ? (card.spendSource ?? 0) : card.spend;
+
+  const adSpend = shown.reduce((total, card) => total + adMoney(card), 0);
+  const showBoth = fromSource;
+  const otherCurrency = currency;
+  const otherSpend = spend;
 
   return (
     <>
@@ -85,12 +102,22 @@ export default async function CreativesPage({
               />
               <StatTile
                 label="Расход за период"
-                value={formatMoney(spend, { currency })}
-                hint={`Лидов: ${formatNumber(conversions)}`}
+                value={formatMoney(adSpend, { currency: adCurrency })}
+                hint={
+                  showBoth
+                    ? `${formatMoney(otherSpend, { currency: otherCurrency })} · лидов: ${formatNumber(conversions)}`
+                    : `Лидов: ${formatNumber(conversions)}`
+                }
               />
               <StatTile
                 label="Самый дешёвый"
-                value={cheapest ? formatMoney(cheapest.costPerConversion, { currency }) : '—'}
+                value={
+                  cheapest
+                    ? formatMoney(adMoney(cheapest) / cheapest.conversions, {
+                        currency: adCurrency,
+                      })
+                    : '—'
+                }
                 hint={cheapest ? cheapest.label : 'Пока не с чем сравнивать'}
                 accent
               />
@@ -143,7 +170,7 @@ export default async function CreativesPage({
                         </Link>
                       </Td>
                       <Td align="right" className="tabular text-ink">
-                        {formatMoney(card.spend, { currency })}
+                        {formatMoney(adMoney(card), { currency: adCurrency })}
                       </Td>
                       <Td align="right" className="tabular text-ink-soft">
                         {formatPercent(card.ctr, 2)}
@@ -153,7 +180,9 @@ export default async function CreativesPage({
                       </Td>
                       <Td align="right" className="tabular text-ink">
                         {card.conversions
-                          ? formatMoney(card.costPerConversion, { currency })
+                          ? formatMoney(adMoney(card) / card.conversions, {
+                              currency: adCurrency,
+                            })
                           : '—'}
                       </Td>
                       {company.funnel_type === 'trial' ? (

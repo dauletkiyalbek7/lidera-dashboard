@@ -138,7 +138,7 @@ export default async function CapiPage({
                   </Td>
                   <Td><QualityMark quality={sale.quality} /></Td>
                   <Td align="right" className="tabular text-ink">
-                    {formatMoney(sale.amount, { currency: company.currency })}
+                    {formatMoney(sale.amount, { currency: company.sales_currency })}
                   </Td>
                   <Td last align="right">
                     <PendingSend saleId={sale.saleId} quality={sale.quality} />
@@ -197,7 +197,7 @@ export default async function CapiPage({
                     </Td>
                     <Td align="right" className="tabular text-ink">
                       {formatMoney(event.value, {
-                        currency: event.currency ?? company.currency,
+                        currency: event.currency ?? company.sales_currency,
                       })}
                     </Td>
                     <Td last>

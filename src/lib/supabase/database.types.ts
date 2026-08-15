@@ -292,6 +292,8 @@ export type EmployeeRow = Timestamps & {
   company_id: string;
   /** Учётная запись сотрудника. Пусто — работает только через бота. */
   profile_id: string | null;
+  /** Урок, по которому бот ждёт от продажника сумму продажи. */
+  awaiting_amount_for: string | null;
   full_name: string;
   role: EmployeeRole;
   phone: string | null;
@@ -321,6 +323,8 @@ export type TrialRow = Timestamps & {
   /** Точное начало урока: онлайн важен час, а не только день. */
   starts_at: string | null;
   reminded_at: string | null;
+  /** Сколько напоминаний уже ушло: за 60, 30 и 10 минут. */
+  reminders_sent: number;
 }
 
 export type SaleRow = Timestamps & {

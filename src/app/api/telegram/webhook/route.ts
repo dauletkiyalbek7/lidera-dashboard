@@ -16,9 +16,10 @@ import {
   formatTrialTime,
   sellerAvailability,
   notifyTrialBooked,
+  shortCreativeLabel,
   syncTrialForLead,
 } from '@/lib/trials';
-import { creativeLabel } from '@/lib/queries';
+import { sendPurchaseForSale } from '@/lib/capi';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import {
   leadCard,
@@ -126,6 +127,11 @@ async function handleMessage(message: TelegramMessage) {
   }
   if (text.includes('на смене')) return startShiftFlow(chatId, employee);
   if (text.includes('ухожу')) return closeShift(chatId, employee);
+  // Продажник только что отметил покупку — ждём сумму следующим сообщением.
+  if (employee.awaiting_amount_for) {
+    return saveSaleAmount(chatId, employee, text);
+  }
+
   if (text.includes('Недозвон')) return listLeads(chatId, employee, 0, 'no_answer');
   if (text.includes('Мои лиды')) return listLeads(chatId, employee);
 
@@ -384,32 +390,6 @@ function localDate(timeZone: string, date = new Date()): string {
   }).format(date);
 }
 
-/**
- * Короткое имя объявления — ровно то же, что в кабинете.
- *
- * Номер «Видео 11» — это место креатива в списке компании по дате создания,
- * поэтому одной строкой из базы его не получить: нужен весь список. Иначе
- * менеджер видит в боте одно имя, а директор в отчёте — другое.
- */
-async function creativeLabelOf(
-  supabase: ReturnType<typeof createAdminSupabase>,
-  companyId: string,
-  creativeId: string | null,
-): Promise<string | null> {
-  if (!creativeId) return null;
-
-  const { data } = await supabase
-    .from('creatives')
-    .select('id, label, format, created_at')
-    .eq('company_id', companyId)
-    .order('created_at');
-
-  const index = (data ?? []).findIndex((row) => row.id === creativeId);
-  if (index < 0) return null;
-
-  return creativeLabel(data![index], index + 1);
-}
-
 type CompanyRow = {
   shift_mode: string;
   office_lat: number | null;
@@ -422,6 +402,7 @@ type CompanyRow = {
   late_grace_minutes: number;
   funnel_type: string;
   max_touches: number;
+  currency: string;
 };
 
 async function companyOf(companyId: string): Promise<CompanyRow | null> {
@@ -429,7 +410,7 @@ async function companyOf(companyId: string): Promise<CompanyRow | null> {
   const { data } = await supabase
     .from('companies')
     .select(
-      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, max_touches',
+      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, max_touches, currency',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -537,7 +518,7 @@ async function listLeads(
   }
 
   const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
-  const creativeName = await creativeLabelOf(supabase, employee.company_id, lead.creative_id);
+  const creativeName = await shortCreativeLabel(supabase, employee.company_id, lead.creative_id);
 
   const header =
     mode === 'new'
@@ -636,12 +617,17 @@ async function applyTrial(
       .eq('id', trial.lead_id)
       .eq('company_id', employee.company_id);
 
-    await closeOpenTouches(supabase, trial.lead_id);
+    // Сумму спрашиваем сразу: без неё продажа не попадёт ни в выручку, ни в
+    // Meta, а возвращаться за ней потом никто не будет.
+    await supabase
+      .from('employees')
+      .update({ awaiting_amount_for: trial.id })
+      .eq('id', employee.id);
 
     await answerCallback(query.id, 'Продажа отмечена');
     return sendMessage(
       chatId,
-      `💰 <b>${name}</b> купил курс. Оформите сумму в кабинете — тогда она попадёт в отчёты и уйдёт в Meta.`,
+      `💰 <b>${name}</b> купил курс.\nНа какую сумму? Отправьте число одним сообщением — например <code>390000</code>.`,
     );
   }
 
@@ -728,6 +714,84 @@ async function applyStatus(
 
   await sendMessage(chatId, `✅ <b>${escapeHtml(lead.name || 'Клиент')}</b> → ${label}`);
   return listLeads(chatId, employee);
+}
+
+/**
+ * Сумма продажи курса, присланная продажником.
+ *
+ * Продажа заводится здесь же и сразу оплаченной: продажник называет сумму
+ * только после того, как деньги пришли. Отсюда же событие уходит в Meta —
+ * иначе реклама не узнает о покупке, ради которой всё и делалось.
+ */
+async function saveSaleAmount(chatId: number, employee: Employee, text: string) {
+  const supabase = createAdminSupabase();
+  const trialId = employee.awaiting_amount_for;
+  if (!trialId) return;
+
+  const clear = () =>
+    supabase.from('employees').update({ awaiting_amount_for: null }).eq('id', employee.id);
+
+  if (/отмен/i.test(text)) {
+    await clear();
+    return sendMessage(chatId, 'Хорошо, сумму не записываем.', { keyboard: KEYBOARD_ON });
+  }
+
+  // Пробелы и разделители внутри числа люди ставят по-разному.
+  const amount = Number(text.replace(/[^\d.,]/g, '').replace(',', '.'));
+
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return sendMessage(
+      chatId,
+      'Не понял сумму. Пришлите число, например <code>390000</code>, или напишите «отмена».',
+    );
+  }
+
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('id, lead_id')
+    .eq('id', trialId)
+    .eq('company_id', employee.company_id)
+    .maybeSingle();
+
+  if (!trial) {
+    await clear();
+    return sendMessage(chatId, 'Запись урока не найдена.');
+  }
+
+  const company = await companyOf(employee.company_id);
+
+  const { data: sale } = await supabase
+    .from('sales')
+    .insert({
+      company_id: employee.company_id,
+      lead_id: trial.lead_id,
+      amount,
+      status: 'paid',
+      sale_date: localDate(company?.timezone ?? 'Asia/Almaty'),
+    })
+    .select('id')
+    .maybeSingle();
+
+  await clear();
+
+  if (!sale) return sendMessage(chatId, 'Не удалось сохранить продажу. Скажите директору.');
+
+  const result = await sendPurchaseForSale(employee.company_id, sale.id);
+
+  const note = result.ok
+    ? 'Событие ушло в Meta — реклама научится искать похожих.'
+    : `В Meta не ушло: ${result.error}`;
+
+  return sendMessage(
+    chatId,
+    `✅ Продажа записана: <b>${formatAmount(amount)} ${company?.currency ?? 'KZT'}</b>.\n${note}`,
+    { keyboard: KEYBOARD_ON },
+  );
+}
+
+/** Суммы читаются глазами: разряды разделяем пробелом. */
+function formatAmount(value: number): string {
+  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 }).format(value);
 }
 
 /** Урок без назначенного времени — тот, который сейчас записываем. */
@@ -936,6 +1000,8 @@ type Employee = {
   work_end_time: string | null;
   work_days: number[] | null;
   late_grace_minutes: number | null;
+  /** Урок, по которому бот ждёт сумму продажи. */
+  awaiting_amount_for: string | null;
 };
 
 async function findEmployee(telegramUserId: number): Promise<Employee | null> {
@@ -943,7 +1009,7 @@ async function findEmployee(telegramUserId: number): Promise<Employee | null> {
   const { data } = await supabase
     .from('employees')
     .select(
-      'id, company_id, full_name, role, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
+      'id, company_id, full_name, role, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes, awaiting_amount_for',
     )
     .eq('telegram_user_id', telegramUserId)
     .eq('status', 'active')

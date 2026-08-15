@@ -11,7 +11,7 @@ import {
   statusButtons,
   trialButtons,
 } from '@/lib/telegram-lead-card';
-import { formatTrialTime } from '@/lib/trials';
+import { formatTrialTime, shortCreativeLabel } from '@/lib/trials';
 import type { FunnelType } from '@/lib/metrics';
 
 /**
@@ -33,8 +33,11 @@ type Admin = SupabaseClient<Database>;
 
 export type TouchRunResult = { reminded: number; lessons: number };
 
-/** За сколько минут до урока напомнить продажнику. */
-const LESSON_REMINDER_MINUTES = 60;
+/**
+ * За сколько минут до урока напоминать. Три захода: заранее, чтобы успеть
+ * подготовиться, и перед самым началом, чтобы не пропустить.
+ */
+const LESSON_REMINDERS = [60, 30, 10];
 
 /** Одно касание в базе + обновление лида. Возвращает время напоминания. */
 export async function scheduleTouch(
@@ -111,15 +114,15 @@ export async function runTouchReminders(): Promise<TouchRunResult> {
  */
 async function remindAboutLessons(supabase: Admin): Promise<number> {
   const now = Date.now();
-  const until = new Date(now + LESSON_REMINDER_MINUTES * 60 * 1000).toISOString();
+  const until = new Date(now + LESSON_REMINDERS[0] * 60 * 1000).toISOString();
 
   const { data: soon } = await supabase
     .from('trials')
-    .select('id, company_id, lead_id, assigned_to, starts_at')
+    .select('id, company_id, lead_id, assigned_to, starts_at, reminders_sent')
     .eq('status', 'scheduled')
-    .is('reminded_at', null)
     .not('starts_at', 'is', null)
     .not('assigned_to', 'is', null)
+    .lt('reminders_sent', LESSON_REMINDERS.length)
     .gt('starts_at', new Date(now).toISOString())
     .lte('starts_at', until)
     .limit(50);
@@ -129,14 +132,20 @@ async function remindAboutLessons(supabase: Admin): Promise<number> {
   let sent = 0;
 
   for (const lesson of soon) {
-    // Отметку ставим до отправки: повторное напоминание раздражает сильнее,
-    // чем пропущенное.
+    if (!lesson.assigned_to || !lesson.lead_id || !lesson.starts_at) continue;
+
+    const minutes = Math.round((new Date(lesson.starts_at).getTime() - now) / 60000);
+
+    // Сколько напоминаний должно было уйти к этому моменту. Если сервер спал
+    // и пропустил час, за раз отправится одно — последнее уместное.
+    const due = LESSON_REMINDERS.filter((mark) => minutes <= mark).length;
+    if (due <= lesson.reminders_sent) continue;
+
+    // Отметку ставим до отправки: повтор раздражает сильнее, чем пропуск.
     await supabase
       .from('trials')
-      .update({ reminded_at: new Date().toISOString() })
+      .update({ reminders_sent: due, reminded_at: new Date().toISOString() })
       .eq('id', lesson.id);
-
-    if (!lesson.assigned_to || !lesson.lead_id || !lesson.starts_at) continue;
 
     const chatId = await telegramOf(supabase, lesson.assigned_to);
     if (!chatId) continue;
@@ -144,7 +153,7 @@ async function remindAboutLessons(supabase: Admin): Promise<number> {
     const [{ data: lead }, { data: company }] = await Promise.all([
       supabase
         .from('leads')
-        .select('name, phone, source, platform, status')
+        .select('name, phone, source, platform, status, creative_id')
         .eq('id', lesson.lead_id)
         .maybeSingle(),
       supabase
@@ -156,19 +165,14 @@ async function remindAboutLessons(supabase: Admin): Promise<number> {
 
     if (!lead) continue;
 
-    const minutes = Math.max(
-      1,
-      Math.round((new Date(lesson.starts_at).getTime() - Date.now()) / 60000),
-    );
+    const timeZone = company?.timezone ?? 'Asia/Almaty';
+    const creativeName = await shortCreativeLabel(supabase, lesson.company_id, lead.creative_id);
 
     await sendMessage(
       chatId,
       leadCard(
-        lead,
-        `⏰ <b>Урок через ${minutes} мин</b>\n🕒 ${formatTrialTime(
-          lesson.starts_at,
-          company?.timezone ?? 'Asia/Almaty',
-        )}`,
+        { ...lead, creativeLabel: creativeName },
+        `⏰ <b>Урок через ${Math.max(1, minutes)} мин</b>\n🕒 ${formatTrialTime(lesson.starts_at, timeZone)}`,
       ),
       { inline: trialButtons(lesson.id) },
     );

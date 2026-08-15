@@ -3,6 +3,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { zonedIsoDate } from '@/lib/period';
+import { creativeLabel } from '@/lib/queries';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
 import { leadCard, trialButtons } from '@/lib/telegram-lead-card';
@@ -71,6 +72,32 @@ export async function syncTrialForLead(
  */
 export const TRIAL_DURATION_MINUTES = 60;
 
+/**
+ * Короткое имя объявления — ровно то же, что в кабинете: «Видео 11».
+ *
+ * Номер это место креатива в списке компании по дате создания, поэтому одной
+ * строкой из базы его не получить — нужен весь список. Иначе продажник видит
+ * длинное имя из Ads Manager, а директор в отчёте короткое.
+ */
+export async function shortCreativeLabel(
+  supabase: Admin,
+  companyId: string,
+  creativeId: string | null,
+): Promise<string | null> {
+  if (!creativeId) return null;
+
+  const { data } = await supabase
+    .from('creatives')
+    .select('id, label, format, created_at')
+    .eq('company_id', companyId)
+    .order('created_at');
+
+  const index = (data ?? []).findIndex((row) => row.id === creativeId);
+  if (index < 0) return null;
+
+  return creativeLabel(data![index], index + 1);
+}
+
 /** «15 августа, 18:00» по времени компании — одинаково в кабинете и в боте. */
 export function formatTrialTime(startsAt: Date | string, timeZone: string): string {
   return new Date(startsAt).toLocaleString('ru-RU', {
@@ -110,13 +137,7 @@ export async function notifyTrialBooked(
     return { delivered: false, reason: 'у продажника не подключён Telegram' };
   }
 
-  const { data: creative } = lead.creative_id
-    ? await supabase
-        .from('creatives')
-        .select('label, name')
-        .eq('id', lead.creative_id)
-        .maybeSingle()
-    : { data: null };
+  const creativeName = await shortCreativeLabel(supabase, companyId, lead.creative_id);
 
   const { data: trial } = await supabase
     .from('trials')
@@ -135,7 +156,7 @@ export async function notifyTrialBooked(
     leadCard(
       {
         ...lead,
-        creativeLabel: creative?.label || creative?.name || null,
+        creativeLabel: creativeName,
       },
       `🎓 <b>Онлайн-урок</b>\n🕒 ${formatTrialTime(startsAt, timeZone)}\nМенеджер согласовал время — урок за вами.`,
     ),

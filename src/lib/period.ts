@@ -87,6 +87,92 @@ export function todayInZone(timeZone?: string): Date {
   return parseIsoDate(zonedIsoDate(new Date(), timeZone ?? DEFAULT_TIME_ZONE));
 }
 
+/**
+ * Границы диапазона как абсолютное время.
+ *
+ * Даты в фильтре — местные: «15 августа» это день, который прожили в офисе.
+ * А `created_at` хранится в UTC, и Алматы опережает его на пять часов. Если
+ * сравнивать местную дату с UTC напрямую, заявки с полуночи до пяти утра
+ * уезжают во вчера: за 15 августа их видно не будет, зато они появятся в 14-м.
+ *
+ * Правая граница — начало следующего дня, и сравнивать с ней надо строгим `<`.
+ * Так в диапазон попадает и последняя секунда дня, и её доли.
+ */
+export function zonedDayWindow(
+  from: string,
+  to: string,
+  timeZone: string = DEFAULT_TIME_ZONE,
+): { startsAt: string; endsBefore: string } {
+  const start = instantInZone(from, '00:00', timeZone) ?? new Date(`${from}T00:00:00Z`);
+
+  const nextDay = parseIsoDate(to);
+  nextDay.setDate(nextDay.getDate() + 1);
+  const dayAfter = toIsoDate(nextDay);
+  const end = instantInZone(dayAfter, '00:00', timeZone) ?? new Date(`${dayAfter}T00:00:00Z`);
+
+  return { startsAt: start.toISOString(), endsBefore: end.toISOString() };
+}
+
+/**
+ * Момент, когда в поясе компании наступят указанные дата и время.
+ * Нужен и записи на урок («завтра в 18:00» по местному, а хранить надо
+ * абсолютным временем), и границам отчётного дня.
+ */
+export function instantInZone(
+  isoDate: string,
+  hhmm: string,
+  timeZone: string = DEFAULT_TIME_ZONE,
+): Date | null {
+  if (!ISO_DATE.test(isoDate) || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
+
+  const [hours, minutes] = hhmm.split(':').map(Number);
+  if (hours > 23 || minutes > 59) return null;
+
+  // Первое приближение — как будто пояс совпадает с UTC, затем поправка на
+  // его смещение именно в эту дату.
+  const naive = new Date(`${isoDate}T${hhmm}:00Z`);
+  if (Number.isNaN(naive.getTime())) return null;
+
+  const offset = zoneOffsetMinutes(naive, timeZone);
+  return new Date(naive.getTime() - offset * 60000);
+}
+
+/** На сколько минут местное время опережает UTC в этот момент. */
+export function zoneOffsetMinutes(date: Date, timeZone: string): number {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone,
+      hour12: false,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+    }).formatToParts(date);
+
+    const value = (type: string) =>
+      Number(parts.find((part) => part.type === type)?.value ?? '0');
+
+    // 24 часа Intl отдаёт как «24:00» в полночь — приводим к нулю.
+    const hour = value('hour') % 24;
+
+    const asUtc = Date.UTC(
+      value('year'),
+      value('month') - 1,
+      value('day'),
+      hour,
+      value('minute'),
+      value('second'),
+    );
+
+    return Math.round((asUtc - date.getTime()) / 60000);
+  } catch {
+    // Неизвестный пояс — считаем по UTC, это лучше падения.
+    return 0;
+  }
+}
+
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function isValidIsoDate(value: string | undefined): value is string {

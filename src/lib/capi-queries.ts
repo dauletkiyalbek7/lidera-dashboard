@@ -1,5 +1,6 @@
 import 'server-only';
 
+import { zonedDayWindow } from '@/lib/period';
 import { creativeLabel } from '@/lib/queries';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
@@ -56,15 +57,17 @@ export async function getCapiOverview(
   companyId: string,
   from: string,
   to: string,
+  timeZone: string,
 ): Promise<CapiOverview> {
   const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
 
   const { data: events } = await supabase
     .from('capi_events')
     .select('id, sale_id, status, value, currency, response, created_at')
     .eq('company_id', companyId)
-    .gte('created_at', `${from}T00:00:00Z`)
-    .lte('created_at', `${to}T23:59:59Z`)
+    .gte('created_at', day.startsAt)
+    .lt('created_at', day.endsBefore)
     .order('created_at', { ascending: false })
     .limit(200);
 

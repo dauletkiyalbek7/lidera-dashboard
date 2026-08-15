@@ -5,7 +5,7 @@ import { resolveShiftRules, type ShiftRules } from '@/lib/attendance';
 import { createRateLookup } from '@/lib/currency';
 import { countUntouched, isReached, leadStage } from '@/lib/lead-status';
 import { wasHeld } from '@/lib/trial-status';
-import { eachDay } from '@/lib/period';
+import { eachDay, zonedDayWindow } from '@/lib/period';
 import {
   emptyPerformance,
   summarize,
@@ -154,8 +154,10 @@ export async function getDashboardData(
   companyId: string,
   from: string,
   to: string,
+  timeZone: string,
 ): Promise<DashboardData> {
   const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
 
   const [metricsResult, creativesResult, trialsResult, salesResult, leadsResult] =
     await Promise.all([
@@ -186,8 +188,8 @@ export async function getDashboardData(
         .from('leads')
         .select('id, creative_id, status')
         .eq('company_id', companyId)
-        .gte('created_at', `${from}T00:00:00Z`)
-        .lte('created_at', `${to}T23:59:59Z`),
+        .gte('created_at', day.startsAt)
+        .lt('created_at', day.endsBefore),
     ]);
 
   const metrics = await withoutSkippedCampaigns(
@@ -397,8 +399,10 @@ export async function getCreativeCards(
   companyId: string,
   from: string,
   to: string,
+  timeZone: string,
 ): Promise<CreativeCard[]> {
   const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
 
   const [
     { data: creatives },
@@ -429,8 +433,8 @@ export async function getCreativeCards(
         .select('id, creative_id')
         .eq('company_id', companyId)
         .not('creative_id', 'is', null)
-        .gte('created_at', `${from}T00:00:00Z`)
-        .lte('created_at', `${to}T23:59:59Z`),
+        .gte('created_at', day.startsAt)
+        .lt('created_at', day.endsBefore),
       supabase
         .from('sales')
         .select('amount, lead_id')
@@ -839,15 +843,17 @@ export async function getLeadStats(
   companyId: string,
   from: string,
   to: string,
+  timeZone: string,
 ): Promise<LeadStats> {
   const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
 
   const { data } = await supabase
     .from('leads')
     .select('status, created_at, creative_id')
     .eq('company_id', companyId)
-    .gte('created_at', `${from}T00:00:00Z`)
-    .lte('created_at', `${to}T23:59:59Z`);
+    .gte('created_at', day.startsAt)
+    .lt('created_at', day.endsBefore);
 
   const leads = data ?? [];
   const counts: Record<string, number> = {};
@@ -867,8 +873,10 @@ export async function getLeads(
   companyId: string,
   from: string,
   to: string,
+  timeZone: string,
 ): Promise<LeadListItem[]> {
   const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
 
   const [{ data: leads }, { data: creatives }, { data: employees }] = await Promise.all([
     supabase
@@ -877,8 +885,8 @@ export async function getLeads(
         'id, name, phone, source, platform, status, created_at, creative_id, assigned_to',
       )
       .eq('company_id', companyId)
-      .gte('created_at', `${from}T00:00:00Z`)
-      .lte('created_at', `${to}T23:59:59Z`)
+      .gte('created_at', day.startsAt)
+      .lt('created_at', day.endsBefore)
       .order('created_at', { ascending: false })
       .limit(LIST_LIMIT),
     supabase
@@ -968,8 +976,10 @@ export async function getTeam(
   companyId: string,
   from: string,
   to: string,
+  timeZone: string,
 ): Promise<TeamMember[]> {
   const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
 
   const { data: companyRow } = await supabase
     .from('companies')
@@ -998,8 +1008,8 @@ export async function getTeam(
       .select('id, status, assigned_to')
       .eq('company_id', companyId)
       .not('assigned_to', 'is', null)
-      .gte('created_at', `${from}T00:00:00Z`)
-      .lte('created_at', `${to}T23:59:59Z`),
+      .gte('created_at', day.startsAt)
+      .lt('created_at', day.endsBefore),
     supabase
       .from('sales')
       .select('amount, lead_id')
@@ -1268,8 +1278,10 @@ export async function getAttendance(
   companyId: string,
   from: string,
   to: string,
+  timeZone: string,
 ): Promise<AttendanceRecord[]> {
   const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
 
   const [{ data: employees }, { data: shifts }, { data: marks }] = await Promise.all([
     supabase
@@ -1282,8 +1294,8 @@ export async function getAttendance(
       .from('shifts')
       .select('employee_id, started_at, ended_at, late')
       .eq('company_id', companyId)
-      .gte('started_at', `${from}T00:00:00Z`)
-      .lte('started_at', `${to}T23:59:59Z`),
+      .gte('started_at', day.startsAt)
+      .lt('started_at', day.endsBefore),
     supabase
       .from('attendance')
       .select('employee_id, date, status')

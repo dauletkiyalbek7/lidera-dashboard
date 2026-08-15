@@ -1,4 +1,8 @@
-import { DEFAULT_TIME_ZONE } from '@/lib/period';
+import { DEFAULT_TIME_ZONE, instantInZone, zoneOffsetMinutes } from '@/lib/period';
+
+// Раньше расчёт времени в поясе компании жил здесь. Он же нужен границам
+// отчётного дня, поэтому переехал в period — держать две копии нельзя.
+export { instantInZone };
 
 /**
  * Касания лида — замена отъёму заявки.
@@ -120,68 +124,8 @@ function atLocalHour(base: Date, hour: number, timeZone: string): Date {
   return new Date(local.getTime() - offset * 60000);
 }
 
-/**
- * Момент, когда в поясе компании наступит указанные дата и время.
- * Нужен записи на урок: менеджер выбирает «завтра в 18:00» по местному,
- * а хранить это надо абсолютным временем.
- */
-export function instantInZone(
-  isoDate: string,
-  hhmm: string,
-  timeZone: string = DEFAULT_TIME_ZONE,
-): Date | null {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(isoDate) || !/^\d{2}:\d{2}$/.test(hhmm)) return null;
-
-  const [hours, minutes] = hhmm.split(':').map(Number);
-  if (hours > 23 || minutes > 59) return null;
-
-  // Первое приближение — как будто пояс совпадает с UTC, затем поправка на
-  // его смещение именно в эту дату.
-  const naive = new Date(`${isoDate}T${hhmm}:00Z`);
-  if (Number.isNaN(naive.getTime())) return null;
-
-  const offset = zoneOffsetMinutes(naive, timeZone);
-  return new Date(naive.getTime() - offset * 60000);
-}
-
 function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * HOUR);
-}
-
-/** На сколько минут местное время опережает UTC в этот момент. */
-function zoneOffsetMinutes(date: Date, timeZone: string): number {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone,
-      hour12: false,
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-    }).formatToParts(date);
-
-    const value = (type: string) =>
-      Number(parts.find((part) => part.type === type)?.value ?? '0');
-
-    // 24 часа Intl отдаёт как «24:00» в полночь — приводим к нулю.
-    const hour = value('hour') % 24;
-
-    const asUtc = Date.UTC(
-      value('year'),
-      value('month') - 1,
-      value('day'),
-      hour,
-      value('minute'),
-      value('second'),
-    );
-
-    return Math.round((asUtc - date.getTime()) / 60000);
-  } catch {
-    // Неизвестный пояс — считаем по UTC, это лучше падения.
-    return 0;
-  }
 }
 
 // -----------------------------------------------------------------------------

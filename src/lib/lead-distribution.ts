@@ -5,6 +5,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { resolveShiftRules } from '@/lib/attendance';
 import type { LeadStatus } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
+import { instantInZone, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
@@ -213,18 +214,17 @@ function byFairness(a: Candidate, b: Candidate): number {
   return a.received - b.received || a.lastAssignedAt - b.lastAssignedAt;
 }
 
-/** Начало суток компании — точка отсчёта для «сегодня». */
+/**
+ * Начало суток компании — точка отсчёта для «сегодня».
+ *
+ * Именно местных суток: по UTC день в Алматы начинался бы в пять утра, и всё,
+ * что раздано ночью, в счётчик смены не попадало бы — раздача считала бы этих
+ * менеджеров пустыми и наваливала бы им лишнего.
+ */
 function startOfToday(timeZone: string): string {
-  const now = new Date();
-  const local = new Intl.DateTimeFormat('en-CA', {
-    timeZone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).format(now);
-
-  // Запас в сутки: точная граница здесь не нужна, важно не тянуть всю историю.
-  return new Date(`${local}T00:00:00Z`).toISOString();
+  const today = zonedIsoDate(new Date(), timeZone);
+  const start = instantInZone(today, '00:00', timeZone);
+  return (start ?? new Date(`${today}T00:00:00Z`)).toISOString();
 }
 
 /** Раздать всё, что лежит без ответственного. Порядок — от самых старых. */

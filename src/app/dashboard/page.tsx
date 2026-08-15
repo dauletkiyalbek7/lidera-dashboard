@@ -30,6 +30,7 @@ export default async function DashboardPage({
     company.id,
     range.from,
     range.to,
+    company.timezone,
   );
 
   // Промежуточный шаг воронки зависит от типа бизнеса: пробное занятие

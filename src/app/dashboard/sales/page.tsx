@@ -35,7 +35,7 @@ export default async function SalesPage({
 
   const [sales, leads] = await Promise.all([
     getSales(company.id, range.from, range.to),
-    getLeads(company.id, range.from, range.to),
+    getLeads(company.id, range.from, range.to, company.timezone),
   ]);
 
   // Подпись лида в выпадающем списке: по имени и телефону его легко узнать.

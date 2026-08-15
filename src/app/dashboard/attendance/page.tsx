@@ -43,7 +43,7 @@ export default async function AttendancePage({
 }) {
   const { company } = await requireFullAccess();
   const range = resolveRange(await searchParams, company.timezone);
-  const rows = await getAttendance(company.id, range.from, range.to);
+  const rows = await getAttendance(company.id, range.from, range.to, company.timezone);
 
   const mode = company.shift_mode as ShiftMode;
   const manual = manualStatusesFor(company.attendance_statuses);

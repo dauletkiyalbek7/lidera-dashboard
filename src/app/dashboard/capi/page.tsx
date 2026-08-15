@@ -54,7 +54,7 @@ export default async function CapiPage({
   const range = resolveRange(await searchParams, company.timezone);
 
   const [overview, settings] = await Promise.all([
-    getCapiOverview(company.id, range.from, range.to),
+    getCapiOverview(company.id, range.from, range.to, company.timezone),
     getCompanyCapiSettings(company.id),
   ]);
 

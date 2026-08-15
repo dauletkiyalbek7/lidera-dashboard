@@ -23,7 +23,7 @@ export default async function FinancePage({
   const range = resolveRange(await searchParams, company.timezone);
 
   const [{ totals, trend }, subscription] = await Promise.all([
-    getDashboardData(company.id, range.from, range.to),
+    getDashboardData(company.id, range.from, range.to, company.timezone),
     getSubscription(company.id),
   ]);
 

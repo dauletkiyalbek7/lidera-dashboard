@@ -56,7 +56,7 @@ export default async function TeamPage({
   const range = resolveRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
-  const team = await getTeam(company.id, range.from, range.to);
+  const team = await getTeam(company.id, range.from, range.to, company.timezone);
   const companyMode = company.shift_mode as ShiftMode;
   const active = team.filter((member) => member.status === 'active');
   const linked = active.filter((member) => member.telegramLinked).length;

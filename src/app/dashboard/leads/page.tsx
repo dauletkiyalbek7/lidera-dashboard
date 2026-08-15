@@ -60,8 +60,8 @@ export default async function LeadsPage({
   const funnelType = company.funnel_type as FunnelType;
 
   const [leads, stats, creatives, employees, queued] = await Promise.all([
-    getLeads(company.id, range.from, range.to),
-    getLeadStats(company.id, range.from, range.to),
+    getLeads(company.id, range.from, range.to, company.timezone),
+    getLeadStats(company.id, range.from, range.to, company.timezone),
     getCreativeOptions(company.id),
     getAssignableEmployees(company.id),
     countUnassignedLeads(company.id),

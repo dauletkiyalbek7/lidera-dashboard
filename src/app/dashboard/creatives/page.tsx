@@ -43,7 +43,7 @@ export default async function CreativesPage({
   const currency = company.currency;
   const range = resolveRange(await searchParams, company.timezone);
 
-  const cards = await getCreativeCards(company.id, range.from, range.to);
+  const cards = await getCreativeCards(company.id, range.from, range.to, company.timezone);
 
   // Показываем только то, что за период работало: тратило бюджет или приводило
   // людей. Креатив, который не крутился, в отчёте за этот период не при чём.

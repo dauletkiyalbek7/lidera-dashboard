@@ -13,8 +13,9 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { FUNNEL_LABELS, middleStepValue, type FunnelType } from '@/lib/metrics';
+import { moneyView } from '@/lib/money-view';
 import { resolveRange } from '@/lib/period';
-import { getDashboardData } from '@/lib/queries';
+import { getAdSpendCurrency, getDashboardData } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Dashboard' };
 
@@ -26,12 +27,18 @@ export default async function DashboardPage({
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
-  const { totals, trend, creatives, hasAdData } = await getDashboardData(
-    company.id,
-    range.from,
-    range.to,
-    company.timezone,
-  );
+  const [{ totals, trend, creatives, hasAdData, spendSource }, accountCurrency] =
+    await Promise.all([
+      getDashboardData(company.id, range.from, range.to, company.timezone),
+      getAdSpendCurrency(company.id),
+    ]);
+
+  // Правило то же, что в «Рекламе»: деньги площадки — в её валюте, деньги
+  // бизнеса — в валюте продаж. Одно на все разделы, чтобы не разъезжалось.
+  const view = moneyView(company.currency, currency, accountCurrency);
+  const spendRow = { spend: totals.spend, spendSource };
+  const adSpend = view.spendOf(spendRow);
+  const otherSpend = view.otherSpendOf(spendRow);
 
   // Промежуточный шаг воронки зависит от типа бизнеса: пробное занятие
   // у школы, «взято в работу» у прямых продаж.
@@ -65,13 +72,33 @@ export default async function DashboardPage({
 
         {/* KPI-строка: расход и выручка — главные числа, поэтому выделены */}
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <StatTile label="Расход" value={formatMoney(totals.spend, { currency })} />
+          <StatTile
+            label="Расход"
+            value={formatMoney(adSpend, { currency: view.adCurrency })}
+            hint={
+              view.showBoth
+                ? formatMoney(otherSpend, { currency: view.otherCurrency })
+                : undefined
+            }
+          />
           <StatTile
             label="Лиды"
             value={formatNumber(totals.leads)}
             hint={`Клики: ${formatNumber(totals.clicks)}`}
           />
-          <StatTile label="CPL" value={formatMoney(totals.cpl, { currency })} />
+          <StatTile
+            label="CPL"
+            value={
+              totals.leads
+                ? formatMoney(adSpend / totals.leads, { currency: view.adCurrency })
+                : '—'
+            }
+            hint={
+              view.showBoth && totals.leads
+                ? formatMoney(otherSpend / totals.leads, { currency: view.otherCurrency })
+                : undefined
+            }
+          />
           <StatTile label={funnel.middleColumn} value={formatNumber(middle)} />
           <StatTile
             label="Продажи"
@@ -128,7 +155,14 @@ export default async function DashboardPage({
             }
           />
           {creatives.length > 0 ? (
-            <CreativeTable creatives={creatives} funnelType={funnelType} currency={currency} limit={5} />
+            <CreativeTable
+              creatives={creatives}
+              funnelType={funnelType}
+              currency={currency}
+              adCurrency={view.adCurrency}
+              spendOf={view.spendOf}
+              limit={5}
+            />
           ) : (
             <p className="px-6 py-10 text-center text-sm text-muted">
               За выбранный период по креативам нет данных.

@@ -1,5 +1,5 @@
 import { Badge } from '@/components/ui/badge';
-import { formatMoney, formatNumber, formatRatio } from '@/lib/format';
+import { currencySymbol, formatNumber, formatRatio } from '@/lib/format';
 import {
   FUNNEL_LABELS,
   middleStepValue,
@@ -31,11 +31,18 @@ export function CreativeTable({
   creatives,
   funnelType,
   currency,
+  adCurrency,
+  spendOf,
   limit,
 }: {
   creatives: CreativePerformance[];
   funnelType: FunnelType;
+  /** Валюта денег компании: в ней выручка. */
   currency: string;
+  /** Валюта рекламных денег: в ней расход и цена лида. */
+  adCurrency: string;
+  /** Расход строки в рекламной валюте — правило одно на все разделы. */
+  spendOf: (row: CreativePerformance) => number;
   limit?: number;
 }) {
   const rows = limit ? creatives.slice(0, limit) : creatives;
@@ -47,12 +54,18 @@ export function CreativeTable({
         <thead className="border-b border-line text-[12.5px] text-muted">
           <tr>
             <th scope="col" className="px-5 py-3 font-medium sm:px-6">Креатив</th>
-            <th scope="col" className="px-3 py-3 text-right font-medium">Расход</th>
+            <th scope="col" className="px-3 py-3 text-right font-medium">
+              Расход, {currencySymbol(adCurrency)}
+            </th>
             <th scope="col" className="px-3 py-3 text-right font-medium">Лиды</th>
-            <th scope="col" className="px-3 py-3 text-right font-medium">CPL</th>
+            <th scope="col" className="px-3 py-3 text-right font-medium">
+              CPL, {currencySymbol(adCurrency)}
+            </th>
             <th scope="col" className="px-3 py-3 text-right font-medium">{middleColumn}</th>
             <th scope="col" className="px-3 py-3 text-right font-medium">Продажи</th>
-            <th scope="col" className="px-3 py-3 text-right font-medium">Выручка</th>
+            <th scope="col" className="px-3 py-3 text-right font-medium">
+              Выручка, {currencySymbol(currency)}
+            </th>
             <th scope="col" className="px-3 py-3 text-right font-medium">ROAS</th>
             <th scope="col" className="px-5 py-3 text-right font-medium sm:px-6">Оценка</th>
           </tr>
@@ -60,6 +73,7 @@ export function CreativeTable({
         <tbody className="divide-y divide-line">
           {rows.map((creative) => {
             const verdict = verdictByRoas(creative.roas);
+            const spend = spendOf(creative);
             return (
               <tr key={creative.id} className="transition-colors hover:bg-surface-2/60">
                 <th scope="row" className="px-5 py-3.5 text-left font-normal sm:px-6">
@@ -70,13 +84,13 @@ export function CreativeTable({
                   </span>
                 </th>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
-                  {formatMoney(creative.spend, { compact: true, currency })}
+                  {formatNumber(spend, spend < 100 ? 2 : 0)}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
                   {formatNumber(creative.leads)}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
-                  {formatMoney(creative.cpl, { currency })}
+                  {creative.leads ? formatNumber(spend / creative.leads, 2) : '—'}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right text-ink-soft">
                   {formatNumber(middleStepValue(funnelType, creative))}
@@ -85,7 +99,7 @@ export function CreativeTable({
                   {formatNumber(creative.sales)}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right font-medium text-ink">
-                  {formatMoney(creative.revenue, { compact: true, currency })}
+                  {creative.revenue ? formatNumber(creative.revenue, 0) : '—'}
                 </td>
                 <td className="tabular px-3 py-3.5 text-right font-medium text-ink">
                   {formatRatio(creative.roas)}

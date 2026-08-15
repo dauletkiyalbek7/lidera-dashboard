@@ -179,10 +179,14 @@ export type CreativePerformance = PerformanceSummary & {
   name: string;
   platform: string;
   format: string | null;
+  /** Расход в валюте кабинета. null — пересчёта не было, берите spend. */
+  spendSource: number | null;
 };
 
 export type DashboardData = {
   totals: PerformanceSummary;
+  /** Общий расход в валюте кабинета. null — пересчёта не было. */
+  spendSource: number | null;
   trend: TrendPoint[];
   creatives: CreativePerformance[];
   hasAdData: boolean;
@@ -281,6 +285,9 @@ export async function getDashboardData(
 
   // --- Сквозная аналитика по креативам -----------------------------------
   const perCreative = new Map<string, PerformanceInput>();
+  // Расход в валюте кабинета держим отдельно: в PerformanceInput ему не место,
+  // там считаются деньги, и все — в одной валюте.
+  const sourceSpend = new Map<string, number>();
 
   const bucket = (id: string) => {
     let value = perCreative.get(id);
@@ -297,6 +304,13 @@ export async function getDashboardData(
     target.spend += Number(row.spend);
     target.impressions += Number(row.impressions);
     target.clicks += Number(row.clicks);
+
+    if (row.spend_source !== undefined) {
+      sourceSpend.set(
+        row.creative_id,
+        (sourceSpend.get(row.creative_id) ?? 0) + Number(row.spend_source),
+      );
+    }
   }
 
   for (const lead of leads) {
@@ -331,6 +345,7 @@ export async function getDashboardData(
         name: creativeLabel(creative, index + 1),
         platform: creative.platform,
         format: creative.format,
+        spendSource: sourceSpend.get(creative.id) ?? null,
         ...summarize(input),
       };
     })
@@ -339,6 +354,7 @@ export async function getDashboardData(
 
   return {
     totals,
+    spendSource: sum(metrics, (row) => Number(row.spend_source ?? 0)) || null,
     trend,
     creatives: creativePerformance,
     hasAdData: metrics.length > 0,

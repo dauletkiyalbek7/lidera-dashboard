@@ -47,7 +47,7 @@ const COMPANY_NAV: NavGroup[] = [
     items: [
       { href: '/dashboard/ads', label: 'Реклама', icon: IconAds },
       { href: '/dashboard/creatives', label: 'Креативы', icon: IconCreatives },
-      { href: '/dashboard/capi', label: 'CAPI', icon: IconIntegrations },
+      { href: '/dashboard/capi', label: 'CAPI', icon: IconIntegrations, staff: true },
     ],
   },
   {
@@ -115,7 +115,11 @@ export function navFor(
   key: NavKey,
   funnelType: FunnelType,
   staffOnly = false,
+  staffRole: string | null = null,
 ): NavGroup[] {
+  // CAPI — работа таргетолога: остальным сотрудникам раздел не нужен, и
+  // отправлять события они всё равно не могут.
+  const capiOnly = staffOnly && staffRole !== 'targetolog';
   return NAV_BY_KEY[key]
     .map((group) => ({
       ...group,
@@ -123,7 +127,8 @@ export function navFor(
         (item) =>
           !item.soon &&
           (!item.onlyFunnel || item.onlyFunnel === funnelType) &&
-          (!staffOnly || item.staff === true),
+          (!staffOnly || item.staff === true) &&
+          !(capiOnly && item.href === '/dashboard/capi'),
       ),
     }))
     .filter((group) => group.items.length > 0);

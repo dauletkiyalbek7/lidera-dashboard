@@ -31,12 +31,25 @@ export type CapiEventItem = {
   test: boolean;
 };
 
+/** Оплаченная продажа, о которой Meta ещё не знает. */
+export type PendingSale = {
+  saleId: string;
+  date: string;
+  amount: number;
+  customerName: string | null;
+  phone: string | null;
+  creativeName: string | null;
+  creativeId: string | null;
+  /** Оценка продажника: на холодных рекламу не учат. */
+  quality: 'hot' | 'cold' | null;
+};
+
 export type CapiOverview = {
   events: CapiEventItem[];
   sent: number;
   failed: number;
   /** Оплаченные продажи за период, о которых Meta так и не узнала. */
-  missing: number;
+  pending: PendingSale[];
 };
 
 export async function getCapiOverview(
@@ -105,29 +118,78 @@ export async function getCapiOverview(
     };
   });
 
-  // Оплаченные продажи, по которым события так и не ушло: именно они и есть
-  // потерянное обучение рекламы.
+  // Оплаченные продажи, по которым события ещё не ушло: это и есть очередь
+  // таргетолога — он решает, кого отправлять.
   const { data: paid } = await supabase
     .from('sales')
-    .select('id')
+    .select('id, amount, sale_date, lead_id')
     .eq('company_id', companyId)
     .eq('status', 'paid')
     .gte('sale_date', from)
-    .lte('sale_date', to);
+    .lte('sale_date', to)
+    .order('sale_date', { ascending: false });
+
+  const { data: allSent } = await supabase
+    .from('capi_events')
+    .select('sale_id')
+    .eq('company_id', companyId)
+    .eq('status', 'sent');
 
   const reported = new Set(
-    (events ?? [])
-      .filter((event) => event.status === 'sent' && event.sale_id)
-      .map((event) => event.sale_id as string),
+    (allSent ?? []).map((event) => event.sale_id).filter((id): id is string => !!id),
   );
+
+  const pendingLeadIds = [
+    ...new Set(
+      (paid ?? [])
+        .filter((sale) => !reported.has(sale.id))
+        .map((sale) => sale.lead_id)
+        .filter((id): id is string => !!id),
+    ),
+  ];
+
+  const { data: pendingLeads } = pendingLeadIds.length
+    ? await supabase
+        .from('leads')
+        .select('id, name, phone, creative_id, quality')
+        .in('id', pendingLeadIds)
+    : { data: [] as PendingLeadRow[] };
+
+  const pendingLeadById = new Map((pendingLeads ?? []).map((lead) => [lead.id, lead]));
+
+  const pending: PendingSale[] = (paid ?? [])
+    .filter((sale) => !reported.has(sale.id))
+    .map((sale) => {
+      const lead = sale.lead_id ? pendingLeadById.get(sale.lead_id) : undefined;
+      const creativeId = lead?.creative_id ?? null;
+
+      return {
+        saleId: sale.id,
+        date: sale.sale_date,
+        amount: Number(sale.amount),
+        customerName: lead?.name ?? null,
+        phone: lead?.phone ?? null,
+        creativeId,
+        creativeName: creativeId ? (creativeNames.get(creativeId) ?? null) : null,
+        quality: lead?.quality ?? null,
+      };
+    });
 
   return {
     events: items,
     sent: items.filter((item) => item.status === 'sent').length,
     failed: items.filter((item) => item.status === 'failed').length,
-    missing: (paid ?? []).filter((sale) => !reported.has(sale.id)).length,
+    pending,
   };
 }
+
+type PendingLeadRow = {
+  id: string;
+  name: string;
+  phone: string | null;
+  creative_id: string | null;
+  quality: 'hot' | 'cold' | null;
+};
 
 export type CapiSettingsView = {
   datasetId: string;

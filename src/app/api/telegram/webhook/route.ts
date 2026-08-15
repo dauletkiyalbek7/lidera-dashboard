@@ -19,7 +19,7 @@ import {
   shortCreativeLabel,
   syncTrialForLead,
 } from '@/lib/trials';
-import { sendPurchaseForSale } from '@/lib/capi';
+import { LEAD_QUALITY, isLeadQuality, qualityBadge } from '@/lib/lead-quality';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import {
   leadCard,
@@ -27,6 +27,7 @@ import {
   bookingDayButtons,
   bookingTimeButtons,
   bookingSellerButtons,
+  qualityButtons,
   BOOKING_HOURS,
   escapeHtml,
 } from '@/lib/telegram-lead-card';
@@ -567,6 +568,7 @@ async function handleCallback(query: TelegramCallbackQuery) {
   if (kind === 'bt') return pickTime(query, chatId, employee, leadId, value);
   if (kind === 'bs') return pickSeller(query, chatId, employee, leadId, value);
   if (kind === 'tr') return applyTrial(query, chatId, employee, leadId, value);
+  if (kind === 'q') return applyQuality(query, chatId, employee, leadId, value);
 
   return answerCallback(query.id);
 }
@@ -776,15 +778,41 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
 
   if (!sale) return sendMessage(chatId, 'Не удалось сохранить продажу. Скажите директору.');
 
-  const result = await sendPurchaseForSale(employee.company_id, sale.id);
-
-  const note = result.ok
-    ? 'Событие ушло в Meta — реклама научится искать похожих.'
-    : `В Meta не ушло: ${result.error}`;
-
+  // В Meta событие отсюда не уходит: сначала продажник оценивает клиента, а
+  // отправляет его таргетолог. Обучать рекламу на случайном покупателе значит
+  // просить её искать таких же.
   return sendMessage(
     chatId,
-    `✅ Продажа записана: <b>${formatAmount(amount)} ${company?.currency ?? 'KZT'}</b>.\n${note}`,
+    `✅ Продажа записана: <b>${formatAmount(amount)} ${company?.currency ?? 'KZT'}</b>.\n\nКакой это клиент? От этого зависит, отправлять ли покупку в рекламный кабинет.`,
+    { inline: qualityButtons(trial.lead_id) },
+  );
+}
+
+/** Оценка клиента: её ставит тот, кто с ним разговаривал. */
+async function applyQuality(
+  query: TelegramCallbackQuery,
+  chatId: number,
+  employee: Employee,
+  leadId: string,
+  value: string,
+) {
+  if (!isLeadQuality(value)) return answerCallback(query.id, 'Неизвестная оценка.');
+
+  const supabase = createAdminSupabase();
+  const { data: lead } = await supabase
+    .from('leads')
+    .update({ quality: value })
+    .eq('id', leadId)
+    .eq('company_id', employee.company_id)
+    .select('name')
+    .maybeSingle();
+
+  if (!lead) return answerCallback(query.id, 'Клиент не найден.');
+
+  await answerCallback(query.id, LEAD_QUALITY[value].label);
+  return sendMessage(
+    chatId,
+    `${qualityBadge(value)} — <b>${escapeHtml(lead.name || 'клиент')}</b>.\n${LEAD_QUALITY[value].hint}.`,
     { keyboard: KEYBOARD_ON },
   );
 }

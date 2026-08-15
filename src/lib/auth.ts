@@ -147,6 +147,22 @@ async function observedCompany(): Promise<CompanyRow | null> {
 
 /** Админ-панель платформы. */
 /**
+ * Раздел CAPI: директор и таргетолог.
+ *
+ * Отправка покупок в рекламный кабинет — работа таргетолога, поэтому раздел
+ * открыт и ему, хотя остальные разделы руководства для сотрудников закрыты.
+ */
+export async function requireCapiAccess(): Promise<
+  SessionContext & { company: CompanyRow }
+> {
+  const context = await requireCompanySession();
+  if (context.employee && context.employee.role !== 'targetolog') {
+    redirect('/dashboard/leads');
+  }
+  return context;
+}
+
+/**
  * Раздел только для руководства: директора, РОПа и администратора.
  *
  * Рядового сотрудника уводим к его заявкам. Данные компании и без этого

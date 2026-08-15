@@ -9,11 +9,12 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconIntegrations } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireFullAccess } from '@/lib/auth';
+import { requireCapiAccess } from '@/lib/auth';
 import { getCapiOverview, getCompanyCapiSettings } from '@/lib/capi-queries';
-import { formatDateTime, formatMoney, formatNumber } from '@/lib/format';
+import { formatDate, formatDateTime, formatMoney, formatNumber } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
 import { CapiSettingsForm } from './settings-form';
+import { PendingSend, QualityMark } from './pending-list';
 
 /**
  * Раздел «CAPI» — что платформа рассказала Meta о покупках.
@@ -34,12 +35,22 @@ const COLUMNS = [
   { key: 'status', label: 'Ответ Meta' },
 ];
 
+const PENDING_COLUMNS = [
+  { key: 'date', label: 'Продажа' },
+  { key: 'customer', label: 'Покупатель' },
+  { key: 'phone', label: 'Телефон' },
+  { key: 'creative', label: 'Креатив' },
+  { key: 'quality', label: 'Оценка' },
+  { key: 'amount', label: 'Сумма', align: 'right' as const },
+  { key: 'send', label: '', align: 'right' as const },
+];
+
 export default async function CapiPage({
   searchParams,
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireFullAccess();
+  const { company } = await requireCapiAccess();
   const range = resolveRange(await searchParams, company.timezone);
 
   const [overview, settings] = await Promise.all([
@@ -69,12 +80,12 @@ export default async function CapiPage({
             hint={overview.failed ? 'Meta отклонила событие — причина в таблице' : 'Ошибок нет'}
           />
           <StatTile
-            label="Продажи без события"
-            value={formatNumber(overview.missing)}
+            label="Ждут отправки"
+            value={formatNumber(overview.pending.length)}
             hint={
-              overview.missing
-                ? 'Оплачены, но Meta о них не знает — реклама на них не учится'
-                : 'Обо всех оплатах сообщили'
+              overview.pending.length
+                ? 'Оплачены — решите, кого отправлять в рекламный кабинет'
+                : 'Очередь пуста'
             }
           />
           <StatTile
@@ -98,6 +109,43 @@ export default async function CapiPage({
                 {settings.lastError}
               </p>
             </div>
+          </Card>
+        ) : null}
+
+        {overview.pending.length > 0 ? (
+          <Card className="mt-4">
+            <CardHeader
+              title="Ждут отправки в Meta"
+              subtitle="Оценку ставит продажник сразу после продажи. На холодных клиентах рекламу учить вредно — она пойдёт искать таких же"
+            />
+            <TableShell columns={PENDING_COLUMNS} minWidth={900}>
+              {overview.pending.map((sale) => (
+                <tr key={sale.saleId} className="transition-colors hover:bg-surface-2/60">
+                  <Td first className="tabular text-muted">{formatDate(sale.date)}</Td>
+                  <Td className="font-medium text-ink">{sale.customerName ?? 'Без имени'}</Td>
+                  <Td className="tabular text-ink-soft">{sale.phone ?? '—'}</Td>
+                  <Td className="text-ink-soft">
+                    {sale.creativeId && sale.creativeName ? (
+                      <Link
+                        href={`/dashboard/creatives/${sale.creativeId}`}
+                        className="whitespace-nowrap text-lime transition-colors hover:text-lime-strong"
+                      >
+                        {sale.creativeName}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </Td>
+                  <Td><QualityMark quality={sale.quality} /></Td>
+                  <Td align="right" className="tabular text-ink">
+                    {formatMoney(sale.amount, { currency: company.currency })}
+                  </Td>
+                  <Td last align="right">
+                    <PendingSend saleId={sale.saleId} quality={sale.quality} />
+                  </Td>
+                </tr>
+              ))}
+            </TableShell>
           </Card>
         ) : null}
 

@@ -12,7 +12,7 @@
 
 import type { FunnelType } from '@/lib/metrics';
 
-export const EMPLOYEE_ROLE_ORDER = ['rop', 'manager', 'salesperson'] as const;
+export const EMPLOYEE_ROLE_ORDER = ['rop', 'manager', 'salesperson', 'targetolog'] as const;
 
 export type EmployeeRole = (typeof EMPLOYEE_ROLE_ORDER)[number];
 
@@ -36,7 +36,17 @@ export const EMPLOYEE_ROLE: Record<
     hint: 'Проводит пробное занятие и закрывает продажу',
     onlyTrialFunnel: true,
   },
+  targetolog: {
+    label: 'Таргетолог',
+    short: 'Таргет',
+    hint: 'Ведёт рекламу и решает, какие покупки отправлять в рекламный кабинет',
+  },
 };
+
+/** Кому открыт раздел CAPI: отправку событий доверяем только таргетологу. */
+export function sendsCapi(role: EmployeeRole): boolean {
+  return role === 'targetolog';
+}
 
 export function isEmployeeRole(value: string): value is EmployeeRole {
   return value in EMPLOYEE_ROLE;

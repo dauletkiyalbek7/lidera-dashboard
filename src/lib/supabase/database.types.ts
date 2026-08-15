@@ -278,6 +278,8 @@ export type LeadRow = Timestamps & {
   /** Номер отправки формы: защита от повторной заявки. */
   external_id: string | null;
   status: LeadStatus;
+  /** Оценка продажника: hot — целевой, cold — случайный. */
+  quality: 'hot' | 'cold' | null;
   assigned_to: string | null;
   assigned_at: string | null;
   /** Ближайшее обещание перезвонить и счётчик попыток — для напоминаний. */

@@ -1,5 +1,6 @@
 import { LEAD_STATUS, leadStatusesFor, type LeadStatus } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
+import { LEAD_QUALITY, LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import type { InlineButton } from '@/lib/telegram';
 
 /**
@@ -92,6 +93,20 @@ export function trialButtons(trialId: string): InlineButton[][] {
       { text: '🚫 Не одобрил', callback_data: `tr:${trialId}:rejected` },
     ],
     [{ text: '🔄 Отменён', callback_data: `tr:${trialId}:canceled` }],
+  ];
+}
+
+/**
+ * Оценка клиента после продажи. Иконки крупные и однозначные: продажник
+ * жмёт их на бегу, читать подписи ему некогда.
+ */
+export function qualityButtons(leadId: string | null): InlineButton[][] {
+  if (!leadId) return [];
+  return [
+    LEAD_QUALITY_ORDER.map((quality) => ({
+      text: `${LEAD_QUALITY[quality].icon} ${LEAD_QUALITY[quality].label}`,
+      callback_data: `q:${leadId}:${quality}`,
+    })),
   ];
 }
 

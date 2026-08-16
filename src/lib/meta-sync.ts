@@ -424,9 +424,15 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   //   дневной — охват и среднее время просмотра. Охват это число людей, а
   //     не сумма: один и тот же человек виден в нескольких часах, и сложение
   //     часов дало бы цифру больше правды. Такие метрики оставляем дневными.
+  //
+  // Третий запрос идёт не по объявлениям, а по кабинету целиком — из него мы
+  // берём итоги для сверки с Ads Manager. Сложить объявления вместо этого
+  // нельзя: диалог, который вели два объявления, кабинет считает одним, а сумма
+  // строк — двумя. Разложить его по объявлениям и не получится, поэтому такие
+  // метрики берём там, где Meta их уже свела.
   const windows = weekWindows(since, until);
 
-  const [hourlyPages, dailyPages] = await Promise.all([
+  const [hourlyPages, dailyPages, accountPages] = await Promise.all([
     Promise.all(
       windows.map((window) =>
         graph<MetaInsight>(
@@ -450,10 +456,21 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
         ),
       ),
     ),
+    Promise.all(
+      windows.map((window) =>
+        graph<MetaInsight>(
+          `${GRAPH}/${actId}/insights?time_increment=1` +
+            `&fields=date_start,spend,impressions,clicks,actions` +
+            `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
+            `&limit=100&access_token=${token}`,
+        ),
+      ),
+    ),
   ]);
 
   const insights = hourlyPages.flat();
   const dailyInsights = dailyPages.flat();
+  const accountInsights = accountPages.flat();
 
   // --- 4. Объявления и креативы -------------------------------------------
   // Забираем только те объявления, что за период работали: в кабинете их
@@ -604,46 +621,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // Охват и среднее время просмотра — из дневного запроса. По часам их не
   // разложить, поэтому день кабинета кладём на одноимённый наш день: из его
   // 24 часов 23 приходятся именно на него.
-  // Итоги по календарю кабинета — этим числом директор сверяется с Ads Manager.
-  //
-  // Считаем их из дневного запроса, а не из почасового. Заявки и переписки Meta
-  // дедуплицирует в пределах суток: один и тот же человек, попавший в два часа,
-  // в сумме часов даёт двойку, а в дне — единицу. Расход так складывается верно,
-  // а люди нет, и число переставало сходиться с кабинетом на 1–2 в день — ровно
-  // ради этой сходимости таблица и заведена.
-  const accountDays = new Map<string, AccountDayRow>();
-  // Каждое имя события считаем отдельно и по всему дню. Наибольшее в семействе
-  // берётся уже над этими суммами, а не над отдельным объявлением: у одного
-  // объявления больше «onsite_web_lead», у другого «lead», и максимумы по
-  // строкам в сумме дают людей, которых не было, — те самые лишние 1–2 в день.
-  const actionsByDay = new Map<string, Map<string, number>>();
-
   for (const row of dailyInsights) {
-    const accountDay = accountDays.get(row.date_start) ?? {
-      company_id: account.company_id,
-      ad_account_id: account.id,
-      platform: 'meta' as const,
-      date: row.date_start,
-      leads: 0,
-      spend: 0,
-      impressions: 0,
-      clicks: 0,
-      currency: accountCurrency,
-    };
-    accountDay.spend += Number(row.spend ?? 0);
-    accountDay.impressions += Number(row.impressions ?? 0);
-    accountDay.clicks += Number(row.clicks ?? 0);
-    accountDays.set(row.date_start, accountDay);
-
-    const totals = actionsByDay.get(row.date_start) ?? new Map<string, number>();
-    for (const action of row.actions ?? []) {
-      totals.set(
-        action.action_type,
-        (totals.get(action.action_type) ?? 0) + (Number(action.value) || 0),
-      );
-    }
-    actionsByDay.set(row.date_start, totals);
-
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
 
@@ -683,20 +661,22 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (error) throw new Error(`не удалось сохранить метрики: ${error.message}`);
   }
 
-  // Итоги по календарю кабинета. Крайние дни окна тут оставляем как есть: это
-  // ровно то, что показывает Ads Manager за те же даты, а огрызков не бывает —
-  // сутки кабинета целиком лежат внутри запрошенного периода.
-  const accountDayRows = Array.from(accountDays.values()).map((row) => {
-    const totals = actionsByDay.get(row.date);
-    const best = (types: string[]) =>
-      types.reduce((top, type) => Math.max(top, totals?.get(type) ?? 0), 0);
-
-    return {
-      ...row,
-      spend: round2(row.spend),
-      leads: best(CONVERSATION_ACTIONS) + best(LEAD_ACTIONS),
-    };
-  });
+  // Итоги по календарю кабинета — ровно то, что показывает Ads Manager за те же
+  // даты. Числа берём как их свела сама Meta: диалог, который вели два
+  // объявления, в её отчёте один, а в сумме наших строк был бы двумя.
+  const accountDayRows: AccountDayRow[] = accountInsights.map((row) => ({
+    company_id: account.company_id,
+    ad_account_id: account.id,
+    platform: 'meta' as const,
+    date: row.date_start,
+    leads:
+      actionValue(row.actions, CONVERSATION_ACTIONS) +
+      actionValue(row.actions, LEAD_ACTIONS),
+    spend: round2(Number(row.spend ?? 0)),
+    impressions: Number(row.impressions ?? 0),
+    clicks: Number(row.clicks ?? 0),
+    currency: accountCurrency,
+  }));
 
   if (accountDayRows.length > 0) {
     const { error } = await supabase

@@ -42,7 +42,7 @@ export type NavKey = 'company' | 'admin';
 const COMPANY_NAV: NavGroup[] = [
   {
     title: 'Обзор',
-    items: [{ href: '/dashboard', label: 'Dashboard', icon: IconDashboard }],
+    items: [{ href: '/dashboard', label: 'Главная', icon: IconDashboard }],
   },
   {
     title: 'Реклама',

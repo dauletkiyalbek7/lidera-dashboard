@@ -3,7 +3,7 @@ import Link from 'next/link';
 
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { Td, TableShell } from '@/components/app/table';
+import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -36,16 +36,24 @@ const UNTOUCHED_HOURS = 24;
 
 export const metadata: Metadata = { title: 'Лиды' };
 
-const COLUMNS = [
+/**
+ * Кто ведёт лид и на каком он этапе — главное в этом списке, поэтому четыре
+ * ключевые колонки видны всегда, а справочные подключаются по мере ширины
+ * экрана. Иначе на ноутбуке «Ответственный» уезжает за правый край.
+ */
+const COLUMNS: TableColumn[] = [
   { key: 'name', label: 'Лид' },
-  { key: 'phone', label: 'Телефон' },
-  { key: 'source', label: 'Источник' },
-  { key: 'creative', label: 'Креатив' },
+  { key: 'phone', label: 'Телефон', showFrom: 'lg' },
+  { key: 'source', label: 'Источник', showFrom: 'md' },
+  { key: 'creative', label: 'Креатив', showFrom: 'xl' },
   { key: 'owner', label: 'Ответственный' },
-  { key: 'created', label: 'Получен' },
+  { key: 'created', label: 'Получен', showFrom: 'md' },
   { key: 'status', label: 'Статус' },
   { key: 'actions', label: 'Действия', align: 'right' as const },
 ];
+
+/** Ширина таблицы для каждого набора видимых колонок. */
+const TABLE_MIN_WIDTH = { base: 520, md: 820, lg: 1040, xl: 1280 };
 
 export default async function LeadsPage({
   searchParams,
@@ -154,19 +162,21 @@ export default async function LeadsPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1280}>
+            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
               {leads.map((lead) => (
                 <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
                     {lead.name || 'Без имени'}
                   </Td>
-                  <Td className="tabular text-ink-soft">{lead.phone ?? '—'}</Td>
-                  <Td className="text-ink-soft">
+                  <Td showFrom="lg" className="tabular text-ink-soft">
+                    {lead.phone ?? '—'}
+                  </Td>
+                  <Td showFrom="md" className="text-ink-soft">
                     {lead.platform
                       ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
                       : (lead.source ?? '—')}
                   </Td>
-                  <Td className="text-ink-soft">
+                  <Td showFrom="xl" className="text-ink-soft">
                     {lead.creativeId && lead.creativeName ? (
                       <Link
                         href={`/dashboard/creatives/${lead.creativeId}`}
@@ -191,7 +201,9 @@ export default async function LeadsPage({
                       />
                     )}
                   </Td>
-                  <Td className="tabular text-muted">{formatDateTime(lead.created_at)}</Td>
+                  <Td showFrom="md" className="tabular text-muted">
+                    {formatDateTime(lead.created_at)}
+                  </Td>
                   <Td>
                     <LeadStatusSelect
                       leadId={lead.id}

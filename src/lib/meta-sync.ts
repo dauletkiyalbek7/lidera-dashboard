@@ -24,6 +24,25 @@ const GRAPH = `https://graph.facebook.com/${API_VERSION}`;
 const WINDOW_DAYS = 30;
 
 /**
+ * Сколько кабинетов тянем одновременно.
+ *
+ * Один кабинет занимает около полуминуты, а функции на Vercel отведена
+ * минута. Друг друга кабинеты не ждут — время уходит на ответы Meta, а не на
+ * работу. Двойку не поднимаем: Meta считает частоту обращений по токену, и
+ * пачка параллельных запросов упирается в её ограничение.
+ */
+const ACCOUNT_CONCURRENCY = 2;
+
+/**
+ * Сколько времени готовы потратить на кабинеты.
+ *
+ * Остаток — запас на ответ. Если запустить кабинет впритык к лимиту функции,
+ * его убьют посреди записи: часть таблиц обновится, часть нет, и в отчёте о
+ * запуске об этом не будет ни слова. Лучше честно отложить до следующего раза.
+ */
+const TIME_BUDGET_MS = 40_000;
+
+/**
  * Обращения из переписок. Внутри семейства берём наибольшее, а не сумму:
  * Meta отдаёт одно и то же событие под несколькими именами, и сложение
  * удвоило бы людей.
@@ -89,11 +108,19 @@ export function isMetaConfigured(): boolean {
   return Boolean(process.env.META_ACCESS_TOKEN);
 }
 
-/** Синхронизация всех компаний, у которых подключён кабинет Meta. */
+/**
+ * Синхронизация всех компаний, у которых подключён кабинет Meta.
+ *
+ * Кабинеты идут парами и в порядке давности обновления: если времени на всех
+ * не хватило, следующий запуск начнёт с тех, кого отложили, и ни один кабинет
+ * не останется без синхронизации навсегда.
+ */
 export async function syncAllMetaAccounts(): Promise<{
   accounts: MetaSyncResult[];
   errors: { account: string; message: string }[];
+  skipped: string[];
 }> {
+  const startedAt = Date.now();
   const supabase = createAdminSupabase();
 
   // Демо-компании синхронизировать нечем: их кабинеты выдуманные, и Meta
@@ -112,10 +139,28 @@ export async function syncAllMetaAccounts(): Promise<{
     .eq('platform', 'meta')
     .not('account_id', 'is', null);
 
-  const accounts = (allAccounts ?? []).filter((row) => !demo.has(row.company_id));
+  // Отметку о прошлой синхронизации ставит noteSync — по ней и решаем, чья
+  // очередь. Кабинет, которого ещё не касались, идёт первым.
+  const { data: notes } = await supabase
+    .from('integrations')
+    .select('company_id, last_sync_at')
+    .eq('platform', 'meta');
+
+  const syncedAt = new Map(
+    (notes ?? []).map((row) => [row.company_id, row.last_sync_at ?? '']),
+  );
+
+  const accounts = (allAccounts ?? [])
+    .filter((row) => !demo.has(row.company_id))
+    .sort((left, right) =>
+      (syncedAt.get(left.company_id) ?? '').localeCompare(
+        syncedAt.get(right.company_id) ?? '',
+      ),
+    );
 
   const results: MetaSyncResult[] = [];
   const errors: { account: string; message: string }[] = [];
+  const skipped: string[] = [];
 
   // Курсы нужны раньше расходов: без них доллары кабинета не станут тенге.
   try {
@@ -127,18 +172,41 @@ export async function syncAllMetaAccounts(): Promise<{
     });
   }
 
-  for (const account of accounts) {
-    try {
-      results.push(await syncMetaAccount(account.id));
-    } catch (error) {
-      errors.push({
-        account: account.account_name,
-        message: error instanceof Error ? error.message : 'неизвестная ошибка',
-      });
+  for (let start = 0; start < accounts.length; start += ACCOUNT_CONCURRENCY) {
+    const batch = accounts.slice(start, start + ACCOUNT_CONCURRENCY);
+
+    if (Date.now() - startedAt > TIME_BUDGET_MS) {
+      skipped.push(...accounts.slice(start).map((row) => row.account_name));
+      break;
     }
+
+    const settled = await Promise.allSettled(
+      batch.map((account) => syncMetaAccount(account.id)),
+    );
+
+    settled.forEach((outcome, index) => {
+      if (outcome.status === 'fulfilled') {
+        results.push(outcome.value);
+        return;
+      }
+
+      errors.push({
+        account: batch[index].account_name,
+        message:
+          outcome.reason instanceof Error
+            ? outcome.reason.message
+            : 'неизвестная ошибка',
+      });
+    });
   }
 
-  return { accounts: results, errors };
+  if (skipped.length > 0) {
+    console.warn(
+      `cron/meta-sync: не хватило времени на кабинеты — ${skipped.join(', ')}`,
+    );
+  }
+
+  return { accounts: results, errors, skipped };
 }
 
 /**

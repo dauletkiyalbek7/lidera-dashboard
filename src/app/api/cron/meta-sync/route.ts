@@ -40,8 +40,10 @@ export async function POST(request: Request) {
 
   const result = await syncAllMetaAccounts();
 
+  // Отложенный кабинет — не успех: данные по нему остались вчерашними.
+  // Следующий запуск начнёт именно с него.
   return NextResponse.json({
-    ok: result.errors.length === 0,
+    ok: result.errors.length === 0 && result.skipped.length === 0,
     ...result,
   });
 }

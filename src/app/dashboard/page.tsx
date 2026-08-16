@@ -17,7 +17,7 @@ import { moneyView } from '@/lib/money-view';
 import { resolveRange } from '@/lib/period';
 import { getAdSpendCurrency, getDashboardData } from '@/lib/queries';
 
-export const metadata: Metadata = { title: 'Dashboard' };
+export const metadata: Metadata = { title: 'Главная' };
 
 export default async function DashboardPage({
   searchParams,
@@ -49,7 +49,7 @@ export default async function DashboardPage({
   return (
     <>
       <PageHeader
-        title="Dashboard"
+        title="Главная"
         description={`Сводка по компании «${company.name}» за ${range.label}.`}
         action={<DateRangePicker range={range} />}
       />

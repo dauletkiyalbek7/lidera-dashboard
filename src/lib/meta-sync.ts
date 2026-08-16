@@ -65,6 +65,24 @@ const LEAD_ACTIONS = [
   'onsite_conversion.lead_grouped',
 ];
 
+/**
+ * Кампания найма, а не продажи.
+ *
+ * Соискатель не клиент: его заявки и деньги не должны попадать ни в цену лида,
+ * ни в выручку. Узнаём по названию — других признаков у Meta нет, цель у таких
+ * кампаний та же самая.
+ *
+ * Правило срабатывает только на новых кампаниях и только на явных написаниях
+ * слова «вакансия». Сокращения вроде «vaaaac» им не поймать, поэтому главным
+ * способом остаётся тумблер «В отчёте» в таблице кампаний — он же и переживает
+ * синхронизацию.
+ */
+const HIRING_NAME = /вакан|vakan|vacan|hiring|recruit/i;
+
+function isHiringCampaign(name: string): boolean {
+  return HIRING_NAME.test(name);
+}
+
 /** Валюты, которые платформа умеет пересчитывать (курсы Нацбанка РК). */
 const SUPPORTED_CURRENCIES = ['KZT', 'USD', 'EUR', 'RUB'];
 
@@ -106,8 +124,6 @@ export type MetaSyncResult = {
   days: number;
   rows: number;
   spend: number;
-  /** Сколько суток кабинета записано для сверки с Ads Manager. */
-  accountDays: number;
 };
 
 export function isMetaConfigured(): boolean {
@@ -393,6 +409,17 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // не укладывается в отведённое функции время.
   const campaignIdByExternal = new Map<string, string>();
 
+  // Какие кампании уже заведены. Флаг «в отчёте» проставляем только новым:
+  // директор мог выключить кампанию руками, и синхронизация не вправе включать
+  // её обратно каждую ночь.
+  const { data: knownCampaigns } = await supabase
+    .from('campaigns')
+    .select('external_id')
+    .eq('company_id', account.company_id)
+    .eq('platform', 'meta');
+
+  const known = new Set((knownCampaigns ?? []).map((row) => row.external_id));
+
   if (campaigns.length > 0) {
     const { data: savedCampaigns } = await supabase
       .from('campaigns')
@@ -409,6 +436,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
           ...(numberByCampaign.has(campaign.id)
             ? { whatsapp_number: numberByCampaign.get(campaign.id) }
             : {}),
+          ...(known.has(campaign.id) ? {} : { counted: !isHiringCampaign(campaign.name) }),
         })),
         { onConflict: 'company_id,platform,external_id' },
       )
@@ -430,15 +458,9 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   //   дневной — охват и среднее время просмотра. Охват это число людей, а
   //     не сумма: один и тот же человек виден в нескольких часах, и сложение
   //     часов дало бы цифру больше правды. Такие метрики оставляем дневными.
-  //
-  // Третий запрос идёт не по объявлениям, а по кабинету целиком — из него мы
-  // берём итоги для сверки с Ads Manager. Сложить объявления вместо этого
-  // нельзя: диалог, который вели два объявления, кабинет считает одним, а сумма
-  // строк — двумя. Разложить его по объявлениям и не получится, поэтому такие
-  // метрики берём там, где Meta их уже свела.
   const windows = weekWindows(since, until);
 
-  const [hourlyPages, dailyPages, accountPages] = await Promise.all([
+  const [hourlyPages, dailyPages] = await Promise.all([
     Promise.all(
       windows.map((window) =>
         graph<MetaInsight>(
@@ -462,21 +484,10 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
         ),
       ),
     ),
-    Promise.all(
-      windows.map((window) =>
-        graph<MetaInsight>(
-          `${GRAPH}/${actId}/insights?time_increment=1` +
-            `&fields=date_start,spend,impressions,clicks,actions` +
-            `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
-            `&limit=100&access_token=${token}`,
-        ),
-      ),
-    ),
   ]);
 
   const insights = hourlyPages.flat();
   const dailyInsights = dailyPages.flat();
-  const accountInsights = accountPages.flat();
 
   // --- 4. Объявления и креативы -------------------------------------------
   // Забираем только те объявления, что за период работали: в кабинете их
@@ -573,11 +584,12 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (!campaignId) continue;
 
     const spend = Number(row.spend ?? 0);
-    // В одном кабинете рядом живут кампании на сайт и кампании в переписки:
-    // заявки и написавшие — разные люди, поэтому их складываем. Раньше при
-    // наличии переписок заявки с сайта терялись целиком.
+    // Заявка и переписка — разные события и разные люди, поэтому и колонки
+    // разные. Складывать их в одно число нельзя: заявка доходит до CRM, а
+    // написавший в WhatsApp остаётся в мессенджере, и смешанная цифра не
+    // сходится ни с кабинетом, ни с разделом «Лиды».
     const conversations = firstActionValue(row.actions, CONVERSATION_ACTIONS);
-    const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
+    const leads = actionValue(row.actions, LEAD_ACTIONS);
 
     // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
     // разбивку) остаётся на своём дне — это лучше, чем потерять её.
@@ -608,6 +620,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
       cpc: 0,
       cpm: 0,
       leads: 0,
+      conversations: 0,
       cpl: 0,
       video_plays: 0,
       video_completions: 0,
@@ -618,6 +631,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     current.impressions += Number(row.impressions ?? 0);
     current.clicks += Number(row.clicks ?? 0);
     current.leads += leads;
+    current.conversations += conversations;
     current.video_plays += plays;
     current.video_completions += completions;
 
@@ -667,32 +681,6 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (error) throw new Error(`не удалось сохранить метрики: ${error.message}`);
   }
 
-  // Итоги по календарю кабинета — ровно то, что показывает Ads Manager за те же
-  // даты. Числа берём как их свела сама Meta: диалог, который вели два
-  // объявления, в её отчёте один, а в сумме наших строк был бы двумя.
-  const accountDayRows: AccountDayRow[] = accountInsights.map((row) => ({
-    company_id: account.company_id,
-    ad_account_id: account.id,
-    platform: 'meta' as const,
-    date: row.date_start,
-    leads:
-      firstActionValue(row.actions, CONVERSATION_ACTIONS) +
-      actionValue(row.actions, LEAD_ACTIONS),
-    spend: round2(Number(row.spend ?? 0)),
-    impressions: Number(row.impressions ?? 0),
-    clicks: Number(row.clicks ?? 0),
-    currency: accountCurrency,
-  }));
-
-  if (accountDayRows.length > 0) {
-    const { error } = await supabase
-      .from('ad_account_days')
-      .upsert(accountDayRows, { onConflict: 'ad_account_id,date' });
-    if (error) {
-      throw new Error(`не удалось сохранить сутки кабинета: ${error.message}`);
-    }
-  }
-
   await supabase
     .from('ad_accounts')
     .update({ status: 'connected' })
@@ -703,22 +691,9 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     campaigns: campaignIdByExternal.size,
     days: new Set(rows.map((row) => row.date)).size,
     rows: rows.length,
-    accountDays: accountDayRows.length,
     spend: Number(rows.reduce((total, row) => total + row.spend, 0).toFixed(2)),
   };
 }
-
-type AccountDayRow = {
-  company_id: string;
-  ad_account_id: string;
-  platform: 'meta';
-  date: string;
-  leads: number;
-  spend: number;
-  impressions: number;
-  clicks: number;
-  currency: string | null;
-};
 
 type MetricRow = {
   company_id: string;
@@ -734,6 +709,7 @@ type MetricRow = {
   cpc: number;
   cpm: number;
   leads: number;
+  conversations: number;
   cpl: number;
   video_plays: number;
   video_completions: number;

@@ -192,26 +192,6 @@ export type AdRow = Timestamps & {
   status: 'active' | 'paused' | 'archived';
 }
 
-/**
- * Итоги по суткам рекламного кабинета — то же, что показывает Ads Manager.
- * Отдельно от ad_metrics: там те же часы разложены по нашим суткам, потому что
- * день кабинета начинается в 23:00 по Алматы.
- */
-export type AdAccountDayRow = {
-  id: string;
-  company_id: string;
-  ad_account_id: string;
-  platform: AdPlatform;
-  date: string;
-  leads: number;
-  spend: number;
-  impressions: number;
-  clicks: number;
-  /** Валюта поля spend — валюта кабинета. */
-  currency: string | null;
-  created_at: string;
-};
-
 export type AdMetricRow = {
   id: string;
   company_id: string;
@@ -227,7 +207,10 @@ export type AdMetricRow = {
   ctr: number;
   cpc: number;
   cpm: number;
+  /** Заявки с формы — то же, что «Лиды» в Ads Manager. */
   leads: number;
+  /** Начатые переписки в WhatsApp: до CRM они не доходят. */
+  conversations: number;
   cpl: number;
   /** Валюта поля spend. NULL — валюта компании (демо и ручные записи). */
   currency: string | null;
@@ -471,10 +454,6 @@ export type Database = {
       ads: TableDef<AdRow, 'company_id' | 'name'>;
       creatives: TableDef<CreativeRow, 'company_id' | 'name' | 'platform'>;
       ad_metrics: TableDef<AdMetricRow, 'company_id' | 'date'>;
-      ad_account_days: TableDef<
-        AdAccountDayRow,
-        'company_id' | 'ad_account_id' | 'date'
-      >;
       exchange_rates: TableDef<ExchangeRateRow, 'date' | 'code' | 'kzt_per_unit'>;
       capi_settings: TableDef<CapiSettingsRow, 'company_id' | 'dataset_id' | 'token_encrypted'>;
       capi_events: TableDef<CapiEventRow, 'company_id' | 'event_name' | 'event_id' | 'status'>;

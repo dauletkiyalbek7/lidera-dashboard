@@ -24,7 +24,6 @@ import { resolveRange } from '@/lib/period';
 import {
   getAdAccounts,
   getAdBreakdown,
-  getAccountDayTotals,
   getCampaigns,
   getCurrencyNote,
 } from '@/lib/queries';
@@ -43,8 +42,8 @@ const campaignColumns = (ad: string, own: string) => [
   { key: 'number', label: 'Номер' },
   { key: 'status', label: 'Статус' },
   { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
-  { key: 'conversions', label: 'Лиды', align: 'right' as const },
-  { key: 'cost', label: `Цена лида, ${ad}`, align: 'right' as const },
+  { key: 'conversions', label: 'Заявки', align: 'right' as const },
+  { key: 'cost', label: `Цена заявки, ${ad}`, align: 'right' as const },
   { key: 'revenue', label: `Выручка, ${own}`, align: 'right' as const },
   { key: 'roas', label: 'ROAS', align: 'right' as const },
   { key: 'counted', label: 'В отчёте', align: 'right' as const },
@@ -53,8 +52,8 @@ const campaignColumns = (ad: string, own: string) => [
 const numberColumns = (ad: string) => [
   { key: 'number', label: 'Номер WhatsApp' },
   { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
-  { key: 'conversions', label: 'Лиды', align: 'right' as const },
-  { key: 'cost', label: `Цена лида, ${ad}`, align: 'right' as const },
+  { key: 'conversions', label: 'Заявки', align: 'right' as const },
+  { key: 'cost', label: `Цена заявки, ${ad}`, align: 'right' as const },
   { key: 'share', label: 'Доля расхода', align: 'right' as const },
 ];
 
@@ -74,12 +73,11 @@ export default async function AdsPage({
   const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
 
-  const [accounts, campaigns, breakdown, currencyNote, accountDays] = await Promise.all([
+  const [accounts, campaigns, breakdown, currencyNote] = await Promise.all([
     getAdAccounts(company.id),
     getCampaigns(company.id),
     getAdBreakdown(company.id, range.from, range.to),
     getCurrencyNote(company.id, currency),
-    getAccountDayTotals(company.id, range.from, range.to),
   ]);
 
   const { totals } = breakdown;
@@ -94,14 +92,6 @@ export default async function AdsPage({
 
   /** Расход строки в той же валюте, что и заголовок колонки. */
   const adMoney = (row: { spend: number; spendSource: number | null }) => view.spendOf(row);
-
-  // Расход кабинета подписываем только когда он в той же валюте, что и цифра
-  // сверху: иначе рядом окажутся доллары и тенге, и подпись начнёт запутывать
-  // вместо того, чтобы сверять.
-  const accountSpend =
-    accountDays && accountDays.currency === adCurrency
-      ? formatMoney(accountDays.spend, { currency: adCurrency })
-      : null;
 
   if (accounts.length === 0 && campaigns.length === 0) {
     return (
@@ -129,8 +119,8 @@ export default async function AdsPage({
         title="Реклама"
         description={
           currencyNote
-            ? `Расход и цена лида — в ${currencySymbol(currencyNote.source)}, как в рекламном кабинете; в ${currencySymbol(currencyNote.target)} они подписаны ниже. Выручка и прибыль — только в ${currencySymbol(currencyNote.target)}. Курс Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
-            : 'Сколько потратили, сколько лидов получили и почём вышел один.'
+            ? `Расход и цена заявки — в ${currencySymbol(currencyNote.source)}, как в рекламном кабинете; в ${currencySymbol(currencyNote.target)} они подписаны ниже. Выручка и прибыль — только в ${currencySymbol(currencyNote.target)}. Курс Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
+            : 'Сколько потратили, сколько заявок получили и почём вышла одна.'
         }
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
@@ -145,29 +135,24 @@ export default async function AdsPage({
           <StatTile
             label="Расход"
             value={formatMoney(adSpend, { currency: adCurrency })}
-            hint={[
-              showBoth ? formatMoney(otherSpend, { currency: otherCurrency }) : null,
-              accountSpend ? `в кабинете ${accountSpend}` : `за ${range.label}`,
-            ]
-              .filter(Boolean)
-              .join(' · ')}
-          />
-          <StatTile
-            label="Лиды"
-            value={formatNumber(totals.conversions)}
             hint={
-              accountDays
-                ? `В кабинете за эти же даты: ${formatNumber(accountDays.leads)} — его сутки начинаются в 23:00`
-                : 'Заявки с сайта и написавшие в переписке — по данным Meta'
+              showBoth
+                ? `${formatMoney(otherSpend, { currency: otherCurrency })} · за ${range.label}`
+                : `За ${range.label}`
             }
           />
           <StatTile
-            label="Цена лида"
+            label="Заявки"
+            value={formatNumber(totals.conversions)}
+            hint="Заполненные формы — то же число, что в рекламном кабинете"
+          />
+          <StatTile
+            label="Цена заявки"
             value={formatMoney(adCostPerLead, { currency: adCurrency })}
             hint={
               showBoth && totals.conversions
-                ? `${formatMoney(otherSpend / totals.conversions, { currency: otherCurrency })} · расход ÷ лиды`
-                : 'Расход ÷ количество лидов'
+                ? `${formatMoney(otherSpend / totals.conversions, { currency: otherCurrency })} · расход ÷ заявки`
+                : 'Расход ÷ количество заявок'
             }
             accent
           />

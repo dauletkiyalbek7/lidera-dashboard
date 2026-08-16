@@ -702,49 +702,6 @@ export type AdBreakdown = {
  * Кампании без единого дня в периоде не показываем: пустая строка в отчёте
  * только мешает искать глазами ту, которая крутится.
  */
-export type AccountDayTotals = {
-  leads: number;
-  spend: number;
-  currency: string | null;
-};
-
-/**
- * Те же дни глазами рекламного кабинета.
- *
- * Сутки кабинета начинаются в 23:00 по Алматы, поэтому за одну и ту же дату у
- * него и у нас разные числа — вечерние заявки он относит к следующему дню. Это
- * не расхождение, а два календаря, и директору нужно видеть оба: наше число
- * сходится с CRM, кабинетное — с Ads Manager.
- *
- * NULL означает «сверять не с чем»: кабинета нет или синхронизация не доходила.
- */
-export async function getAccountDayTotals(
-  companyId: string,
-  from: string,
-  to: string,
-): Promise<AccountDayTotals | null> {
-  const supabase = await createServerSupabase();
-
-  const { data } = await supabase
-    .from('ad_account_days')
-    .select('leads, spend, currency')
-    .eq('company_id', companyId)
-    .gte('date', from)
-    .lte('date', to);
-
-  if (!data || data.length === 0) return null;
-
-  // Валюты разных кабинетов не складываются: показываем сумму только когда она
-  // означает одно и то же число денег.
-  const currencies = new Set(data.map((row) => row.currency));
-
-  return {
-    leads: data.reduce((total, row) => total + Number(row.leads), 0),
-    spend: data.reduce((total, row) => total + Number(row.spend), 0),
-    currency: currencies.size === 1 ? (data[0].currency ?? null) : null,
-  };
-}
-
 export async function getAdBreakdown(
   companyId: string,
   from: string,

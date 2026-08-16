@@ -443,7 +443,8 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
       windows.map((window) =>
         graph<MetaInsight>(
           `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
-            `&fields=ad_id,campaign_id,reach,date_start,video_avg_time_watched_actions` +
+            `&fields=ad_id,campaign_id,reach,date_start,video_avg_time_watched_actions,` +
+            `spend,impressions,clicks,actions` +
             `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
             `&limit=100&access_token=${token}`,
         ),
@@ -544,10 +545,6 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // иначе строки подерутся за уникальный ключ «креатив + день».
   const merged = new Map<string, MetricRow>();
 
-  // Те же часы, сложенные по календарю кабинета: этим числом директор сверяется
-  // с Ads Manager, и оно намеренно не совпадает с нашими сутками.
-  const accountDays = new Map<string, AccountDayRow>();
-
   for (const row of insights) {
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
@@ -558,23 +555,6 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     // наличии переписок заявки с сайта терялись целиком.
     const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
     const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
-
-    const accountDay = accountDays.get(row.date_start) ?? {
-      company_id: account.company_id,
-      ad_account_id: account.id,
-      platform: 'meta' as const,
-      date: row.date_start,
-      leads: 0,
-      spend: 0,
-      impressions: 0,
-      clicks: 0,
-      currency: accountCurrency,
-    };
-    accountDay.leads += leads;
-    accountDay.spend += spend;
-    accountDay.impressions += Number(row.impressions ?? 0);
-    accountDay.clicks += Number(row.clicks ?? 0);
-    accountDays.set(row.date_start, accountDay);
 
     // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
     // разбивку) остаётся на своём дне — это лучше, чем потерять её.
@@ -624,7 +604,35 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // Охват и среднее время просмотра — из дневного запроса. По часам их не
   // разложить, поэтому день кабинета кладём на одноимённый наш день: из его
   // 24 часов 23 приходятся именно на него.
+  // Итоги по календарю кабинета — этим числом директор сверяется с Ads Manager.
+  //
+  // Считаем их из дневного запроса, а не из почасового. Заявки и переписки Meta
+  // дедуплицирует в пределах суток: один и тот же человек, попавший в два часа,
+  // в сумме часов даёт двойку, а в дне — единицу. Расход так складывается верно,
+  // а люди нет, и число переставало сходиться с кабинетом на 1–2 в день — ровно
+  // ради этой сходимости таблица и заведена.
+  const accountDays = new Map<string, AccountDayRow>();
+
   for (const row of dailyInsights) {
+    const accountDay = accountDays.get(row.date_start) ?? {
+      company_id: account.company_id,
+      ad_account_id: account.id,
+      platform: 'meta' as const,
+      date: row.date_start,
+      leads: 0,
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      currency: accountCurrency,
+    };
+    accountDay.leads +=
+      actionValue(row.actions, CONVERSATION_ACTIONS) +
+      actionValue(row.actions, LEAD_ACTIONS);
+    accountDay.spend += Number(row.spend ?? 0);
+    accountDay.impressions += Number(row.impressions ?? 0);
+    accountDay.clicks += Number(row.clicks ?? 0);
+    accountDays.set(row.date_start, accountDay);
+
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
 

@@ -544,9 +544,37 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // иначе строки подерутся за уникальный ключ «креатив + день».
   const merged = new Map<string, MetricRow>();
 
+  // Те же часы, сложенные по календарю кабинета: этим числом директор сверяется
+  // с Ads Manager, и оно намеренно не совпадает с нашими сутками.
+  const accountDays = new Map<string, AccountDayRow>();
+
   for (const row of insights) {
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
+
+    const spend = Number(row.spend ?? 0);
+    // В одном кабинете рядом живут кампании на сайт и кампании в переписки:
+    // заявки и написавшие — разные люди, поэтому их складываем. Раньше при
+    // наличии переписок заявки с сайта терялись целиком.
+    const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
+    const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
+
+    const accountDay = accountDays.get(row.date_start) ?? {
+      company_id: account.company_id,
+      ad_account_id: account.id,
+      platform: 'meta' as const,
+      date: row.date_start,
+      leads: 0,
+      spend: 0,
+      impressions: 0,
+      clicks: 0,
+      currency: accountCurrency,
+    };
+    accountDay.leads += leads;
+    accountDay.spend += spend;
+    accountDay.impressions += Number(row.impressions ?? 0);
+    accountDay.clicks += Number(row.clicks ?? 0);
+    accountDays.set(row.date_start, accountDay);
 
     // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
     // разбивку) остаётся на своём дне — это лучше, чем потерять её.
@@ -559,15 +587,8 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     const creativeId = row.ad_id ? (creativeIdByAd.get(row.ad_id) ?? null) : null;
     const key = `${creativeId ?? 'нет'}|${campaignId}|${date}`;
 
-    const spend = Number(row.spend ?? 0);
-    // В одном кабинете рядом живут кампании на сайт и кампании в переписки:
-    // заявки и написавшие — разные люди, поэтому их складываем. Раньше при
-    // наличии переписок заявки с сайта терялись целиком.
     const plays = actionValue(row.video_play_actions, ['video_view']);
     const completions = actionValue(row.video_p100_watched_actions, ['video_view']);
-
-    const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
-    const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
 
     const current = merged.get(key) ?? {
       company_id: account.company_id,
@@ -643,6 +664,23 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (error) throw new Error(`не удалось сохранить метрики: ${error.message}`);
   }
 
+  // Итоги по календарю кабинета. Крайние дни окна тут оставляем как есть: это
+  // ровно то, что показывает Ads Manager за те же даты, а огрызков не бывает —
+  // сутки кабинета целиком лежат внутри запрошенного периода.
+  const accountDayRows = Array.from(accountDays.values()).map((row) => ({
+    ...row,
+    spend: round2(row.spend),
+  }));
+
+  if (accountDayRows.length > 0) {
+    const { error } = await supabase
+      .from('ad_account_days')
+      .upsert(accountDayRows, { onConflict: 'ad_account_id,date' });
+    if (error) {
+      throw new Error(`не удалось сохранить сутки кабинета: ${error.message}`);
+    }
+  }
+
   await supabase
     .from('ad_accounts')
     .update({ status: 'connected' })
@@ -656,6 +694,18 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     spend: Number(rows.reduce((total, row) => total + row.spend, 0).toFixed(2)),
   };
 }
+
+type AccountDayRow = {
+  company_id: string;
+  ad_account_id: string;
+  platform: 'meta';
+  date: string;
+  leads: number;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  currency: string | null;
+};
 
 type MetricRow = {
   company_id: string;

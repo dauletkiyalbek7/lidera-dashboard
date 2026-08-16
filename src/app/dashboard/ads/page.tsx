@@ -24,6 +24,7 @@ import { resolveRange } from '@/lib/period';
 import {
   getAdAccounts,
   getAdBreakdown,
+  getAccountDayTotals,
   getCampaigns,
   getCurrencyNote,
 } from '@/lib/queries';
@@ -73,11 +74,12 @@ export default async function AdsPage({
   const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
 
-  const [accounts, campaigns, breakdown, currencyNote] = await Promise.all([
+  const [accounts, campaigns, breakdown, currencyNote, accountDays] = await Promise.all([
     getAdAccounts(company.id),
     getCampaigns(company.id),
     getAdBreakdown(company.id, range.from, range.to),
     getCurrencyNote(company.id, currency),
+    getAccountDayTotals(company.id, range.from, range.to),
   ]);
 
   const { totals } = breakdown;
@@ -92,6 +94,14 @@ export default async function AdsPage({
 
   /** Расход строки в той же валюте, что и заголовок колонки. */
   const adMoney = (row: { spend: number; spendSource: number | null }) => view.spendOf(row);
+
+  // Расход кабинета подписываем только когда он в той же валюте, что и цифра
+  // сверху: иначе рядом окажутся доллары и тенге, и подпись начнёт запутывать
+  // вместо того, чтобы сверять.
+  const accountSpend =
+    accountDays && accountDays.currency === adCurrency
+      ? formatMoney(accountDays.spend, { currency: adCurrency })
+      : null;
 
   if (accounts.length === 0 && campaigns.length === 0) {
     return (
@@ -135,16 +145,21 @@ export default async function AdsPage({
           <StatTile
             label="Расход"
             value={formatMoney(adSpend, { currency: adCurrency })}
-            hint={
-              showBoth
-                ? `${formatMoney(otherSpend, { currency: otherCurrency })} · за ${range.label}`
-                : `За ${range.label}`
-            }
+            hint={[
+              showBoth ? formatMoney(otherSpend, { currency: otherCurrency }) : null,
+              accountSpend ? `в кабинете ${accountSpend}` : `за ${range.label}`,
+            ]
+              .filter(Boolean)
+              .join(' · ')}
           />
           <StatTile
             label="Лиды"
             value={formatNumber(totals.conversions)}
-            hint="Заявки с сайта и написавшие в переписке — по данным Meta"
+            hint={
+              accountDays
+                ? `В кабинете за эти же даты: ${formatNumber(accountDays.leads)} — его сутки начинаются в 23:00`
+                : 'Заявки с сайта и написавшие в переписке — по данным Meta'
+            }
           />
           <StatTile
             label="Цена лида"

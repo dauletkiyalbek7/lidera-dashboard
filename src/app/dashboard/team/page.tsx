@@ -76,9 +76,9 @@ export default async function TeamPage({
         title="Команда"
         description="Кто работает в компании и что каждый сделал за выбранный период."
         action={
-          <div className="flex flex-wrap items-center gap-3">
-            <DateRangePicker range={range} />
+          <div className="flex flex-wrap items-center justify-end gap-2.5">
             <AddEmployeeButton funnelType={funnelType} />
+            <DateRangePicker range={range} />
           </div>
         }
       />

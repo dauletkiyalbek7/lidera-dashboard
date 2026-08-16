@@ -164,7 +164,7 @@ export function DateRangePicker({ range }: { range: DateRange }) {
                 </button>
                 <p className="px-2 text-center text-[12px] text-muted sm:text-[13px]">
                   {draftFrom
-                    ? 'Выберите вторую дату диапазона'
+                    ? 'Вторую дату — или кнопку «Только этот день»'
                     : 'Выберите начало диапазона'}
                 </p>
                 <button
@@ -193,21 +193,32 @@ export function DateRangePicker({ range }: { range: DateRange }) {
                 ))}
               </div>
 
-              <div className="mt-4 flex items-center justify-between border-t border-line pt-3">
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-line pt-3">
                 <p className="tabular text-[12.5px] text-faint">
                   {draftFrom
-                    ? `Начало: ${rangeLabel(draftFrom, draftFrom)}`
+                    ? `Выбрано начало: ${rangeLabel(draftFrom, draftFrom)}`
                     : `Сейчас: ${range.label}`}
                 </p>
                 {draftFrom ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDraftFrom(null)}
-                  >
-                    Сбросить
-                  </Button>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setDraftFrom(null)}
+                    >
+                      Сбросить
+                    </Button>
+                    {/* Один день иначе выбирается двойным попаданием в то же
+                        число — на телефоне это откровенно неудобно. */}
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => apply(draftFrom, draftFrom)}
+                    >
+                      Только этот день
+                    </Button>
+                  </div>
                 ) : null}
               </div>
             </div>

@@ -59,9 +59,9 @@ export default async function SalesPage({
         title="Продажи"
         description="Закрытая часть цепочки: именно эти деньги превращают лиды в ROAS."
         action={
-          <div className="flex flex-wrap items-center gap-3">
-            <DateRangePicker range={range} />
+          <div className="flex flex-wrap items-center justify-end gap-2.5">
             <AddSaleButton leads={leadOptions} />
+            <DateRangePicker range={range} />
           </div>
         }
       />

@@ -88,10 +88,10 @@ export default async function LeadsPage({
         title="Лиды"
         description="Каждый лид хранит источник, площадку и креатив — это и есть основа сквозной аналитики."
         action={
-          <div className="flex flex-wrap items-center gap-3">
-            <DateRangePicker range={range} />
+          <div className="flex flex-wrap items-center justify-end gap-2.5">
             {isStaff ? null : <DistributeButton queued={queued} />}
             <AddLeadButton creatives={creatives} funnelType={funnelType} />
+            <DateRangePicker range={range} />
           </div>
         }
       />

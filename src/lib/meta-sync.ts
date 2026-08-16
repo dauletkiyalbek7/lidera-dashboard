@@ -102,6 +102,8 @@ export type MetaSyncResult = {
   days: number;
   rows: number;
   spend: number;
+  /** Сколько суток кабинета записано для сверки с Ads Manager. */
+  accountDays: number;
 };
 
 export function isMetaConfigured(): boolean {
@@ -697,6 +699,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     campaigns: campaignIdByExternal.size,
     days: new Set(rows.map((row) => row.date)).size,
     rows: rows.length,
+    accountDays: accountDayRows.length,
     spend: Number(rows.reduce((total, row) => total + row.spend, 0).toFixed(2)),
   };
 }

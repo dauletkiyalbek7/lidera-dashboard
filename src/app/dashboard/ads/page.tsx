@@ -9,7 +9,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconAds } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireFullAccess } from '@/lib/auth';
+import { requireAdsAccess } from '@/lib/auth';
 import {
   currencySymbol,
   formatDateShort,
@@ -68,7 +68,7 @@ export default async function AdsPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company, profile } = await requireFullAccess();
+  const { company, profile } = await requireAdsAccess();
   // Выручка и прибыль — деньги компании, они всегда в валюте продаж.
   const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);

@@ -147,12 +147,13 @@ async function observedCompany(): Promise<CompanyRow | null> {
 
 /** Админ-панель платформы. */
 /**
- * Раздел CAPI: директор и таргетолог.
+ * Рекламные разделы: директор и таргетолог.
  *
- * Отправка покупок в рекламный кабинет — работа таргетолога, поэтому раздел
- * открыт и ему, хотя остальные разделы руководства для сотрудников закрыты.
+ * Реклама, креативы и отправка покупок — работа таргетолога, и без доступа к
+ * своим же цифрам он её не сделает. Остальным сотрудникам эти разделы закрыты:
+ * менеджеру не нужен бюджет, а продажнику — цена клика.
  */
-export async function requireCapiAccess(): Promise<
+export async function requireAdsAccess(): Promise<
   SessionContext & { company: CompanyRow }
 > {
   const context = await requireCompanySession();

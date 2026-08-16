@@ -29,6 +29,8 @@ export type NavItem = {
   staff?: true;
   /** Раздел нужен только сотруднику: у руководителя для этого есть настройки. */
   onlyStaff?: true;
+  /** Сотруднику раздел открыт только с этой ролью. Руководства не касается. */
+  onlyRole?: string;
 };
 
 export type NavGroup = {
@@ -47,9 +49,27 @@ const COMPANY_NAV: NavGroup[] = [
   {
     title: 'Реклама',
     items: [
-      { href: '/dashboard/ads', label: 'Реклама', icon: IconAds },
-      { href: '/dashboard/creatives', label: 'Креативы', icon: IconCreatives },
-      { href: '/dashboard/capi', label: 'CAPI', icon: IconIntegrations, staff: true },
+      {
+        href: '/dashboard/ads',
+        label: 'Реклама',
+        icon: IconAds,
+        staff: true,
+        onlyRole: 'targetolog',
+      },
+      {
+        href: '/dashboard/creatives',
+        label: 'Креативы',
+        icon: IconCreatives,
+        staff: true,
+        onlyRole: 'targetolog',
+      },
+      {
+        href: '/dashboard/capi',
+        label: 'CAPI',
+        icon: IconIntegrations,
+        staff: true,
+        onlyRole: 'targetolog',
+      },
     ],
   },
   {
@@ -128,9 +148,6 @@ export function navFor(
   staffOnly = false,
   staffRole: string | null = null,
 ): NavGroup[] {
-  // CAPI — работа таргетолога: остальным сотрудникам раздел не нужен, и
-  // отправлять события они всё равно не могут.
-  const capiOnly = staffOnly && staffRole !== 'targetolog';
   return NAV_BY_KEY[key]
     .map((group) => ({
       ...group,
@@ -140,7 +157,9 @@ export function navFor(
           (!item.onlyFunnel || item.onlyFunnel === funnelType) &&
           (!staffOnly || item.staff === true) &&
           (staffOnly || !item.onlyStaff) &&
-          !(capiOnly && item.href === '/dashboard/capi'),
+          // Реклама, креативы и CAPI — работа таргетолога. Менеджеру бюджет ни
+          // к чему, да и база ему этих строк всё равно не отдаст.
+          !(staffOnly && item.onlyRole && item.onlyRole !== staffRole),
       ),
     }))
     .filter((group) => group.items.length > 0);

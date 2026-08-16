@@ -9,7 +9,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconIntegrations } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireCapiAccess } from '@/lib/auth';
+import { requireAdsAccess } from '@/lib/auth';
 import { getCapiOverview, getCompanyCapiSettings } from '@/lib/capi-queries';
 import { formatDate, formatDateTime, formatMoney, formatNumber } from '@/lib/format';
 import { resolveRange } from '@/lib/period';
@@ -50,7 +50,7 @@ export default async function CapiPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireCapiAccess();
+  const { company } = await requireAdsAccess();
   const range = resolveRange(await searchParams, company.timezone);
 
   const [overview, settings] = await Promise.all([

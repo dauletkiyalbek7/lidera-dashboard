@@ -10,7 +10,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconCreatives } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireFullAccess } from '@/lib/auth';
+import { requireAdsAccess } from '@/lib/auth';
 import {
   currencySymbol,
   formatMoney,
@@ -49,7 +49,7 @@ export default async function CreativesPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireFullAccess();
+  const { company } = await requireAdsAccess();
   // Выручка и прибыль — деньги компании; расход показываем так же, как в
   // «Рекламе»: в выбранной валюте, со второй мелкой подписью.
   const currency = company.sales_currency;

@@ -9,7 +9,7 @@ import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireFullAccess } from '@/lib/auth';
+import { requireAdsAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { moneyView, per } from '@/lib/money-view';
 import { resolveRange } from '@/lib/period';
@@ -24,7 +24,7 @@ export default async function CreativePage({
   params: Promise<{ id: string }>;
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company, profile } = await requireFullAccess();
+  const { company, profile } = await requireAdsAccess();
   // Выручка и прибыль — деньги компании; расход и всё, что от него считается,
   // показываем в выбранной рекламной валюте со второй строкой рядом.
   const currency = company.sales_currency;

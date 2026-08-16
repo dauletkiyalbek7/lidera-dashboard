@@ -43,9 +43,13 @@ const ACCOUNT_CONCURRENCY = 2;
 const TIME_BUDGET_MS = 40_000;
 
 /**
- * Обращения из переписок. Внутри семейства берём наибольшее, а не сумму:
- * Meta отдаёт одно и то же событие под несколькими именами, и сложение
- * удвоило бы людей.
+ * Обращения из переписок — по порядку предпочтения, берём первое найденное.
+ *
+ * Это НЕ одно событие под разными именами, как считалось раньше. Начатый
+ * диалог и «messaging connection» — разные счётчики, второй стабильно на
+ * пару больше: он считает и повторные касания. Ads Manager показывает первый,
+ * поэтому наибольшее из двух брать нельзя — именно из-за этого раздел
+ * «Реклама» расходился с кабинетом на 1–2 лида каждый день.
  */
 const CONVERSATION_ACTIONS = [
   'onsite_conversion.messaging_conversation_started_7d',
@@ -572,7 +576,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     // В одном кабинете рядом живут кампании на сайт и кампании в переписки:
     // заявки и написавшие — разные люди, поэтому их складываем. Раньше при
     // наличии переписок заявки с сайта терялись целиком.
-    const conversations = actionValue(row.actions, CONVERSATION_ACTIONS);
+    const conversations = firstActionValue(row.actions, CONVERSATION_ACTIONS);
     const leads = conversations + actionValue(row.actions, LEAD_ACTIONS);
 
     // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
@@ -672,7 +676,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     platform: 'meta' as const,
     date: row.date_start,
     leads:
-      actionValue(row.actions, CONVERSATION_ACTIONS) +
+      firstActionValue(row.actions, CONVERSATION_ACTIONS) +
       actionValue(row.actions, LEAD_ACTIONS),
     spend: round2(Number(row.spend ?? 0)),
     impressions: Number(row.impressions ?? 0),
@@ -791,6 +795,23 @@ type MetaInsight = {
  * «offsite_conversion.fb_pixel_lead», «onsite_web_lead» — это одна и та же
  * заявка), поэтому суммировать их нельзя.
  */
+/**
+ * Первое найденное событие из списка — для метрик, где имена означают разное
+ * и важен порядок предпочтения, а не наибольшее значение.
+ */
+function firstActionValue(
+  actions: { action_type: string; value: string }[] | undefined,
+  types: string[],
+): number {
+  if (!actions) return 0;
+
+  for (const type of types) {
+    const found = actions.find((action) => action.action_type === type);
+    if (found) return Number(found.value) || 0;
+  }
+  return 0;
+}
+
 function actionValue(
   actions: { action_type: string; value: string }[] | undefined,
   types: string[],

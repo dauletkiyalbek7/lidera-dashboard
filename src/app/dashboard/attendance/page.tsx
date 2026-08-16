@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { Td, TableShell } from '@/components/app/table';
+import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Badge, StatusDot } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -25,16 +25,20 @@ import { MarkButton } from './attendance-controls';
 
 export const metadata: Metadata = { title: 'Посещение' };
 
-const COLUMNS = [
+/** На узком экране оставляем главное табеля: кто и на смене ли он сейчас. */
+const COLUMNS: TableColumn[] = [
   { key: 'name', label: 'Сотрудник' },
-  { key: 'role', label: 'Роль' },
+  { key: 'role', label: 'Роль', showFrom: 'lg' },
   { key: 'now', label: 'Сейчас' },
-  { key: 'days', label: 'Смен', align: 'right' as const },
-  { key: 'late', label: 'Опозданий', align: 'right' as const },
-  { key: 'hours', label: 'Часов', align: 'right' as const },
-  { key: 'marks', label: 'Отметки' },
+  { key: 'days', label: 'Смен', align: 'right' as const, showFrom: 'md' },
+  { key: 'late', label: 'Опозданий', align: 'right' as const, showFrom: 'md' },
+  { key: 'hours', label: 'Часов', align: 'right' as const, showFrom: 'lg' },
+  { key: 'marks', label: 'Отметки', showFrom: 'xl' },
   { key: 'actions', label: '', align: 'right' as const },
 ];
+
+/** Ширина таблицы для каждого набора видимых колонок. */
+const TABLE_MIN_WIDTH = { base: 380, md: 640, lg: 880, xl: 1080 };
 
 export default async function AttendancePage({
   searchParams,
@@ -110,7 +114,7 @@ export default async function AttendancePage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1080}>
+            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
               {rows.map((row) => {
                 const marks = Object.entries(row.days)
                   .sort(([a], [b]) => (a < b ? 1 : -1))
@@ -122,7 +126,9 @@ export default async function AttendancePage({
                     <Td first className="font-medium text-ink">
                       {row.fullName}
                     </Td>
-                    <Td className="text-ink-soft">{employeeRoleLabel(row.role)}</Td>
+                    <Td showFrom="lg" className="text-ink-soft">
+                      {employeeRoleLabel(row.role)}
+                    </Td>
                     <Td>
                       {row.onShiftNow ? (
                         <Badge tone="positive">
@@ -133,16 +139,16 @@ export default async function AttendancePage({
                         <span className="text-[12.5px] text-faint">—</span>
                       )}
                     </Td>
-                    <Td align="right" className="tabular text-ink">
+                    <Td showFrom="md" align="right" className="tabular text-ink">
                       {formatNumber(row.shiftDays)}
                     </Td>
-                    <Td align="right" className="tabular text-ink-soft">
+                    <Td showFrom="md" align="right" className="tabular text-ink-soft">
                       {row.lateDays ? formatNumber(row.lateDays) : '—'}
                     </Td>
-                    <Td align="right" className="tabular text-ink">
+                    <Td showFrom="lg" align="right" className="tabular text-ink">
                       {row.minutes ? formatNumber(row.minutes / 60, 1) : '—'}
                     </Td>
-                    <Td>
+                    <Td showFrom="xl">
                       <div className="flex flex-wrap gap-1.5">
                         {marks.length === 0 ? (
                           <span className="text-[12.5px] text-faint">нет</span>

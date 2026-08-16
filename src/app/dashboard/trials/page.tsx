@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
-import { Td, TableShell } from '@/components/app/table';
+import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconTrials } from '@/components/ui/icons';
@@ -18,13 +18,17 @@ import { TrialStatusSelect } from './trial-controls';
 
 export const metadata: Metadata = { title: 'Пробные' };
 
-const COLUMNS = [
+/** На телефоне остаётся суть: кто на пробном и чем оно закончилось. */
+const COLUMNS: TableColumn[] = [
   { key: 'lead', label: 'Клиент' },
-  { key: 'phone', label: 'Телефон' },
-  { key: 'date', label: 'Когда' },
-  { key: 'seller', label: 'Проводит' },
+  { key: 'phone', label: 'Телефон', showFrom: 'lg' },
+  { key: 'date', label: 'Когда', showFrom: 'md' },
+  { key: 'seller', label: 'Проводит', showFrom: 'md' },
   { key: 'status', label: 'Статус' },
 ];
+
+/** Ширина таблицы для каждого набора видимых колонок. */
+const TABLE_MIN_WIDTH = { base: 340, md: 720 };
 
 export default async function TrialsPage({
   searchParams,
@@ -85,14 +89,16 @@ export default async function TrialsPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS}>
+            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
               {trials.map((trial) => (
                 <tr key={trial.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
                     {trial.leadName ?? 'Без имени'}
                   </Td>
-                  <Td className="tabular text-ink-soft">{trial.leadPhone ?? '—'}</Td>
-                  <Td className="tabular text-ink-soft">
+                  <Td showFrom="lg" className="tabular text-ink-soft">
+                    {trial.leadPhone ?? '—'}
+                  </Td>
+                  <Td showFrom="md" className="tabular text-ink-soft">
                     {trial.startsAt ? (
                       formatDateTime(trial.startsAt)
                     ) : (
@@ -101,7 +107,7 @@ export default async function TrialsPage({
                       </span>
                     )}
                   </Td>
-                  <Td className="text-ink-soft">
+                  <Td showFrom="md" className="text-ink-soft">
                     {trial.sellerName ?? (
                       <span className="text-faint">ждёт продажника</span>
                     )}

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
-import { Td, TableShell } from '@/components/app/table';
+import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconSales } from '@/components/ui/icons';
@@ -16,13 +16,17 @@ import { AddSaleButton, SaleStatusSelect } from './sale-controls';
 
 export const metadata: Metadata = { title: 'Продажи' };
 
-const COLUMNS = [
+/** На телефоне важны трое: кто купил, на сколько и подтверждена ли продажа. */
+const COLUMNS: TableColumn[] = [
   { key: 'lead', label: 'Клиент' },
-  { key: 'product', label: 'Продукт' },
-  { key: 'date', label: 'Дата' },
+  { key: 'product', label: 'Продукт', showFrom: 'md' },
+  { key: 'date', label: 'Дата', showFrom: 'md' },
   { key: 'status', label: 'Статус' },
   { key: 'amount', label: 'Сумма', align: 'right' as const },
 ];
+
+/** Ширина таблицы для каждого набора видимых колонок. */
+const TABLE_MIN_WIDTH = { base: 360, md: 820 };
 
 export default async function SalesPage({
   searchParams,
@@ -81,14 +85,18 @@ export default async function SalesPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={820}>
+            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
               {sales.map((sale) => (
                 <tr key={sale.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
                     {sale.leadName ?? 'Без привязки'}
                   </Td>
-                  <Td className="text-ink-soft">{sale.product ?? '—'}</Td>
-                  <Td className="tabular text-ink-soft">{formatDate(sale.sale_date)}</Td>
+                  <Td showFrom="md" className="text-ink-soft">
+                    {sale.product ?? '—'}
+                  </Td>
+                  <Td showFrom="md" className="tabular text-ink-soft">
+                    {formatDate(sale.sale_date)}
+                  </Td>
                   <Td>
                     <SaleStatusSelect saleId={sale.id} status={sale.status} />
                   </Td>

@@ -36,17 +36,19 @@ export function DateRangePicker({ range }: { range: DateRange }) {
   useEffect(() => {
     if (!open) return;
 
-    const onPointerDown = (event: MouseEvent) => {
+    // pointerdown, а не mousedown: на телефоне мышиные события приходят не
+    // всегда и с задержкой, и календарь оставался открытым после касания мимо.
+    const onPointerDown = (event: PointerEvent) => {
       if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
     };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpen(false);
     };
 
-    document.addEventListener('mousedown', onPointerDown);
+    document.addEventListener('pointerdown', onPointerDown);
     document.addEventListener('keydown', onKeyDown);
     return () => {
-      document.removeEventListener('mousedown', onPointerDown);
+      document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
   }, [open]);
@@ -111,19 +113,34 @@ export function DateRangePicker({ range }: { range: DateRange }) {
       </button>
 
       {open ? (
-        <div
-          role="dialog"
-          aria-label="Выбор периода"
-          className="absolute right-0 z-50 mt-2 w-[min(92vw,660px)] overflow-hidden rounded-card border border-line-strong bg-surface shadow-2xl shadow-black/60"
-        >
+        <>
+          {/* Затемнение только на телефоне: там календарь занимает весь экран
+              и должен читаться как отдельное окно. */}
+          <button
+            type="button"
+            aria-hidden="true"
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-40 bg-black/60 sm:hidden"
+          />
+          <div
+            role="dialog"
+            aria-label="Выбор периода"
+            /* На телефоне календарь привязан к экрану, а не к кнопке: кнопка
+               стоит у левого края, и выпадающий список уезжал за границу
+               экрана вместе с половиной чисел. */
+            className="fixed inset-x-3 top-16 z-50 max-h-[calc(100dvh-5rem)] overflow-y-auto rounded-card border border-line-strong bg-surface shadow-2xl shadow-black/60 sm:absolute sm:inset-x-auto sm:right-0 sm:top-full sm:mt-2 sm:max-h-none sm:w-[min(92vw,660px)] sm:overflow-hidden"
+          >
           <div className="flex flex-col sm:flex-row">
-            <ul className="flex shrink-0 gap-1 overflow-x-auto border-b border-line p-2 sm:w-[190px] sm:flex-col sm:overflow-visible sm:border-b-0 sm:border-r">
+            {/* Телефон: два столбца, чтобы все периоды были на виду разом —
+                горизонтальную ленту приходилось прокручивать вслепую. */}
+            <ul className="grid shrink-0 grid-cols-2 gap-1 border-b border-line p-2 sm:flex sm:w-[190px] sm:flex-col sm:border-b-0 sm:border-r">
               {PRESETS.map((preset) => (
                 <li key={preset.key}>
                   <button
                     type="button"
                     onClick={() => applyPreset(preset.key)}
-                    className={`w-full whitespace-nowrap rounded-control px-3 py-2 text-left text-[13px] transition-colors ${
+                    className={`w-full rounded-control px-3 py-2 text-left text-[13px] transition-colors sm:whitespace-nowrap ${
                       range.preset === preset.key
                         ? 'bg-lime/10 text-lime'
                         : 'text-ink-soft hover:bg-surface-2 hover:text-ink'
@@ -140,12 +157,12 @@ export function DateRangePicker({ range }: { range: DateRange }) {
                 <button
                   type="button"
                   onClick={() => setMonthCursor(addMonths(monthCursor, -1))}
-                  className="flex size-8 items-center justify-center rounded-control text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-control text-muted transition-colors hover:bg-surface-2 hover:text-ink sm:size-8"
                   aria-label="Предыдущий месяц"
                 >
                   <ArrowIcon direction="left" />
                 </button>
-                <p className="text-[13px] text-muted">
+                <p className="px-2 text-center text-[12px] text-muted sm:text-[13px]">
                   {draftFrom
                     ? 'Выберите вторую дату диапазона'
                     : 'Выберите начало диапазона'}
@@ -153,7 +170,7 @@ export function DateRangePicker({ range }: { range: DateRange }) {
                 <button
                   type="button"
                   onClick={() => setMonthCursor(addMonths(monthCursor, 1))}
-                  className="flex size-8 items-center justify-center rounded-control text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                  className="flex size-10 shrink-0 items-center justify-center rounded-control text-muted transition-colors hover:bg-surface-2 hover:text-ink sm:size-8"
                   aria-label="Следующий месяц"
                 >
                   <ArrowIcon direction="right" />
@@ -195,7 +212,8 @@ export function DateRangePicker({ range }: { range: DateRange }) {
               </div>
             </div>
           </div>
-        </div>
+          </div>
+        </>
       ) : null}
     </div>
   );
@@ -253,7 +271,9 @@ function MonthGrid({
               onMouseLeave={() => onDayHover(null)}
               aria-pressed={inRange}
               className={[
-                'tabular h-8 text-[12.5px] transition-colors',
+                // Палец крупнее курсора: на телефоне клетка выше, иначе
+                // попадаешь в соседнее число.
+                'tabular h-10 text-[13.5px] transition-colors sm:h-8 sm:text-[12.5px]',
                 isFuture ? 'cursor-not-allowed text-faint/40' : 'hover:bg-surface-3',
                 inRange && !isStart && !isEnd ? 'bg-lime/10 text-ink' : '',
                 isStart || isEnd ? 'bg-lime font-medium text-on-lime' : '',

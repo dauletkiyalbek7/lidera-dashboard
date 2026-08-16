@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
-import { Td, TableShell } from '@/components/app/table';
+import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Badge, StatusDot } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -31,20 +31,28 @@ import {
 
 export const metadata: Metadata = { title: 'Команда' };
 
-const COLUMNS = [
+/**
+ * Двенадцать колонок помещаются только на большом экране. На узком оставляем
+ * то, ради чего сюда заходят с телефона: кто это, кем работает и кнопки —
+ * выдать вход, пригласить в бота, изменить график.
+ */
+const COLUMNS: TableColumn[] = [
   { key: 'name', label: 'Сотрудник' },
   { key: 'role', label: 'Роль' },
-  { key: 'telegram', label: 'Telegram' },
-  { key: 'shift', label: 'Смена' },
-  { key: 'mode', label: 'Режим' },
-  { key: 'schedule', label: 'График' },
-  { key: 'hired', label: 'Принят' },
-  { key: 'leads', label: 'Лиды', align: 'right' as const },
-  { key: 'reached', label: 'Дозвон', align: 'right' as const },
-  { key: 'won', label: 'Продажи', align: 'right' as const },
-  { key: 'revenue', label: 'Выручка', align: 'right' as const },
+  { key: 'telegram', label: 'Telegram', showFrom: 'lg' },
+  { key: 'shift', label: 'Смена', showFrom: 'md' },
+  { key: 'mode', label: 'Режим', showFrom: 'xl' },
+  { key: 'schedule', label: 'График', showFrom: 'xl' },
+  { key: 'hired', label: 'Принят', showFrom: 'xl' },
+  { key: 'leads', label: 'Лиды', align: 'right' as const, showFrom: 'md' },
+  { key: 'reached', label: 'Дозвон', align: 'right' as const, showFrom: 'lg' },
+  { key: 'won', label: 'Продажи', align: 'right' as const, showFrom: 'md' },
+  { key: 'revenue', label: 'Выручка', align: 'right' as const, showFrom: 'lg' },
   { key: 'actions', label: '', align: 'right' as const },
 ];
+
+/** Ширина таблицы для каждого набора видимых колонок. */
+const TABLE_MIN_WIDTH = { base: 420, md: 760, lg: 1100, xl: 1560 };
 
 export default async function TeamPage({
   searchParams,
@@ -123,7 +131,7 @@ export default async function TeamPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={1560}>
+            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
               {team.map((member) => (
                 <tr
                   key={member.id}
@@ -145,14 +153,14 @@ export default async function TeamPage({
                     ) : null}
                   </Td>
                   <Td className="text-ink-soft">{employeeRoleLabel(member.role)}</Td>
-                  <Td className="text-ink-soft">
+                  <Td showFrom="lg" className="text-ink-soft">
                     {member.telegramUsername ? (
                       `@${member.telegramUsername}`
                     ) : (
                       <span className="text-faint">не подключён</span>
                     )}
                   </Td>
-                  <Td>
+                  <Td showFrom="md">
                     {member.onShift ? (
                       <Badge tone="positive">
                         <StatusDot tone="positive" />
@@ -162,13 +170,13 @@ export default async function TeamPage({
                       <span className="text-[12.5px] text-faint">не на смене</span>
                     )}
                   </Td>
-                  <Td className="text-ink-soft">
+                  <Td showFrom="xl" className="text-ink-soft">
                     {SHIFT_MODE[member.rules.mode].label}
                     <span className="mt-0.5 block text-[11.5px] text-faint">
                       {member.shiftMode ? 'лично' : 'как в компании'}
                     </span>
                   </Td>
-                  <Td className="text-ink-soft">
+                  <Td showFrom="xl" className="text-ink-soft">
                     <span className="tabular">{formatSchedule(member.rules)}</span>
                     <span className="mt-0.5 block text-[11.5px] text-faint">
                       {formatDuration(
@@ -180,11 +188,13 @@ export default async function TeamPage({
                       {member.rules.personalSchedule ? ' · свой график' : ' · как в компании'}
                     </span>
                   </Td>
-                  <Td className="tabular text-muted">{formatDate(member.hiredAt)}</Td>
-                  <Td align="right" className="tabular text-ink">
+                  <Td showFrom="xl" className="tabular text-muted">
+                    {formatDate(member.hiredAt)}
+                  </Td>
+                  <Td showFrom="md" align="right" className="tabular text-ink">
                     {formatNumber(member.leads)}
                   </Td>
-                  <Td align="right" className="tabular text-ink-soft">
+                  <Td showFrom="lg" align="right" className="tabular text-ink-soft">
                     {member.leads
                       ? `${formatNumber(member.reached)} · ${formatPercent(
                           (member.reached / member.leads) * 100,
@@ -192,10 +202,10 @@ export default async function TeamPage({
                         )}`
                       : '—'}
                   </Td>
-                  <Td align="right" className="tabular text-ink">
+                  <Td showFrom="md" align="right" className="tabular text-ink">
                     {formatNumber(member.won)}
                   </Td>
-                  <Td align="right" className="tabular font-medium text-ink">
+                  <Td showFrom="lg" align="right" className="tabular font-medium text-ink">
                     {member.revenue ? formatMoney(member.revenue, { compact: true, currency }) : '—'}
                   </Td>
                   <Td last align="right">

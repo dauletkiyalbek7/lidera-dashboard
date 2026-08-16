@@ -612,6 +612,11 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // а люди нет, и число переставало сходиться с кабинетом на 1–2 в день — ровно
   // ради этой сходимости таблица и заведена.
   const accountDays = new Map<string, AccountDayRow>();
+  // Каждое имя события считаем отдельно и по всему дню. Наибольшее в семействе
+  // берётся уже над этими суммами, а не над отдельным объявлением: у одного
+  // объявления больше «onsite_web_lead», у другого «lead», и максимумы по
+  // строкам в сумме дают людей, которых не было, — те самые лишние 1–2 в день.
+  const actionsByDay = new Map<string, Map<string, number>>();
 
   for (const row of dailyInsights) {
     const accountDay = accountDays.get(row.date_start) ?? {
@@ -625,13 +630,19 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
       clicks: 0,
       currency: accountCurrency,
     };
-    accountDay.leads +=
-      actionValue(row.actions, CONVERSATION_ACTIONS) +
-      actionValue(row.actions, LEAD_ACTIONS);
     accountDay.spend += Number(row.spend ?? 0);
     accountDay.impressions += Number(row.impressions ?? 0);
     accountDay.clicks += Number(row.clicks ?? 0);
     accountDays.set(row.date_start, accountDay);
+
+    const totals = actionsByDay.get(row.date_start) ?? new Map<string, number>();
+    for (const action of row.actions ?? []) {
+      totals.set(
+        action.action_type,
+        (totals.get(action.action_type) ?? 0) + (Number(action.value) || 0),
+      );
+    }
+    actionsByDay.set(row.date_start, totals);
 
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
@@ -675,10 +686,17 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // Итоги по календарю кабинета. Крайние дни окна тут оставляем как есть: это
   // ровно то, что показывает Ads Manager за те же даты, а огрызков не бывает —
   // сутки кабинета целиком лежат внутри запрошенного периода.
-  const accountDayRows = Array.from(accountDays.values()).map((row) => ({
-    ...row,
-    spend: round2(row.spend),
-  }));
+  const accountDayRows = Array.from(accountDays.values()).map((row) => {
+    const totals = actionsByDay.get(row.date);
+    const best = (types: string[]) =>
+      types.reduce((top, type) => Math.max(top, totals?.get(type) ?? 0), 0);
+
+    return {
+      ...row,
+      spend: round2(row.spend),
+      leads: best(CONVERSATION_ACTIONS) + best(LEAD_ACTIONS),
+    };
+  });
 
   if (accountDayRows.length > 0) {
     const { error } = await supabase

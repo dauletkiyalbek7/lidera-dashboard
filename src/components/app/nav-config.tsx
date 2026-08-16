@@ -64,6 +64,7 @@ const COMPANY_NAV: NavGroup[] = [
         staff: true,
       },
       { href: '/dashboard/sales', label: 'Продажи', icon: IconSales },
+      { href: '/dashboard/returns', label: 'Возвраты', icon: IconReceipts },
       { href: '/dashboard/team', label: 'Команда', icon: IconTeam },
       { href: '/dashboard/attendance', label: 'Посещение', icon: IconAttendance },
     ],

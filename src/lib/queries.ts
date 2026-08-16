@@ -1361,6 +1361,79 @@ export async function getSales(
   }));
 }
 
+export type ReturnListItem = {
+  id: string;
+  createdAt: string;
+  amount: number;
+  reason: string | null;
+  processedBy: string | null;
+  saleAmount: number;
+  product: string | null;
+  saleDate: string;
+  leadName: string | null;
+};
+
+/**
+ * Возвраты за период.
+ *
+ * Дата возврата — когда деньги вернули, а не когда продали: в отчёт месяца
+ * попадает возврат прошлогодней продажи, если оформили его в этом месяце.
+ */
+export async function getReturns(
+  companyId: string,
+  from: string,
+  to: string,
+  timeZone: string,
+): Promise<ReturnListItem[]> {
+  const supabase = await createServerSupabase();
+  const { startsAt, endsBefore } = zonedDayWindow(from, to, timeZone);
+
+  const { data: rows } = await supabase
+    .from('returns')
+    .select('id, created_at, amount, reason, processed_by, sale_id')
+    .eq('company_id', companyId)
+    .gte('created_at', startsAt)
+    .lt('created_at', endsBefore)
+    .order('created_at', { ascending: false })
+    .limit(LIST_LIMIT);
+
+  if (!rows || rows.length === 0) return [];
+
+  const saleIds = [...new Set(rows.map((row) => row.sale_id))];
+  const staffIds = [...new Set(rows.map((row) => row.processed_by).filter(Boolean))] as string[];
+
+  const [{ data: sales }, { data: staff }] = await Promise.all([
+    supabase
+      .from('sales')
+      .select('id, amount, product, sale_date, lead_id')
+      .eq('company_id', companyId)
+      .in('id', saleIds),
+    staffIds.length
+      ? supabase.from('employees').select('id, full_name').in('id', staffIds)
+      : Promise.resolve({ data: [] as { id: string; full_name: string }[] }),
+  ]);
+
+  const saleById = new Map((sales ?? []).map((sale) => [sale.id, sale]));
+  const staffById = new Map((staff ?? []).map((row) => [row.id, row.full_name]));
+  const leads = await fetchLeadContacts(companyId, sales ?? []);
+
+  return rows.map((row) => {
+    const sale = saleById.get(row.sale_id);
+    return {
+      id: row.id,
+      createdAt: row.created_at,
+      amount: Number(row.amount),
+      reason: row.reason,
+      // Пусто означает «оформил директор»: карточки сотрудника у него нет.
+      processedBy: row.processed_by ? (staffById.get(row.processed_by) ?? null) : null,
+      saleAmount: sale ? Number(sale.amount) : 0,
+      product: sale?.product ?? null,
+      saleDate: sale?.sale_date ?? row.created_at.slice(0, 10),
+      leadName: sale?.lead_id ? (leads.get(sale.lead_id)?.name ?? null) : null,
+    };
+  });
+}
+
 /** Контакты лидов, на которые ссылаются переданные записи. */
 async function fetchLeadContacts(
   companyId: string,

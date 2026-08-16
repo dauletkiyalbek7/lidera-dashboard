@@ -12,6 +12,7 @@ import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { averageCheck } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
 import { getLeads, getSales } from '@/lib/queries';
+import { RefundButton } from '@/app/dashboard/returns/return-controls';
 import { AddSaleButton, SaleStatusSelect } from './sale-controls';
 
 export const metadata: Metadata = { title: 'Продажи' };
@@ -23,10 +24,11 @@ const COLUMNS: TableColumn[] = [
   { key: 'date', label: 'Дата', showFrom: 'md' },
   { key: 'status', label: 'Статус' },
   { key: 'amount', label: 'Сумма', align: 'right' as const },
+  { key: 'actions', label: '', align: 'right' as const },
 ];
 
 /** Ширина таблицы для каждого набора видимых колонок. */
-const TABLE_MIN_WIDTH = { base: 360, md: 820 };
+const TABLE_MIN_WIDTH = { base: 420, md: 900 };
 
 export default async function SalesPage({
   searchParams,
@@ -100,8 +102,18 @@ export default async function SalesPage({
                   <Td>
                     <SaleStatusSelect saleId={sale.id} status={sale.status} />
                   </Td>
-                  <Td last align="right" className="tabular font-medium text-ink">
+                  <Td align="right" className="tabular font-medium text-ink">
                     {formatMoney(sale.amount, { currency })}
+                  </Td>
+                  <Td last align="right">
+                    {sale.status === 'paid' ? (
+                      <RefundButton
+                        saleId={sale.id}
+                        saleAmount={sale.amount}
+                        leadName={sale.leadName}
+                        currency={currency}
+                      />
+                    ) : null}
                   </Td>
                 </tr>
               ))}

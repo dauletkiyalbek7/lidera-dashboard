@@ -358,6 +358,22 @@ export type SaleRow = Timestamps & {
   sale_date: string;
 }
 
+/**
+ * Возврат денег за продажу. Одна продажа — один возврат: частичных пока нет.
+ * Строку не удаляем даже при ошибке оформления — это история для разбора.
+ */
+export type ReturnRow = {
+  id: string;
+  company_id: string;
+  sale_id: string;
+  amount: number;
+  currency: string | null;
+  reason: string | null;
+  /** Кто оформил: РОП или директор. */
+  processed_by: string | null;
+  created_at: string;
+};
+
 export type ReceiptRow = Timestamps & {
   id: string;
   company_id: string;
@@ -480,6 +496,7 @@ export type Database = {
       lead_touches: TableDef<LeadTouchRow, 'company_id' | 'lead_id'>;
       trials: TableDef<TrialRow, 'company_id'>;
       sales: TableDef<SaleRow, 'company_id'>;
+      returns: TableDef<ReturnRow, 'company_id' | 'sale_id'>;
       receipts: TableDef<ReceiptRow, 'company_id'>;
       integrations: TableDef<IntegrationRow, 'company_id' | 'platform'>;
       form_submissions: TableDef<FormSubmissionRow, 'status'>;

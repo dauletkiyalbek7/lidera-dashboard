@@ -42,8 +42,8 @@ const campaignColumns = (ad: string, own: string) => [
   { key: 'number', label: 'Номер' },
   { key: 'status', label: 'Статус' },
   { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
-  { key: 'conversions', label: 'Заявки', align: 'right' as const },
-  { key: 'cost', label: `Цена заявки, ${ad}`, align: 'right' as const },
+  { key: 'conversions', label: 'Лиды', align: 'right' as const },
+  { key: 'cost', label: `Цена лида, ${ad}`, align: 'right' as const },
   { key: 'revenue', label: `Выручка, ${own}`, align: 'right' as const },
   { key: 'roas', label: 'ROAS', align: 'right' as const },
   { key: 'counted', label: 'В отчёте', align: 'right' as const },
@@ -52,8 +52,8 @@ const campaignColumns = (ad: string, own: string) => [
 const numberColumns = (ad: string) => [
   { key: 'number', label: 'Номер WhatsApp' },
   { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
-  { key: 'conversions', label: 'Заявки', align: 'right' as const },
-  { key: 'cost', label: `Цена заявки, ${ad}`, align: 'right' as const },
+  { key: 'conversions', label: 'Лиды', align: 'right' as const },
+  { key: 'cost', label: `Цена лида, ${ad}`, align: 'right' as const },
   { key: 'share', label: 'Доля расхода', align: 'right' as const },
 ];
 
@@ -119,8 +119,8 @@ export default async function AdsPage({
         title="Реклама"
         description={
           currencyNote
-            ? `Расход и цена заявки — в ${currencySymbol(currencyNote.source)}, как в рекламном кабинете; в ${currencySymbol(currencyNote.target)} они подписаны ниже. Выручка и прибыль — только в ${currencySymbol(currencyNote.target)}. Курс Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
-            : 'Сколько потратили, сколько заявок получили и почём вышла одна.'
+            ? `Расход и цена лида — в ${currencySymbol(currencyNote.source)}, как в рекламном кабинете; в ${currencySymbol(currencyNote.target)} они подписаны ниже. Выручка и прибыль — только в ${currencySymbol(currencyNote.target)}. Курс Нацбанка РК: 1 ${currencySymbol(currencyNote.source)} = ${formatNumber(currencyNote.rate, 2)} ${currencySymbol(currencyNote.target)} на ${formatDateShort(currencyNote.date)}.`
+            : 'Сколько потратили, сколько лидов получили и почём вышел один.'
         }
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
@@ -142,17 +142,22 @@ export default async function AdsPage({
             }
           />
           <StatTile
-            label="Заявки"
+            label="Лиды"
             value={formatNumber(totals.conversions)}
-            hint="Заполненные формы — то же число, что в рекламном кабинете"
+            hint={
+              // Проекты на WhatsApp живут одними переписками, проекты с сайтом —
+              // одними формами. Показываем сумму, а из чего она сложилась,
+              // видно тут же: иначе половина проектов смотрит на ноль.
+              `${formatNumber(totals.formLeads)} с формы · ${formatNumber(totals.chatLeads)} из переписок`
+            }
           />
           <StatTile
-            label="Цена заявки"
+            label="Цена лида"
             value={formatMoney(adCostPerLead, { currency: adCurrency })}
             hint={
               showBoth && totals.conversions
-                ? `${formatMoney(otherSpend / totals.conversions, { currency: otherCurrency })} · расход ÷ заявки`
-                : 'Расход ÷ количество заявок'
+                ? `${formatMoney(otherSpend / totals.conversions, { currency: otherCurrency })} · расход ÷ лиды`
+                : 'Расход ÷ количество лидов'
             }
             accent
           />

@@ -205,7 +205,7 @@ export async function getDashboardData(
     await Promise.all([
       supabase
         .from('ad_metrics')
-        .select('creative_id, campaign_id, date, spend, impressions, clicks, leads, currency')
+        .select('creative_id, campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
         .eq('company_id', companyId)
         .gte('date', from)
         .lte('date', to),
@@ -476,7 +476,7 @@ export async function getCreativeCards(
       supabase
         .from('ad_metrics')
         .select(
-          'creative_id, campaign_id, date, spend, impressions, clicks, leads, currency, video_plays, video_completions, video_avg_seconds',
+          'creative_id, campaign_id, date, spend, impressions, clicks, leads, conversations, currency, video_plays, video_completions, video_avg_seconds',
         )
         .eq('company_id', companyId)
         .not('creative_id', 'is', null)
@@ -572,7 +572,7 @@ export async function getCreativeCards(
     target.spendSource += Number(row.spend_source ?? 0);
     target.impressions += Number(row.impressions);
     target.clicks += Number(row.clicks);
-    target.conversions += Number(row.leads);
+    target.conversions += Number(row.leads) + Number(row.conversations ?? 0);
     target.plays += Number(row.video_plays ?? 0);
     target.completions += Number(row.video_completions ?? 0);
     target.avgSeconds = Math.max(target.avgSeconds, Number(row.video_avg_seconds ?? 0));
@@ -677,6 +677,9 @@ export type AdBreakdown = {
     impressions: number;
     clicks: number;
     conversions: number;
+    /** Из чего сложились обращения: заполненные формы и начатые переписки. */
+    formLeads: number;
+    chatLeads: number;
     costPerConversion: number;
     ctr: number;
     cpc: number;
@@ -712,7 +715,7 @@ export async function getAdBreakdown(
   const [{ data: metrics }, { data: campaigns }] = await Promise.all([
     supabase
       .from('ad_metrics')
-      .select('campaign_id, date, spend, impressions, clicks, leads, currency')
+      .select('campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
       .eq('company_id', companyId)
       .gte('date', from)
       .lte('date', to),
@@ -774,6 +777,7 @@ export async function getAdBreakdown(
     impressions: number;
     clicks: number;
     leads: number;
+    conversations?: number;
   };
 
   const empty = () => ({
@@ -799,7 +803,7 @@ export async function getAdBreakdown(
     bucket.spendSource += Number(row.spend_source ?? 0);
     bucket.impressions += Number(row.impressions);
     bucket.clicks += Number(row.clicks);
-    bucket.conversions += Number(row.leads);
+    bucket.conversions += Number(row.leads) + Number(row.conversations ?? 0);
     if (Number(row.spend) > 0) bucket.days.add(row.date);
   };
 
@@ -874,7 +878,9 @@ export async function getAdBreakdown(
 
   const impressions = sum(spendRows, (row) => Number(row.impressions));
   const clicks = sum(spendRows, (row) => Number(row.clicks));
-  const conversions = sum(spendRows, (row) => Number(row.leads));
+  const conversions = sum(spendRows, (row) => Number(row.leads) + Number(row.conversations ?? 0));
+  const formLeads = sum(spendRows, (row) => Number(row.leads));
+  const chatLeads = sum(spendRows, (row) => Number(row.conversations ?? 0));
 
   const revenue = Array.from(salesByCampaign.entries())
     .filter(([id]) => !skipped.has(id))
@@ -889,6 +895,8 @@ export async function getAdBreakdown(
       impressions,
       clicks,
       conversions,
+      formLeads,
+      chatLeads,
       costPerConversion: conversions ? spend / conversions : 0,
       ctr: impressions ? (clicks / impressions) * 100 : 0,
       cpc: clicks ? spend / clicks : 0,

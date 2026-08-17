@@ -5,6 +5,7 @@ import { z } from 'zod';
 
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { runDistribution } from '@/lib/lead-distribution';
+import { LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
 import { instantInZone } from '@/lib/lead-touches';
 import { TRIAL_STATUS_ORDER } from '@/lib/trial-status';
@@ -171,6 +172,9 @@ const saleSchema = z.object({
   amount: z.coerce.number().min(0, 'Сумма не может быть отрицательной').max(1_000_000_000),
   saleDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Укажите дату продажи'),
   status: z.enum(SALE_STATUSES),
+  // Оценка нужна рекламе, а не отчёту: на случайном покупателе Meta учиться не
+  // должна. В боте её спрашивают сразу после суммы — на платформе теперь тоже.
+  quality: z.enum(LEAD_QUALITY_ORDER).optional(),
 });
 
 /**
@@ -191,6 +195,7 @@ export async function registerSale(
     amount: formData.get('amount'),
     saleDate: formData.get('saleDate'),
     status: formData.get('status'),
+    quality: emptyToUndefined(formData.get('quality')),
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
@@ -211,12 +216,24 @@ export async function registerSale(
     .select('id')
     .maybeSingle();
 
-  if (error) return { error: 'Не удалось сохранить продажу.' };
+  // 23505 — уникальный индекс «одна оплаченная продажа на лид». Значит чек по
+  // этому клиенту уже провели: чаще всего продажник отметил его в боте.
+  if (error) {
+    return {
+      error:
+        error.code === '23505'
+          ? 'По этому клиенту продажа уже проведена — вторая удвоила бы выручку.'
+          : 'Не удалось сохранить продажу.',
+    };
+  }
 
   if (leadId && parsed.data.status === 'paid') {
     await supabase
       .from('leads')
-      .update({ status: 'sale' })
+      .update({
+        status: 'sale',
+        ...(parsed.data.quality ? { quality: parsed.data.quality } : {}),
+      })
       .eq('id', leadId)
       .eq('company_id', company.id);
   }
@@ -377,13 +394,27 @@ export async function updateTrialStatus(
   if (!parsed.success) return { error: 'Некорректный статус.' };
 
   const supabase = await createServerSupabase();
-  const { error } = await supabase
+  const { data: trial, error } = await supabase
     .from('trials')
     .update({ status: parsed.data.status })
     .eq('id', parsed.data.trialId)
-    .eq('company_id', company.id);
+    .eq('company_id', company.id)
+    .select('lead_id')
+    .maybeSingle();
 
   if (error) return { error: 'Не удалось изменить статус.' };
+
+  // «Купил курс» — это и про лид: выручка, воронка и событие в Meta считаются
+  // по нему, а не по уроку. Раньше отметка оставалась только на уроке, и в
+  // разделе «Лиды» человек так и висел непроданным — ровно то же делает бот,
+  // двигая лид следом за исходом урока.
+  if (parsed.data.status === 'sale' && trial?.lead_id) {
+    await supabase
+      .from('leads')
+      .update({ status: 'sale' })
+      .eq('id', trial.lead_id)
+      .eq('company_id', company.id);
+  }
 
   revalidateCabinet();
   return { success: 'Статус обновлён.' };

@@ -767,6 +767,29 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
     return sendMessage(chatId, 'Запись урока не найдена.');
   }
 
+  // Чек по этому клиенту мог провести кто-то на платформе, пока продажник
+  // набирал сумму здесь. Второй раз записывать нельзя — выручка удвоится, и
+  // база оплату всё равно отклонит. Спрашиваем сразу оценку: за ней он и шёл.
+  if (trial.lead_id) {
+    const { data: paid } = await supabase
+      .from('sales')
+      .select('amount')
+      .eq('company_id', employee.company_id)
+      .eq('lead_id', trial.lead_id)
+      .eq('status', 'paid')
+      .maybeSingle();
+
+    if (paid) {
+      await clear();
+      return sendMessage(
+        chatId,
+        `Продажа по этому клиенту уже проведена: <b>${formatAmount(Number(paid.amount))}</b>.\n\n` +
+          'Второй чек записывать не нужно. Осталось оценить клиента.',
+        { inline: qualityButtons(trial.lead_id) },
+      );
+    }
+  }
+
   const company = await companyOf(employee.company_id);
   const currency = company?.sales_currency ?? 'KZT';
   const saleDate = localDate(company?.timezone ?? 'Asia/Almaty');
@@ -804,7 +827,13 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
 
   await clear();
 
-  if (!sale) return sendMessage(chatId, 'Не удалось сохранить продажу. Скажите директору.');
+  if (!sale) {
+    return sendMessage(
+      chatId,
+      'Не удалось сохранить продажу — возможно, её уже провели на платформе. ' +
+        'Проверьте раздел «Лиды» или скажите директору.',
+    );
+  }
 
   // Пересчёт показываем: продажник должен увидеть, что записалось, а не
   // узнать о расхождении через неделю из отчёта.

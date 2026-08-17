@@ -113,7 +113,14 @@ export default async function TrialsPage({
                     )}
                   </Td>
                   <Td last>
-                    <TrialStatusSelect trialId={trial.id} status={trial.status} />
+                    <TrialStatusSelect
+                      trialId={trial.id}
+                      status={trial.status}
+                      leadId={trial.leadId}
+                      leadName={trial.leadName}
+                      saleAmount={trial.saleAmount}
+                      currency={company.sales_currency}
+                    />
                   </Td>
                 </tr>
               ))}

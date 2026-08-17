@@ -18,6 +18,7 @@ import { Button } from '@/components/ui/button';
 import { IconCheck, IconPlus } from '@/components/ui/icons';
 import { currencySymbol, formatMoney } from '@/lib/format';
 import { Modal, Select } from '@/components/ui/modal';
+import { LEAD_QUALITY, LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import { LEAD_STATUS, leadStatusesFor } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
 import { toIsoDate } from '@/lib/period';
@@ -294,7 +295,7 @@ export function LeadRowActions({
   );
 }
 
-function SaleDialog({
+export function SaleDialog({
   onClose,
   leadId,
   leadName,
@@ -345,6 +346,23 @@ function SaleDialog({
               { value: 'pending', label: 'Ожидает оплаты' },
             ]}
             hint="Оплаченная продажа сразу переводит лид в статус «продажа»"
+          />
+          {/* Ту же оценку спрашивает бот после суммы. На платформе её не
+              спрашивали вовсе, и покупка уходила в рекламу неразмеченной — а
+              учить алгоритм на случайном покупателе значит просить его искать
+              таких же. */}
+          <Select
+            label="Какой это клиент"
+            name="quality"
+            defaultValue=""
+            options={[
+              { value: '', label: 'Не оценивать' },
+              ...LEAD_QUALITY_ORDER.map((quality) => ({
+                value: quality,
+                label: `${LEAD_QUALITY[quality].icon} ${LEAD_QUALITY[quality].label}`,
+              })),
+            ]}
+            hint="От оценки зависит, отправлять ли покупку в рекламный кабинет"
           />
           <FormMessage error={state.error} />
           <SubmitButton label="Записать продажу" pendingLabel="Сохраняем…" />

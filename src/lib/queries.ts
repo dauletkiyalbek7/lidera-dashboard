@@ -1236,12 +1236,15 @@ export type TrialListItem = {
   date: string;
   status: string;
   amount: number;
+  leadId: string | null;
   leadName: string | null;
   leadPhone: string | null;
   /** Продажник, который проводит урок. */
   sellerName: string | null;
   /** Точное начало урока: онлайн важен час, а не только день. */
   startsAt: string | null;
+  /** Сумма проведённого чека по этому клиенту. null — продажи ещё нет. */
+  saleAmount: number | null;
 };
 
 export async function getTrials(
@@ -1260,22 +1263,40 @@ export async function getTrials(
     .order('date', { ascending: false })
     .limit(LIST_LIMIT);
 
-  const [leads, { data: employees }] = await Promise.all([
+  const leadIds = [...new Set((trials ?? []).map((row) => row.lead_id).filter(Boolean))] as string[];
+
+  const [leads, { data: employees }, { data: sales }] = await Promise.all([
     fetchLeadContacts(companyId, trials ?? []),
     supabase.from('employees').select('id, full_name').eq('company_id', companyId),
+    // Чек мог провести бот — тогда сумму спрашивать во второй раз нельзя.
+    leadIds.length
+      ? supabase
+          .from('sales')
+          .select('lead_id, amount')
+          .eq('company_id', companyId)
+          .eq('status', 'paid')
+          .in('lead_id', leadIds)
+      : Promise.resolve({ data: [] as { lead_id: string | null; amount: number }[] }),
   ]);
 
   const sellerNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
+  const paidByLead = new Map(
+    (sales ?? [])
+      .filter((row) => row.lead_id)
+      .map((row) => [row.lead_id as string, Number(row.amount)]),
+  );
 
   return (trials ?? []).map((trial) => ({
     id: trial.id,
     date: trial.date,
     status: trial.status,
     amount: Number(trial.amount),
+    leadId: trial.lead_id,
     leadName: trial.lead_id ? (leads.get(trial.lead_id)?.name ?? null) : null,
     leadPhone: trial.lead_id ? (leads.get(trial.lead_id)?.phone ?? null) : null,
     sellerName: trial.assigned_to ? (sellerNames.get(trial.assigned_to) ?? null) : null,
     startsAt: trial.starts_at,
+    saleAmount: trial.lead_id ? (paidByLead.get(trial.lead_id) ?? null) : null,
   }));
 }
 

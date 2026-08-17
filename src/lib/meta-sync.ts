@@ -23,6 +23,8 @@ const GRAPH = `https://graph.facebook.com/${API_VERSION}`;
 /** Сколько дней перезабираем при каждом запуске. */
 const WINDOW_DAYS = 30;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 /**
  * Сколько кабинетов тянем одновременно.
  *
@@ -351,8 +353,13 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     ? account.account_id
     : `act_${account.account_id}`;
 
-  const since = isoDate(new Date(Date.now() - WINDOW_DAYS * 24 * 60 * 60 * 1000));
-  const until = isoDate(new Date());
+  // Границы окна берём с запасом в сутки вперёд. Сервер считает дату по UTC, а
+  // кабинет и компания живут восточнее: с семи вечера по Гринвичу у них уже
+  // завтра, и «сегодня» в запрос не попадало вовсе. Именно так первый день
+  // новой кампании не показывался до утра. Будущих дней Meta не отдаёт, так
+  // что лишним день не будет.
+  const since = isoDate(new Date(Date.now() - WINDOW_DAYS * DAY_MS));
+  const until = isoDate(new Date(Date.now() + DAY_MS));
 
   // --- 0. Валюта и часовой пояс кабинета ----------------------------------
   // Валюта: расход приходит в ней, а не в валюте компании — доллары нельзя

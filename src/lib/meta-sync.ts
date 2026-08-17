@@ -421,7 +421,10 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   const known = new Set((knownCampaigns ?? []).map((row) => row.external_id));
 
   if (campaigns.length > 0) {
-    const { data: savedCampaigns } = await supabase
+    // Ключи во всех строках пачки обязаны совпадать: PostgREST отвергает
+    // массив с разным набором полей целиком. Поэтому номер подставляем всем —
+    // у кого его нет, остаётся прежний из базы.
+    const { data: savedCampaigns, error: campaignError } = await supabase
       .from('campaigns')
       .upsert(
         campaigns.map((campaign) => ({
@@ -436,14 +439,31 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
           ...(numberByCampaign.has(campaign.id)
             ? { whatsapp_number: numberByCampaign.get(campaign.id) }
             : {}),
-          ...(known.has(campaign.id) ? {} : { counted: !isHiringCampaign(campaign.name) }),
         })),
         { onConflict: 'company_id,platform,external_id' },
       )
       .select('id, external_id');
 
+    // Без кампаний ни одна строка статистики не найдёт своего места, и окно
+    // метрик ниже было бы стёрто вчистую. Такую синхронизацию прерываем.
+    if (campaignError) {
+      throw new Error(`не удалось сохранить кампании: ${campaignError.message}`);
+    }
+
     for (const row of savedCampaigns ?? []) {
       if (row.external_id) campaignIdByExternal.set(row.external_id, row.id);
+    }
+
+    // Кампании найма выключаем из отчётов — но только новые: директор мог
+    // выключить кампанию руками, и синхронизация не вправе включать её
+    // обратно каждую ночь. Отдельным запросом, чтобы не ломать пачку выше.
+    const hiring = campaigns
+      .filter((campaign) => !known.has(campaign.id) && isHiringCampaign(campaign.name))
+      .map((campaign) => campaignIdByExternal.get(campaign.id))
+      .filter(Boolean) as string[];
+
+    if (hiring.length > 0) {
+      await supabase.from('campaigns').update({ counted: false }).in('id', hiring);
     }
   }
 
@@ -667,16 +687,18 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     cpl: row.leads ? round2(row.spend / row.leads) : 0,
   }));
 
-  // Окно перезаписываем: так повторный запуск не удваивает дни.
-  await supabase
-    .from('ad_metrics')
-    .delete()
-    .eq('company_id', account.company_id)
-    .eq('platform', 'meta')
-    .gte('date', since)
-    .lte('date', until);
-
+  // Окно перезаписываем: так повторный запуск не удваивает дни. Но стирать
+  // его, когда писать нечего, нельзя — однажды сбойный ответ Meta так и унёс
+  // месяц статистики целиком. Нет новых строк — оставляем что было.
   if (rows.length > 0) {
+    await supabase
+      .from('ad_metrics')
+      .delete()
+      .eq('company_id', account.company_id)
+      .eq('platform', 'meta')
+      .gte('date', since)
+      .lte('date', until);
+
     const { error } = await supabase.from('ad_metrics').insert(rows);
     if (error) throw new Error(`не удалось сохранить метрики: ${error.message}`);
   }

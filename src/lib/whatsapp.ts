@@ -66,6 +66,8 @@ export type NumberRecord = {
   departmentId: string | null;
   phoneNumberId: string;
   verifyToken: string;
+  /** Отключённый номер ничего не принимает: кнопка в интерфейсе не должна врать. */
+  status: string;
   appSecret: string | null;
   token: string | null;
   autoReplyEnabled: boolean;
@@ -89,7 +91,7 @@ export async function numberByWebhookKey(
   const { data } = await supabase
     .from('whatsapp_numbers')
     .select(
-      'id, company_id, department_id, phone_number_id, verify_token, app_secret_encrypted, token_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time, timezone',
+      'id, company_id, department_id, phone_number_id, verify_token, status, app_secret_encrypted, token_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time, timezone',
     )
     .eq('webhook_key', key)
     .maybeSingle();
@@ -112,7 +114,7 @@ async function numberByPhoneNumberId(
   const { data } = await supabase
     .from('whatsapp_numbers')
     .select(
-      'id, company_id, department_id, phone_number_id, verify_token, app_secret_encrypted, token_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time, timezone',
+      'id, company_id, department_id, phone_number_id, verify_token, status, app_secret_encrypted, token_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time, timezone',
     )
     .eq('company_id', companyId)
     .eq('phone_number_id', phoneNumberId)
@@ -127,6 +129,7 @@ type NumberRow = {
   department_id: string | null;
   phone_number_id: string;
   verify_token: string;
+  status: string;
   app_secret_encrypted: string | null;
   token_encrypted: string | null;
   auto_reply_enabled: boolean;
@@ -144,6 +147,7 @@ function toRecord(row: NumberRow): NumberRecord {
     departmentId: row.department_id,
     phoneNumberId: row.phone_number_id,
     verifyToken: row.verify_token,
+    status: row.status,
     // Секрет нечитаем — значит его ввели при другом ключе шифрования. Это не
     // повод ронять приём: разберёмся выше, а событие всё равно сохраним.
     appSecret: readSecret(row.app_secret_encrypted),
@@ -232,7 +236,11 @@ export async function processWebhook(
 
       // Событие чужого номера. Молча выбрасывать нельзя — это чаще всего
       // признак того, что номер завели в Meta, но не добавили на платформу.
-      if (!target) {
+      //
+      // Отключённый номер тоже пропускаем: иначе кнопка «Отключить» ничего бы
+      // не значила, а заявки продолжали бы падать. Событие при этом уже
+      // сохранено в журнале — видно, что Meta стучится, и приём можно включить.
+      if (!target || target.status !== 'connected') {
         result.skipped += (value.messages?.length ?? 0) + (value.statuses?.length ?? 0);
         continue;
       }
@@ -309,6 +317,13 @@ async function handleMessage(
     .from('leads')
     .update({ last_inbound_at: receivedAt.toISOString() })
     .eq('id', lead.id);
+
+  // Отметка на номере: по ней в разделе видно, что приём живой, без похода
+  // в журнал событий.
+  await supabase
+    .from('whatsapp_numbers')
+    .update({ last_message_at: receivedAt.toISOString(), last_error: null })
+    .eq('id', target.id);
 
   // Автоответ уходит новому клиенту и вернувшемуся после суток тишины:
   // писать его на каждое сообщение внутри живого разговора — навязчиво.

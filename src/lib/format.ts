@@ -71,6 +71,20 @@ export function formatDateShort(value: string | Date): string {
   return new Intl.DateTimeFormat(RU, { day: '2-digit', month: 'short' }).format(date);
 }
 
+/**
+ * Дата и время в переписке: день без года, потому что разговор всегда
+ * недавний, а лишние цифры мешают читать его как чат.
+ */
+export function formatTime(value: string | Date): string {
+  const date = typeof value === 'string' ? new Date(value) : value;
+  return new Intl.DateTimeFormat(RU, {
+    day: '2-digit',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(date);
+}
+
 export function formatDateTime(value: string | Date): string {
   const date = typeof value === 'string' ? new Date(value) : value;
   return new Intl.DateTimeFormat(RU, {

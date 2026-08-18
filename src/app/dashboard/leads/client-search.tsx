@@ -2,7 +2,7 @@ import { Badge, StatusDot } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconLeads } from '@/components/ui/icons';
-import { formatDate, formatDateTime, formatMoney } from '@/lib/format';
+import { formatDate, formatDateTime, formatMoney, formatTime } from '@/lib/format';
 import { leadStatusFor } from '@/lib/lead-status';
 import { SEARCH_LIMIT, type ClientMatch } from '@/lib/queries';
 import type { ReactNode } from 'react';
@@ -119,7 +119,16 @@ export function ClientSearchResults({
                   label="Источник"
                   value={[match.platform, match.source].filter(Boolean).join(' · ') || null}
                 />
-                <Fact label="Объявление" value={match.creativeName} />
+                <Fact
+                  label="Объявление"
+                  value={
+                    match.creativeName
+                      ? match.clickCount > 1
+                        ? `${match.creativeName} · переходов ${match.clickCount}`
+                        : match.creativeName
+                      : null
+                  }
+                />
                 <Fact label="Ответственный" value={match.assignedName} />
                 {match.departmentName ? (
                   <Fact label="Отдел" value={match.departmentName} />
@@ -140,6 +149,10 @@ export function ClientSearchResults({
                   <Fact label="Обещал перезвонить" value={formatDateTime(match.nextTouchAt)} />
                 ) : null}
               </dl>
+
+              {match.messages.length > 0 ? (
+                <Conversation messages={match.messages} />
+              ) : null}
 
               {match.visits.length > 0 ? (
                 <History title={words.section}>
@@ -187,6 +200,56 @@ export function ClientSearchResults({
         })}
       </div>
     </Card>
+  );
+}
+
+/**
+ * Переписка WhatsApp.
+ *
+ * Отвечать отсюда нельзя — менеджеры ведут разговор у себя. Смысл в другом:
+ * поднять трубку, уже зная, о чём человек спрашивал. Свежие сообщения снизу,
+ * как в любом мессенджере.
+ */
+function Conversation({
+  messages,
+}: {
+  messages: ClientMatch['messages'];
+}) {
+  return (
+    <div className="mt-4 rounded-panel border border-line bg-surface-2 px-4 py-3">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-faint">
+        Переписка WhatsApp
+      </p>
+      <ol className="mt-3 space-y-2">
+        {messages.map((message) => {
+          const outgoing = message.direction === 'out';
+
+          return (
+            <li
+              key={message.id}
+              className={`flex ${outgoing ? 'justify-end' : 'justify-start'}`}
+            >
+              <div
+                className={`max-w-[85%] rounded-panel px-3 py-2 ${
+                  outgoing
+                    ? 'bg-lime/12 text-ink-soft'
+                    : 'border border-line bg-surface text-ink'
+                }`}
+              >
+                <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed">
+                  {message.body ?? '—'}
+                </p>
+                <p className="tabular mt-1 text-[11px] text-faint">
+                  {outgoing ? 'Автоответ · ' : ''}
+                  {formatTime(message.sentAt)}
+                  {message.status === 'failed' ? ' · не доставлено' : ''}
+                </p>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
   );
 }
 

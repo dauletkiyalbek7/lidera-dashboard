@@ -1070,10 +1070,24 @@ export type ClientMatch = {
   touchCount: number;
   lastTouchAt: string | null;
   nextTouchAt: string | null;
+  /** Переписка WhatsApp, если клиент пришёл туда. Свежие снизу. */
+  messages: {
+    id: string;
+    direction: 'in' | 'out';
+    body: string | null;
+    type: string;
+    status: string;
+    sentAt: string;
+  }[];
+  /** Сколько раз человек переходил по рекламе до этого разговора. */
+  clickCount: number;
 };
 
 /** Больше этого числа совпадений не показываем: значит запрос слишком общий. */
 export const SEARCH_LIMIT = 20;
+
+/** Сколько последних сообщений показываем в карточке клиента. */
+const MESSAGE_TAIL = 12;
 
 /**
  * Поиск клиента по номеру телефона или имени.
@@ -1117,8 +1131,15 @@ export async function searchClients(
 
   const leadIds = leads.map((lead) => lead.id);
 
-  const [{ data: creatives }, { data: employees }, { data: departments }, { data: visits }, { data: purchases }] =
-    await Promise.all([
+  const [
+    { data: creatives },
+    { data: employees },
+    { data: departments },
+    { data: visits },
+    { data: purchases },
+    { data: messages },
+    { data: clicks },
+  ] = await Promise.all([
       supabase
         .from('creatives')
         .select('id, name, label, format, created_at')
@@ -1138,6 +1159,20 @@ export async function searchClients(
         .eq('company_id', companyId)
         .in('lead_id', leadIds)
         .order('sale_date', { ascending: false }),
+      // Переписка: показываем свежий хвост, а не всю историю — менеджеру перед
+      // звонком нужен последний разговор, а не переписка полугодовой давности.
+      supabase
+        .from('whatsapp_messages')
+        .select('id, lead_id, direction, body, type, status, sent_at')
+        .eq('company_id', companyId)
+        .in('lead_id', leadIds)
+        .order('sent_at', { ascending: false })
+        .limit(MESSAGE_TAIL * SEARCH_LIMIT),
+      supabase
+        .from('lead_clicks')
+        .select('lead_id')
+        .eq('company_id', companyId)
+        .in('lead_id', leadIds),
     ]);
 
   const creativeNames = new Map(
@@ -1183,6 +1218,20 @@ export async function searchClients(
       touchCount: lead.touch_count ?? 0,
       lastTouchAt: lead.last_touch_at,
       nextTouchAt: lead.next_touch_at,
+      // Из базы пришли новые сверху — разворачиваем, чтобы читалось как чат.
+      messages: (messages ?? [])
+        .filter((row) => row.lead_id === lead.id)
+        .slice(0, MESSAGE_TAIL)
+        .reverse()
+        .map((row) => ({
+          id: row.id,
+          direction: row.direction,
+          body: row.body,
+          type: row.type,
+          status: row.status,
+          sentAt: row.sent_at,
+        })),
+      clickCount: (clicks ?? []).filter((row) => row.lead_id === lead.id).length,
     };
   });
 }

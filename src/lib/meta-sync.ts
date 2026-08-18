@@ -3,6 +3,7 @@ import 'server-only';
 import { syncExchangeRates } from '@/lib/currency';
 import { DEFAULT_TIME_ZONE, instantInZone, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
+import { backfillClickAttribution } from '@/lib/whatsapp';
 
 /**
  * Синхронизация с Meta Marketing API.
@@ -714,6 +715,16 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     .from('ad_accounts')
     .update({ status: 'connected' })
     .eq('id', account.id);
+
+  // Заявки из WhatsApp, пришедшие раньше, чем мы узнали об объявлении,
+  // получают свой креатив только теперь — база объявлений пополнилась именно
+  // сейчас. Сбой здесь не должен ронять синхронизацию: метрики уже сохранены,
+  // а недостающий креатив доставится на следующем заходе.
+  try {
+    await backfillClickAttribution(supabase, account.company_id);
+  } catch {
+    // Молча: цифры важнее подписи к ним.
+  }
 
   return {
     account: account.account_name,

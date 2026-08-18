@@ -271,6 +271,84 @@ export async function processWebhook(
   return result;
 }
 
+/**
+ * Подстановка объявления заявкам, пришедшим раньше синхронизации.
+ *
+ * Объявление у заявки мы узнаём, сопоставляя номер из метки клика со своей
+ * базой объявлений. А база наполняется ночной синхронизацией — значит запуск
+ * рекламы утром даёт разрыв: первые заявки приходят раньше, чем мы вообще
+ * узнаём о существовании этого объявления, и остаются без креатива.
+ *
+ * Метка клика при этом сохранена, так что чинится разрыв дешево: после каждой
+ * синхронизации проходим по таким заявкам и доставляем недостающее. Иначе
+ * первый день любой рекламной кампании навсегда остаётся слепым пятном в
+ * отчёте «какой ролик приводит покупателей» — а это как раз тот день, когда
+ * решают, оставлять кампанию или выключать.
+ *
+ * Берём ПЕРВЫЙ клик человека: он объясняет, что тот изначально искал.
+ * Последующие клики остаются в истории и идут в CAPI, но креатив не меняют.
+ */
+export async function backfillClickAttribution(
+  supabase: Supabase,
+  companyId: string,
+): Promise<number> {
+  const { data: clicks } = await supabase
+    .from('lead_clicks')
+    .select('lead_id, ad_external_id, clicked_at')
+    .eq('company_id', companyId)
+    .not('ad_external_id', 'is', null)
+    .order('clicked_at');
+
+  if (!clicks || clicks.length === 0) return 0;
+
+  // Первый клик на человека: запрос уже отсортирован, поэтому побеждает
+  // тот, что встретился раньше.
+  const firstClick = new Map<string, string>();
+  for (const click of clicks) {
+    if (!click.ad_external_id) continue;
+    if (!firstClick.has(click.lead_id)) firstClick.set(click.lead_id, click.ad_external_id);
+  }
+
+  const { data: pending } = await supabase
+    .from('leads')
+    .select('id')
+    .eq('company_id', companyId)
+    .is('creative_id', null)
+    .in('id', [...firstClick.keys()]);
+
+  if (!pending || pending.length === 0) return 0;
+
+  const wanted = [...new Set(pending.map((lead) => firstClick.get(lead.id)!))];
+
+  const { data: ads } = await supabase
+    .from('ads')
+    .select('id, external_id, creative_id, campaign_id')
+    .eq('company_id', companyId)
+    .in('external_id', wanted);
+
+  if (!ads || ads.length === 0) return 0;
+
+  const adByExternal = new Map(ads.map((ad) => [ad.external_id, ad]));
+
+  let filled = 0;
+  for (const lead of pending) {
+    const ad = adByExternal.get(firstClick.get(lead.id)!);
+    // Объявления всё ещё нет в базе — вернёмся к этой заявке после следующей
+    // синхронизации. Ждать оно может сколько угодно: метка клика никуда не
+    // денется.
+    if (!ad) continue;
+
+    const { error } = await supabase
+      .from('leads')
+      .update({ ad_id: ad.id, creative_id: ad.creative_id, campaign_id: ad.campaign_id })
+      .eq('id', lead.id);
+
+    if (!error) filled += 1;
+  }
+
+  return filled;
+}
+
 /** Входящее сообщение: находим или заводим клиента и сохраняем текст. */
 async function handleMessage(
   supabase: Supabase,

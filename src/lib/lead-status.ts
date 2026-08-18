@@ -1,3 +1,5 @@
+import { trialWords } from '@/lib/trial-term';
+
 /**
  * Статусы лида — единственное место, где описан путь клиента.
  *
@@ -124,6 +126,25 @@ export function leadStatusMeta(value: string): LeadStatusMeta {
       hint: '',
     }
   );
+}
+
+/**
+ * Подпись и подсказка статуса для конкретной компании.
+ *
+ * Все статусы, кроме `trial`, называются одинаково у всех. А промежуточный
+ * шаг каждая компания зовёт по-своему: у школы это «Пробный», у Дарына —
+ * «Вебинар». Поэтому подпись берут отсюда, а не из справочника напрямую.
+ */
+export function leadStatusFor(value: string, term: unknown): LeadStatusMeta {
+  const meta = leadStatusMeta(value);
+  if (value !== 'trial') return meta;
+
+  const words = trialWords(term);
+  return { ...meta, label: words.leadStatus, hint: words.leadStatusHint };
+}
+
+export function leadStatusLabel(value: string, term: unknown): string {
+  return leadStatusFor(value, term).label;
 }
 
 /**

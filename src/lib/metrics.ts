@@ -3,6 +3,8 @@
  * Единственное место, где они считаются — дублировать формулы нельзя.
  */
 
+import { trialWords } from '@/lib/trial-term';
+
 /** Деление, безопасное к нулевому знаменателю. */
 export function safeDivide(numerator: number, denominator: number): number {
   if (!denominator) return 0;
@@ -118,6 +120,29 @@ export const FUNNEL_LABELS: Record<FunnelType, {
     hint: 'Без пробного — для товарного бизнеса и прямых продаж',
   },
 };
+
+/**
+ * Подписи воронки для конкретной компании.
+ *
+ * `FUNNEL_LABELS` описывает сам тип воронки и потому нейтрален — он нужен
+ * там, где тип выбирают. А на рабочих экранах шаг называют так, как принято
+ * у этой компании: у школы «Пробный», у Дарына «Вебинар». Форма воронки при
+ * этом одна и та же, меняется только слово.
+ */
+export function funnelLabels(
+  funnelType: FunnelType,
+  term: unknown,
+): (typeof FUNNEL_LABELS)[FunnelType] {
+  if (funnelType !== 'trial') return FUNNEL_LABELS[funnelType];
+
+  const words = trialWords(term);
+  return {
+    title: words.funnelTitle,
+    middleStep: words.middleStep,
+    middleColumn: words.column,
+    hint: FUNNEL_LABELS.trial.hint,
+  };
+}
 
 /** Значение промежуточного шага воронки для выбранного типа. */
 export function middleStepValue(

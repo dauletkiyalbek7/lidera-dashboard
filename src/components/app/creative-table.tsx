@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge';
 import { currencySymbol, formatNumber, formatRatio } from '@/lib/format';
 import {
-  FUNNEL_LABELS,
+  funnelLabels,
   middleStepValue,
   verdictByRoas,
   verdictLabels,
@@ -30,6 +30,7 @@ const VERDICT_TONE = {
 export function CreativeTable({
   creatives,
   funnelType,
+  trialTerm,
   currency,
   adCurrency,
   spendOf,
@@ -37,6 +38,8 @@ export function CreativeTable({
 }: {
   creatives: CreativePerformance[];
   funnelType: FunnelType;
+  /** Как компания зовёт промежуточный шаг: от этого зависит подпись колонки. */
+  trialTerm: string;
   /** Валюта денег компании: в ней выручка. */
   currency: string;
   /** Валюта рекламных денег: в ней расход и цена лида. */
@@ -46,7 +49,7 @@ export function CreativeTable({
   limit?: number;
 }) {
   const rows = limit ? creatives.slice(0, limit) : creatives;
-  const middleColumn = FUNNEL_LABELS[funnelType].middleColumn;
+  const middleColumn = funnelLabels(funnelType, trialTerm).middleColumn;
 
   return (
     <div className="overflow-x-auto">

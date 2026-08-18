@@ -90,7 +90,11 @@ export default async function LeadsPage({
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
             {isStaff ? null : <DistributeButton queued={queued} />}
-            <AddLeadButton creatives={creatives} funnelType={funnelType} />
+            <AddLeadButton
+              creatives={creatives}
+              funnelType={funnelType}
+              trialTerm={company.trial_term}
+            />
             <DateRangePicker range={range} />
           </div>
         }
@@ -135,6 +139,7 @@ export default async function LeadsPage({
               counts={stats.counts}
               total={stats.total}
               funnelType={funnelType}
+              trialTerm={company.trial_term}
             />
           </Card>
         ) : null}
@@ -209,6 +214,7 @@ export default async function LeadsPage({
                       leadId={lead.id}
                       status={lead.status}
                       funnelType={funnelType}
+                      trialTerm={company.trial_term}
                     />
                   </Td>
                   <Td last align="right">
@@ -216,6 +222,7 @@ export default async function LeadsPage({
                       leadId={lead.id}
                       leadName={lead.name}
                       funnelType={funnelType}
+                      trialTerm={company.trial_term}
                       status={lead.status}
                       saleAmount={lead.saleAmount}
                       currency={company.sales_currency}

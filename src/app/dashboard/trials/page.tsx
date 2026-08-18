@@ -14,16 +14,17 @@ import { safeDivide } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
 import { getTrials } from '@/lib/queries';
 import { wasHeld } from '@/lib/trial-status';
+import { trialWords } from '@/lib/trial-term';
 import { TrialStatusSelect } from './trial-controls';
 
-export const metadata: Metadata = { title: 'Пробные' };
+export const metadata: Metadata = { title: 'Пробные уроки' };
 
 /** На телефоне остаётся суть: кто на пробном и чем оно закончилось. */
 const COLUMNS: TableColumn[] = [
   { key: 'lead', label: 'Клиент' },
   { key: 'phone', label: 'Телефон', showFrom: 'lg' },
   { key: 'date', label: 'Когда', showFrom: 'md' },
-  { key: 'seller', label: 'Проводит', showFrom: 'md' },
+  { key: 'seller', label: 'Ведёт', showFrom: 'md' },
   { key: 'status', label: 'Статус' },
 ];
 
@@ -40,6 +41,8 @@ export default async function TrialsPage({
   // У компаний с прямой продажей пробных занятий нет — раздел им не показывается.
   if (company.funnel_type !== 'trial') redirect('/dashboard');
 
+  // Слово компании: у школы «Пробный урок», у Дарына «Вебинар».
+  const words = trialWords(company.trial_term);
   const range = resolveRange(await searchParams, company.timezone);
   const trials = await getTrials(company.id, range.from, range.to);
 
@@ -52,8 +55,8 @@ export default async function TrialsPage({
   return (
     <>
       <PageHeader
-        title="Пробные"
-        description="Онлайн-урок: время согласовано с клиентом и закреплено за свободным продажником."
+        title={words.section}
+        description="Время согласовано с клиентом и закреплено за свободным продажником."
         action={<DateRangePicker range={range} />}
       />
 
@@ -79,13 +82,16 @@ export default async function TrialsPage({
         </div>
 
         <Card className="mt-4">
-          <CardHeader title="Записи на пробные" subtitle={`Период: ${range.label}`} />
+          <CardHeader
+            title={`Записи на ${words.accusative}`}
+            subtitle={`Период: ${range.label}`}
+          />
           {trials.length === 0 ? (
             <div className="p-5 sm:p-6">
               <EmptyState
                 icon={<IconTrials className="size-5" />}
-                title="Пробных за этот период нет"
-                description="Записать клиента на урок можно кнопкой «Пробный» в разделе «Лиды» — там же выбирается время и свободный продажник."
+                title="Записей за этот период нет"
+                description={`Записать клиента можно кнопкой «${words.leadStatus}» в разделе «Лиды» — там же выбирается время и свободный продажник.`}
               />
             </div>
           ) : (

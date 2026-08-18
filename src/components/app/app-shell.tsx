@@ -13,6 +13,8 @@ type AppShellProps = {
   nav: NavKey;
   /** Тип воронки компании: от него зависит состав разделов. */
   funnelType: FunnelType;
+  /** Как компания зовёт промежуточный шаг воронки: влияет на подпись раздела. */
+  trialTerm?: string;
   /** Рядовой сотрудник: в меню только его разделы. */
   staffOnly?: boolean;
   /** Роль сотрудника: у таргетолога свой набор разделов. */
@@ -30,6 +32,7 @@ type AppShellProps = {
 export function AppShell({
   nav,
   funnelType,
+  trialTerm,
   staffOnly = false,
   staffRole = null,
   children,
@@ -39,7 +42,7 @@ export function AppShell({
   userEmail,
   banner,
 }: AppShellProps) {
-  const groups = navFor(nav, funnelType, staffOnly, staffRole);
+  const groups = navFor(nav, funnelType, staffOnly, staffRole, trialTerm);
   // Внутри кабинета логотип ведёт на главную кабинета: попадать с рабочего
   // экрана на витрину продукта — неожиданно и раздражает.
   const home = nav === 'admin' ? '/admin' : '/dashboard';

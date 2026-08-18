@@ -25,6 +25,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
     <AppShell
       nav="company"
       funnelType={company.funnel_type}
+      trialTerm={company.trial_term}
       staffOnly={employee !== null}
       staffRole={employee?.role ?? null}
       workspace={company.name}

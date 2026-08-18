@@ -7,6 +7,7 @@ import { Field, FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import { CURRENCIES } from '@/lib/format';
 import { FUNNEL_LABELS } from '@/lib/metrics';
+import { TRIAL_TERM_ORDER, trialWords } from '@/lib/trial-term';
 import { updateCompany, type SettingsState } from './actions';
 
 export function CompanyForm({
@@ -18,6 +19,7 @@ export function CompanyForm({
     director_name: string;
     phone: string;
     funnel_type: string;
+    trial_term: string;
     currency: string;
     sales_currency: string;
   };
@@ -105,8 +107,33 @@ export function CompanyForm({
             ))}
           </select>
           <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
-            {FUNNEL_LABELS.direct.hint}. Без пробных занятий раздел «Пробные» скрывается,
-            а промежуточным шагом воронки становится «взято в работу».
+            {FUNNEL_LABELS.direct.hint}. Без промежуточного занятия его раздел
+            скрывается, а шагом воронки становится «взято в работу».
+          </p>
+        </div>
+
+        <div>
+          <label
+            htmlFor="trial_term"
+            className="block text-[13px] font-medium text-ink-soft"
+          >
+            Как называется промежуточный шаг
+          </label>
+          <select
+            id="trial_term"
+            name="trial_term"
+            defaultValue={defaults.trial_term}
+            className="mt-2 h-11 w-full rounded-control border border-line bg-surface-2 px-3 text-[14.5px] text-ink focus:border-lime/50 focus:outline-none"
+          >
+            {TRIAL_TERM_ORDER.map((key) => (
+              <option key={key} value={key}>
+                {trialWords(key).section}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+            Меняется только слово в интерфейсе — раздел, колонка и статус лида.
+            Сама воронка и все расчёты остаются прежними.
           </p>
         </div>
       </fieldset>

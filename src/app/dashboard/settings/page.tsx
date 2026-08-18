@@ -40,6 +40,7 @@ export default async function SettingsPage() {
                 director_name: company.director_name ?? '',
                 phone: company.phone ?? '',
                 funnel_type: company.funnel_type,
+                trial_term: company.trial_term,
                 currency: company.currency,
                 sales_currency: company.sales_currency,
               }}

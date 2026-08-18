@@ -19,15 +19,16 @@ import { IconCheck, IconPlus } from '@/components/ui/icons';
 import { currencySymbol, formatMoney } from '@/lib/format';
 import { Modal, Select } from '@/components/ui/modal';
 import { LEAD_QUALITY, LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
-import { LEAD_STATUS, leadStatusesFor } from '@/lib/lead-status';
+import { leadStatusFor, leadStatusesFor } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
 import { toIsoDate } from '@/lib/period';
+import { trialWords } from '@/lib/trial-term';
 
 /** Порядок и состав статусов — из общего справочника, а не из локального списка. */
-function leadStatusOptions(funnelType: FunnelType) {
+function leadStatusOptions(funnelType: FunnelType, trialTerm: string) {
   return leadStatusesFor(funnelType).map((value) => ({
     value,
-    label: LEAD_STATUS[value].label,
+    label: leadStatusFor(value, trialTerm).label,
   }));
 }
 
@@ -43,9 +44,11 @@ const PLATFORM_OPTIONS = [
 export function AddLeadButton({
   creatives,
   funnelType,
+  trialTerm,
 }: {
   creatives: { id: string; name: string }[];
   funnelType: FunnelType;
+  trialTerm: string;
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createLead, {} as CrmState);
@@ -95,7 +98,7 @@ export function AddLeadButton({
               label="Статус"
               name="status"
               defaultValue="new"
-              options={leadStatusOptions(funnelType)}
+              options={leadStatusOptions(funnelType, trialTerm)}
             />
 
             <FormMessage error={state.error} />
@@ -163,14 +166,16 @@ export function LeadStatusSelect({
   leadId,
   status,
   funnelType,
+  trialTerm,
 }: {
   leadId: string;
   status: string;
   funnelType: FunnelType;
+  trialTerm: string;
 }) {
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  const options = leadStatusOptions(funnelType);
+  const options = leadStatusOptions(funnelType, trialTerm);
 
   const change = (next: string) => {
     setError(null);
@@ -237,6 +242,7 @@ export function LeadRowActions({
   leadId,
   leadName,
   funnelType,
+  trialTerm,
   status,
   saleAmount,
   currency,
@@ -244,6 +250,7 @@ export function LeadRowActions({
   leadId: string;
   leadName: string;
   funnelType: FunnelType;
+  trialTerm: string;
   status: string;
   /** Сумма уже проведённой продажи. null — чека ещё нет. */
   saleAmount: number | null;
@@ -271,7 +278,7 @@ export function LeadRowActions({
             его снова значит звать на этап, который человек уже прошёл. */}
         {funnelType === 'trial' && status !== 'sale' ? (
           <Button type="button" variant="ghost" size="sm" onClick={() => setDialog('trial')}>
-            Урок
+            {trialWords(trialTerm).one}
           </Button>
         ) : null}
         <Button type="button" variant="secondary" size="sm" onClick={() => setDialog('sale')}>

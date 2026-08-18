@@ -10,9 +10,19 @@ import { requireFullAccess } from '@/lib/auth';
 import { publicEnv } from '@/lib/env';
 import { formatDateTime } from '@/lib/format';
 import { INTEGRATION_STATUS, statusOf } from '@/lib/labels';
-import { getIntegrations, getLostSubmissions } from '@/lib/queries';
+import { getIntegrations, getLeadSources, getLostSubmissions } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Интеграции' };
+
+/** Откуда приходит поток заявок. */
+const SOURCE_PLATFORM_LABELS: Record<string, string> = {
+  meta: 'Meta',
+  tiktok: 'TikTok',
+  google: 'Google',
+  site: 'Сайт',
+  whatsapp: 'WhatsApp',
+  other: 'Другое',
+};
 
 const CATALOG = [
   {
@@ -47,17 +57,16 @@ const CATALOG = [
 
 export default async function IntegrationsPage() {
   const { company } = await requireFullAccess();
-  const [integrations, lost] = await Promise.all([
+  const [integrations, lost, sources] = await Promise.all([
     getIntegrations(company.id),
     getLostSubmissions(company.id),
+    getLeadSources(company.id),
   ]);
   // Адрес берём из самого запроса: он верен и на боевом домене, и на превью,
   // и не зависит от того, что записано в переменных окружения.
   const host = (await headers()).get('host');
   const origin = host ? `https://${host}` : publicEnv.siteUrl;
-  const webhookUrl = company.lead_webhook_key
-    ? `${origin}/api/forms/${company.lead_webhook_key}`
-    : 'Ключ ещё не выдан — обратитесь к администратору платформы';
+  const sourceUrl = (key: string) => `${origin}/api/forms/${key}`;
   const byPlatform = new Map(integrations.map((item) => [item.platform, item]));
 
   return (
@@ -128,21 +137,47 @@ export default async function IntegrationsPage() {
 
         <Card className="mt-4">
           <CardHeader
-            title="Форма на сайте"
-            subtitle="Заявки с лендинга попадают в «Лиды» вместе с меткой объявления"
+            title="Потоки заявок"
+            subtitle="У каждого потока свой адрес: по нему платформа узнаёт отдел и площадку"
           />
-          <div className="space-y-4 px-5 py-5 sm:px-6">
-            <div>
-              <p className="text-[13px] font-medium text-ink-soft">Адрес приёма заявок</p>
-              <code className="mt-2 block overflow-x-auto rounded-control border border-line bg-surface-2 px-3 py-2.5 text-[12.5px] text-ink">
-                {webhookUrl}
-              </code>
-            </div>
-            <ol className="space-y-3">
+          <div className="space-y-5 px-5 py-5 sm:px-6">
+            {sources.length === 0 ? (
+              <p className="text-[13.5px] text-muted">
+                Потоков пока нет. Их заводит администратор платформы.
+              </p>
+            ) : (
+              <ul className="space-y-4">
+                {sources.map((source) => (
+                  <li key={source.id}>
+                    <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1">
+                      <span className="text-[13.5px] font-medium text-ink">
+                        {source.name}
+                      </span>
+                      <Badge tone="neutral">
+                        {SOURCE_PLATFORM_LABELS[source.platform] ?? source.platform}
+                      </Badge>
+                      {source.departmentName ? (
+                        <span className="text-[12.5px] text-muted">
+                          {source.departmentName}
+                        </span>
+                      ) : null}
+                      {source.status === 'disabled' ? (
+                        <Badge tone="negative">Отключён</Badge>
+                      ) : null}
+                    </div>
+                    <code className="mt-1.5 block overflow-x-auto rounded-control border border-line bg-surface-2 px-3 py-2.5 text-[12.5px] text-ink">
+                      {sourceUrl(source.webhookKey)}
+                    </code>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <ol className="space-y-3 border-t border-line pt-4">
               {[
-                'В Tilda: страница с формой → Настройки формы → «Webhook» → вставить этот адрес.',
-                'В скрытые поля формы добавьте fbclid, utm_source, utm_medium, utm_campaign, utm_content — Tilda подставит их из адреса страницы.',
-                'Отправьте тестовую заявку: человек появится в разделе «Лиды» с источником «сайт».',
+                'В Tilda: страница с формой → Настройки формы → «Webhook» → вставить адрес нужного потока.',
+                'В сервисе-посреднике, который выгружает моментальные формы: добавьте отправку на этот же адрес рядом с выгрузкой в таблицу.',
+                'Отправьте тестовую заявку: человек появится в разделе «Лиды» со своим отделом.',
               ].map((step, index) => (
                 <li key={step} className="flex gap-3.5">
                   <span className="tabular flex size-6 shrink-0 items-center justify-center rounded-full border border-line bg-surface-2 text-[12px] font-medium text-lime">

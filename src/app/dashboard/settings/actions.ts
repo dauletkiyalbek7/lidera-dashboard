@@ -12,6 +12,7 @@ import {
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { isValidPoint } from '@/lib/geo';
 import { createServerSupabase } from '@/lib/supabase/server';
+import { TRIAL_TERM_ORDER } from '@/lib/trial-term';
 
 export type SettingsState = { error?: string; success?: string };
 
@@ -20,6 +21,7 @@ const companySchema = z.object({
   director_name: z.string().trim().max(120).optional(),
   phone: z.string().trim().max(40).optional(),
   funnel_type: z.enum(['trial', 'direct']),
+  trial_term: z.enum(TRIAL_TERM_ORDER),
   currency: z.enum(['KZT', 'USD', 'EUR', 'RUB']),
   sales_currency: z.enum(['KZT', 'USD', 'EUR', 'RUB']),
 });
@@ -42,6 +44,7 @@ export async function updateCompany(
     director_name: formData.get('director_name'),
     phone: formData.get('phone'),
     funnel_type: formData.get('funnel_type'),
+    trial_term: formData.get('trial_term') ?? 'trial',
     currency: formData.get('currency') ?? 'KZT',
     sales_currency: formData.get('sales_currency') ?? 'KZT',
   });
@@ -58,6 +61,7 @@ export async function updateCompany(
       director_name: parsed.data.director_name || null,
       phone: parsed.data.phone || null,
       funnel_type: parsed.data.funnel_type,
+      trial_term: parsed.data.trial_term,
       currency: parsed.data.currency,
       sales_currency: parsed.data.sales_currency,
     })

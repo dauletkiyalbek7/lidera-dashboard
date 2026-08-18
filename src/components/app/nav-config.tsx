@@ -1,6 +1,7 @@
 'use client';
 
 import type { FunnelType } from '@/lib/metrics';
+import { trialWords } from '@/lib/trial-term';
 import {
   IconAds,
   IconCompanies,
@@ -78,7 +79,7 @@ const COMPANY_NAV: NavGroup[] = [
       { href: '/dashboard/leads', label: 'Лиды', icon: IconLeads, staff: true },
       {
         href: '/dashboard/trials',
-        label: 'Пробные',
+        label: 'Пробные уроки',
         icon: IconTrials,
         onlyFunnel: 'trial',
         staff: true,
@@ -147,11 +148,20 @@ export function navFor(
   funnelType: FunnelType,
   staffOnly = false,
   staffRole: string | null = null,
+  trialTerm: string = 'trial',
 ): NavGroup[] {
+  const middleSection = trialWords(trialTerm).section;
+
   return NAV_BY_KEY[key]
     .map((group) => ({
       ...group,
-      items: group.items.filter(
+      // Раздел промежуточного шага компания зовёт по-своему: «Пробные уроки»
+      // у школы, «Вебинары» у Дарына. Остальные названия у всех одинаковые.
+      items: group.items
+        .map((item) =>
+          item.href === '/dashboard/trials' ? { ...item, label: middleSection } : item,
+        )
+        .filter(
         (item) =>
           !item.soon &&
           (!item.onlyFunnel || item.onlyFunnel === funnelType) &&

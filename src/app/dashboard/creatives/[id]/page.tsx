@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+
+import { trialWords } from '@/lib/trial-term';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 
@@ -166,12 +168,12 @@ export default async function CreativePage({
               />
               {company.funnel_type === 'trial' ? (
                 <StatTile
-                  label="Пробные занятия"
+                  label={trialWords(company.trial_term).section}
                   value={formatNumber(creative.trials)}
                   hint={
                     creative.conversions
-                      ? `Дошли до пробного: ${formatPercent((creative.trials / creative.conversions) * 100, 1)}`
-                      : 'Проведённые занятия по заявкам этого ролика'
+                      ? `Дошли до этого шага: ${formatPercent((creative.trials / creative.conversions) * 100, 1)}`
+                      : 'Состоявшиеся встречи по заявкам этого ролика'
                   }
                 />
               ) : null}

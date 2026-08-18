@@ -1,4 +1,6 @@
 import type { Metadata } from 'next';
+
+import { trialWords } from '@/lib/trial-term';
 import Link from 'next/link';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
@@ -24,14 +26,15 @@ import { getAdSpendCurrency, getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
 
+
 /** Валюта живёт в шапке колонки: расход в одной, выручка в другой. */
-const baseColumns = (ad: string, own: string) => [
+const baseColumns = (ad: string, own: string, middle: string) => [
   { key: 'creative', label: 'Креатив' },
   { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
   { key: 'ctr', label: 'CTR', align: 'right' as const },
   { key: 'leads', label: 'Лиды', align: 'right' as const },
   { key: 'cpl', label: `Цена лида, ${ad}`, align: 'right' as const },
-  { key: 'trials', label: 'Пробные', align: 'right' as const },
+  { key: 'trials', label: middle, align: 'right' as const },
   { key: 'sales', label: 'Продажи', align: 'right' as const },
   { key: 'revenue', label: `Выручка, ${own}`, align: 'right' as const },
   { key: 'roas', label: 'ROAS', align: 'right' as const },
@@ -39,10 +42,10 @@ const baseColumns = (ad: string, own: string) => [
 ];
 
 /** Без пробных занятий столбец не нужен — воронка короче. */
-const columnsFor = (funnelType: string, ad: string, own: string) =>
+const columnsFor = (funnelType: string, ad: string, own: string, term: unknown) =>
   funnelType === 'trial'
-    ? baseColumns(ad, own)
-    : baseColumns(ad, own).filter((c) => c.key !== 'trials');
+    ? baseColumns(ad, own, trialWords(term).column)
+    : baseColumns(ad, own, '').filter((c) => c.key !== 'trials');
 
 export default async function CreativesPage({
   searchParams,
@@ -137,6 +140,7 @@ export default async function CreativesPage({
                   company.funnel_type,
                   currencySymbol(adCurrency),
                   currencySymbol(currency),
+                  company.trial_term,
                 )} minWidth={1080}>
                 {shown.map((card) => {
                   const href = `/dashboard/creatives/${card.id}?${new URLSearchParams({

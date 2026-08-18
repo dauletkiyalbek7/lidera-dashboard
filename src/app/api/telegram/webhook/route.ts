@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-import { LEAD_STATUS, isLeadStatus, type LeadStatus } from '@/lib/lead-status';
+import { isLeadStatus, leadStatusFor, type LeadStatus } from '@/lib/lead-status';
 import { TRIAL_STATUS, isTrialStatus } from '@/lib/trial-status';
 import {
   formatSchedule,
@@ -404,6 +404,8 @@ type CompanyRow = {
   work_days: number[];
   late_grace_minutes: number;
   funnel_type: string;
+  /** Как компания зовёт промежуточный шаг: пробный урок или вебинар. */
+  trial_term: string;
   /** Валюта денег компании: в ней продажник и называет сумму. */
   sales_currency: string;
 };
@@ -413,7 +415,7 @@ async function companyOf(companyId: string): Promise<CompanyRow | null> {
   const { data } = await supabase
     .from('companies')
     .select(
-      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, sales_currency',
+      'shift_mode, office_lat, office_lng, office_radius_m, timezone, work_start_time, work_end_time, work_days, late_grace_minutes, funnel_type, trial_term, sales_currency',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -535,10 +537,10 @@ async function listLeads(
 
   return sendMessage(
     chatId,
-    leadCard({ ...lead, creativeLabel: creativeName }, header),
+    leadCard({ ...lead, creativeLabel: creativeName }, header, company?.trial_term),
     {
       inline: [
-        ...statusButtons(lead.id, funnelType),
+        ...statusButtons(lead.id, funnelType, company?.trial_term),
         ...next,
       ],
     },
@@ -686,11 +688,11 @@ async function applyStatus(
 
   if (error) return answerCallback(query.id, 'Не удалось сохранить статус.');
 
-  const label = LEAD_STATUS[status].label;
+  const company = await companyOf(employee.company_id);
+
+  const label = leadStatusFor(status, company?.trial_term).label;
   await answerCallback(query.id, `Статус: ${label}`);
   await closeOpenTouches(supabase, lead.id);
-
-  const company = await companyOf(employee.company_id);
 
   // «Пробный» — это не просто отметка: у урока должны быть время и продажник.
   if (status === 'trial') {

@@ -1,4 +1,4 @@
-import { LEAD_STATUS, leadStatusesFor, type LeadStatus } from '@/lib/lead-status';
+import { leadStatusFor, leadStatusesFor, type LeadStatus } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
 import { LEAD_QUALITY, LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import type { InlineButton } from '@/lib/telegram';
@@ -19,7 +19,7 @@ export type LeadCardData = {
   creativeLabel?: string | null;
 };
 
-export function leadCard(lead: LeadCardData, title?: string): string {
+export function leadCard(lead: LeadCardData, title?: string, trialTerm?: string): string {
   const rows = [
     title,
     `<b>${escapeHtml(lead.name || 'Без имени')}</b>`,
@@ -30,7 +30,7 @@ export function leadCard(lead: LeadCardData, title?: string): string {
     lead.platform || lead.source
       ? `Источник: ${escapeHtml(sourceLabel(lead))}`
       : null,
-    `Статус: ${LEAD_STATUS[lead.status as LeadStatus]?.label ?? lead.status}`,
+    `Статус: ${leadStatusFor(lead.status, trialTerm).label}`,
   ];
   return rows.filter(Boolean).join('\n');
 }
@@ -47,15 +47,19 @@ function sourceLabel(lead: LeadCardData): string {
 /**
  * Кнопки менеджера.
  *
- * «Купил» здесь нет намеренно: курс закрывает продажник на уроке, а менеджер
- * доводит до пробного. «Пробный» и означает, что клиент оплатил пробный урок.
- * «В работе» тоже убран — «Дозвон» уже говорит, что разговор состоялся.
+ * «Купил» здесь нет намеренно: продажу закрывает продажник на встрече, а
+ * менеджер доводит до неё. Промежуточный статус и означает, что клиент на неё
+ * записан. «В работе» тоже убран — «Дозвон» уже говорит, что разговор был.
  */
-export function statusButtons(leadId: string, funnelType: FunnelType): InlineButton[][] {
+export function statusButtons(
+  leadId: string,
+  funnelType: FunnelType,
+  trialTerm?: string,
+): InlineButton[][] {
   const buttons = leadStatusesFor(funnelType)
     .filter((status) => MANAGER_STATUSES.includes(status))
     .map((status) => ({
-      text: LEAD_STATUS[status].label,
+      text: leadStatusFor(status, trialTerm).label,
       callback_data: `s:${leadId}:${status}`,
     }));
 

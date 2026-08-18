@@ -12,7 +12,7 @@ import { IconAds } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
-import { FUNNEL_LABELS, middleStepValue, type FunnelType } from '@/lib/metrics';
+import { funnelLabels, middleStepValue, type FunnelType } from '@/lib/metrics';
 import { moneyView } from '@/lib/money-view';
 import { resolveRange } from '@/lib/period';
 import { getAdSpendCurrency, getDashboardData } from '@/lib/queries';
@@ -43,7 +43,7 @@ export default async function DashboardPage({
   // Промежуточный шаг воронки зависит от типа бизнеса: пробное занятие
   // у школы, «взято в работу» у прямых продаж.
   const funnelType = company.funnel_type as FunnelType;
-  const funnel = FUNNEL_LABELS[funnelType];
+  const funnel = funnelLabels(funnelType, company.trial_term);
   const middle = middleStepValue(funnelType, totals);
 
   return (
@@ -158,6 +158,7 @@ export default async function DashboardPage({
             <CreativeTable
               creatives={creatives}
               funnelType={funnelType}
+              trialTerm={company.trial_term}
               currency={currency}
               adCurrency={view.adCurrency}
               spendOf={view.spendOf}

@@ -1458,6 +1458,56 @@ export async function getIntegrations(companyId: string) {
   return data ?? [];
 }
 
+/** Отдел продаж компании. */
+export type DepartmentItem = {
+  id: string;
+  name: string;
+  status: string;
+};
+
+export async function getDepartments(companyId: string): Promise<DepartmentItem[]> {
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from('departments')
+    .select('id, name, status')
+    .eq('company_id', companyId)
+    .order('name');
+  return data ?? [];
+}
+
+/** Поток заявок: свой адрес приёма, свой отдел, своя площадка. */
+export type LeadSourceItem = {
+  id: string;
+  name: string;
+  platform: string;
+  status: string;
+  webhookKey: string;
+  departmentId: string | null;
+  departmentName: string | null;
+};
+
+export async function getLeadSources(companyId: string): Promise<LeadSourceItem[]> {
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from('lead_sources')
+    .select('id, name, platform, status, webhook_key, department_id, departments(name)')
+    .eq('company_id', companyId)
+    .order('name');
+
+  return (data ?? []).map((row) => {
+    const department = Array.isArray(row.departments) ? row.departments[0] : row.departments;
+    return {
+      id: row.id,
+      name: row.name,
+      platform: row.platform,
+      status: row.status,
+      webhookKey: row.webhook_key,
+      departmentId: row.department_id,
+      departmentName: department?.name ?? null,
+    };
+  });
+}
+
 export type LostSubmission = {
   id: string;
   createdAt: string;

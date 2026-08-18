@@ -1,7 +1,7 @@
 import { Badge, StatusDot } from '@/components/ui/badge';
 import { formatNumber, formatPercent } from '@/lib/format';
 import {
-  LEAD_STATUS,
+  leadStatusFor,
   leadStatusesFor,
   type LeadStatus,
   type LeadStatusTone,
@@ -25,10 +25,13 @@ export function StatusBreakdown({
   counts,
   total,
   funnelType,
+  trialTerm,
 }: {
   counts: Record<string, number>;
   total: number;
   funnelType: FunnelType;
+  /** Как компания зовёт промежуточный шаг: подпись статуса берётся отсюда. */
+  trialTerm: string;
 }) {
   // Показываем шаги воронки компании в их естественном порядке. Статус вне
   // набора (остался от прежней настройки) не прячем — иначе цифры не сойдутся.
@@ -46,7 +49,7 @@ export function StatusBreakdown({
   return (
     <div className="divide-y divide-line">
       {rows.map(({ status, count }) => {
-        const meta = LEAD_STATUS[status];
+        const meta = leadStatusFor(status, trialTerm);
         const share = total > 0 ? (count / total) * 100 : 0;
 
         return (

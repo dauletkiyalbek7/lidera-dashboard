@@ -66,7 +66,7 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
   const { data: company } = await supabase
     .from('companies')
     .select(
-      'id, funnel_type, auto_assign, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
+      'id, funnel_type, trial_term, auto_assign, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -102,6 +102,8 @@ export async function runDistributionForAll(): Promise<
 type CompanySettings = {
   id: string;
   funnel_type: string;
+  /** Как компания зовёт промежуточный шаг: пробный урок или вебинар. */
+  trial_term: string;
   shift_mode: string;
   timezone: string;
   work_start_time: string;
@@ -370,10 +372,11 @@ async function assignTo(
       leadCard(
         { ...lead, creativeLabel: lead.creativeLabel },
         '🔔 <b>Новый клиент</b>',
+        company.trial_term,
       ),
       {
         inline: [
-            ...statusButtons(lead.id, funnelType),
+            ...statusButtons(lead.id, funnelType, company.trial_term),
         ],
       },
     );

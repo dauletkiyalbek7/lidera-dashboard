@@ -8,6 +8,7 @@ import type { AttendanceStatus, ShiftMode } from '@/lib/attendance';
 import type { EmployeeRole } from '@/lib/employee-role';
 import type { LeadStatus as LeadStatusValue } from '@/lib/lead-status';
 import type { TrialStatus as TrialStatusValue } from '@/lib/trial-status';
+import type { TrialTerm } from '@/lib/trial-term';
 
 export type Json =
   | string
@@ -39,6 +40,8 @@ export type CompanyRow = Timestamps & {
   email: string | null;
   status: CompanyStatus;
   funnel_type: FunnelType;
+  /** Как компания зовёт промежуточный шаг: пробный урок или вебинар. */
+  trial_term: TrialTerm;
   is_demo: boolean;
   /** Валюта рекламных отчётов: расход, цена лида, CPC. */
   currency: string;
@@ -152,6 +155,8 @@ export type CampaignRow = Timestamps & {
   whatsapp_number: string | null;
   /** Учитывать в отчётах: кампании найма выключают, чтобы не портить цену лида. */
   counted: boolean;
+  /** Отдел, которому принадлежит бюджет кампании. Пусто — общий бюджет. */
+  department_id: string | null;
 }
 
 export type AdSetRow = Timestamps & {
@@ -288,6 +293,34 @@ export type LeadRow = Timestamps & {
   next_touch_at: string | null;
   last_touch_at: string | null;
   touch_count: number;
+  /** Отдел, в поток которого попала заявка. */
+  department_id: string | null;
+  /** Поток, через который заявка пришла. */
+  lead_source_id: string | null;
+  /** Номер заявки в моментальной форме Meta — ключ сопоставления для CAPI. */
+  leadgen_id: string | null;
+}
+
+/** Отдел продаж внутри компании. Архивируем, но не удаляем. */
+export type DepartmentRow = Timestamps & {
+  id: string;
+  company_id: string;
+  name: string;
+  status: 'active' | 'archived';
+}
+
+/**
+ * Поток заявок со своим адресом приёма. Одна выгрузка — один поток, поэтому
+ * лид сразу знает свой отдел и площадку.
+ */
+export type LeadSourceRow = Timestamps & {
+  id: string;
+  company_id: string;
+  department_id: string | null;
+  name: string;
+  platform: 'meta' | 'tiktok' | 'google' | 'site' | 'whatsapp' | 'other';
+  webhook_key: string;
+  status: 'active' | 'disabled';
 }
 
 /** Сотрудник компании. Входа в кабинет у него нет — только Telegram-бот. */
@@ -312,6 +345,8 @@ export type EmployeeRow = Timestamps & {
   work_end_time: string | null;
   work_days: number[] | null;
   late_grace_minutes: number | null;
+  /** Отдел продаж сотрудника. Пусто — компания без разделения. */
+  department_id: string | null;
 }
 
 export type TrialRow = Timestamps & {
@@ -458,6 +493,8 @@ export type Database = {
       capi_settings: TableDef<CapiSettingsRow, 'company_id' | 'dataset_id' | 'token_encrypted'>;
       capi_events: TableDef<CapiEventRow, 'company_id' | 'event_name' | 'event_id' | 'status'>;
       leads: TableDef<LeadRow, 'company_id'>;
+      departments: TableDef<DepartmentRow, 'company_id' | 'name'>;
+      lead_sources: TableDef<LeadSourceRow, 'company_id' | 'name'>;
       employees: TableDef<EmployeeRow, 'company_id' | 'full_name' | 'role'>;
       employee_invites: TableDef<
         EmployeeInviteRow,

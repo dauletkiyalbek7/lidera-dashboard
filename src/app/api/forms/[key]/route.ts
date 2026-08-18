@@ -3,14 +3,21 @@ import { NextResponse } from 'next/server';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 
 /**
- * Приём заявок с сайта (Tilda и любые формы с вебхуком).
+ * Приём заявок: формы на сайте (Tilda) и выгрузки моментальных форм Meta,
+ * которые присылают сервисы-посредники.
  *
- * Адрес вида /api/forms/<ключ компании>. Ключ живёт в адресе, потому что
- * конструкторы форм не умеют слать заголовки; права он даёт ровно одно —
- * создать лид. Прочитать им ничего нельзя.
+ * Адрес вида /api/forms/<ключ потока>. Ключ живёт в адресе, потому что ни
+ * конструкторы форм, ни посредники не умеют слать заголовки; права он даёт
+ * ровно одно — создать лид. Прочитать им нельзя ничего.
+ *
+ * Ключ выдаётся не компании, а потоку заявок: у Дарына своя выгрузка на
+ * каждый отдел продаж и на каждую площадку, и различить их внутри одного
+ * адреса нечем — поля приходят одинаковые. Поэтому отдел и площадку знает
+ * сам ключ.
  *
  * Вместе с именем и телефоном забираем метки рекламы: `fbclid` из адреса
- * лендинга и `_fbp` из куки пикселя. Без них платформа сможет сказать Meta
+ * лендинга, `_fbp` из куки пикселя, а из выгрузки моментальной формы —
+ * `leadgen_id` и номер объявления. Без них платформа сможет сказать Meta
  * «была покупка», но не «купил тот, кто пришёл с этого объявления».
  */
 
@@ -20,6 +27,10 @@ export const dynamic = 'force-dynamic';
 const NAME_KEYS = ['name', 'имя', 'fio', 'фио', 'fullname', 'full_name', 'client_name'];
 const PHONE_KEYS = ['phone', 'телефон', 'tel', 'phone_number', 'номер'];
 const EMAIL_KEYS = ['email', 'почта', 'e-mail', 'mail'];
+/** Номер заявки в моментальной форме Meta — ключ сопоставления для CAPI. */
+const LEADGEN_KEYS = ['leadgen_id', 'lead_id', 'leadid', 'id'];
+/** Номер объявления: по нему заявка находит свой креатив и кампанию. */
+const AD_KEYS = ['ad_id', 'adid', 'utm_content'];
 
 /** Служебные поля Tilda: числа в них за телефон принимать нельзя. */
 const SERVICE_KEYS = [
@@ -42,7 +53,29 @@ const SERVICE_KEYS = [
   'referer',
   'referrer',
   'cookies',
+  'leadgen_id',
+  'lead_id',
+  'leadid',
+  'id',
+  'ad_id',
+  'adid',
+  'adset_id',
+  'campaign_id',
+  'created_time',
 ];
+
+/**
+ * Числовой идентификатор из выгрузки.
+ *
+ * Посредники помечают тип строки приставкой — `l:` у заявки, `ag:` у
+ * объявления, `as:` у группы. В Meta эти приставки не существуют, и с ними
+ * ни один номер не совпадёт ни с чем.
+ */
+function idValue(raw: string | null): string | null {
+  if (!raw) return null;
+  const digits = raw.replace(/^[a-z]+:/i, '').trim();
+  return /^\d{5,25}$/.test(digits) ? digits : null;
+}
 
 export async function POST(
   request: Request,
@@ -62,11 +95,8 @@ export async function POST(
   }
 
   const supabase = createAdminSupabase();
-  const { data: company } = await supabase
-    .from('companies')
-    .select('id, status')
-    .eq('lead_webhook_key', key)
-    .maybeSingle();
+  const source = await sourceByKey(supabase, key);
+  const company = source?.company ?? null;
 
   // Заявку по чужому ключу тоже записываем, без компании: так видно, что
   // какая-то форма стучится не туда, а не просто «лидов нет».
@@ -76,6 +106,14 @@ export async function POST(
       reason: 'вебхук вызван с неизвестным ключом',
     });
     return NextResponse.json({ error: 'неверный ключ' }, { status: 404 });
+  }
+
+  if (source?.status === 'disabled') {
+    await logSubmission(supabase, company.id, payload, {
+      status: 'rejected',
+      reason: 'поток заявок отключён',
+    });
+    return NextResponse.json({ error: 'поток отключён' }, { status: 403 });
   }
 
   if (company.status === 'inactive') {
@@ -113,9 +151,14 @@ export async function POST(
 
   const utmContent = pick(payload, ['utm_content']) ?? null;
 
+  // Выгрузка моментальной формы приносит номер объявления прямым полем, а
+  // лендинг — подстановкой {{ad.id}} в utm_content. Источник разный, смысл
+  // один, поэтому берём первое, что нашлось.
+  const adExternalId = idValue(pick(payload, AD_KEYS));
+
   // Объявление знает и свой креатив, и свою кампанию — заявка попадёт в оба
   // отчёта сразу.
-  const placement = await adPlacement(supabase, company.id, utmContent);
+  const placement = await adPlacement(supabase, company.id, adExternalId);
 
   const { data: created, error } = await supabase.from('leads').insert({
     company_id: company.id,
@@ -123,8 +166,12 @@ export async function POST(
     name: name || 'Заявка с сайта',
     phone,
     email,
-    source: 'site',
-    platform: fbc ? 'meta' : null,
+    // Поток знает, откуда пришла заявка, и это надёжнее догадки по меткам.
+    source: source?.platform ?? 'site',
+    platform: adPlatform(source?.platform) ?? (fbc ? 'meta' : null),
+    department_id: source?.department_id ?? null,
+    lead_source_id: source?.id ?? null,
+    leadgen_id: idValue(pick(payload, LEADGEN_KEYS)),
     // Объявление подставляем, если в utm_content стоит его номер: в Meta это
     // подстановка {{ad.id}}. Не нашли — лид всё равно сохраняем.
     creative_id: placement.creativeId,
@@ -159,6 +206,53 @@ export async function POST(
   });
 
   return NextResponse.json({ ok: true });
+}
+
+/**
+ * Поток заявок по ключу из адреса — вместе с компанией, которой он выдан.
+ *
+ * Старые ключи компаний перенесены в потоки миграцией, поэтому отдельной
+ * ветки под них здесь нет: один механизм, одна выборка.
+ */
+async function sourceByKey(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  key: string,
+): Promise<{
+  id: string;
+  department_id: string | null;
+  platform: string;
+  status: string;
+  company: { id: string; status: string };
+} | null> {
+  const { data } = await supabase
+    .from('lead_sources')
+    .select('id, department_id, platform, status, companies!inner(id, status)')
+    .eq('webhook_key', key)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  // PostgREST отдаёт связанную запись объектом при inner join, но типы
+  // допускают и массив — приводим к одному виду.
+  const company = Array.isArray(data.companies) ? data.companies[0] : data.companies;
+  if (!company) return null;
+
+  return {
+    id: data.id,
+    department_id: data.department_id,
+    platform: data.platform,
+    status: data.status,
+    company,
+  };
+}
+
+/**
+ * Площадка лида. В `leads.platform` живут только рекламные кабинеты: сайт и
+ * WhatsApp — это способ обращения, и в колонке площадки им делать нечего.
+ */
+function adPlatform(value: string | undefined): 'meta' | 'tiktok' | 'google' | null {
+  if (value === 'meta' || value === 'tiktok' || value === 'google') return value;
+  return null;
 }
 
 /**

@@ -23,20 +23,35 @@ const PADDING = { top: 16, right: 16, bottom: 28, left: 56 };
  * одна: вторая ось Y здесь была бы выдумкой, а не информацией.
  */
 export function TrendChart({ data, currency }: { data: TrendPoint[]; currency: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const observerRef = useRef<ResizeObserver | null>(null);
   const [width, setWidth] = useState(880);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
   const [showTable, setShowTable] = useState(false);
 
-  useEffect(() => {
-    const element = containerRef.current;
-    if (!element) return;
+  /**
+   * Контейнер графика существует только пока график показан: в режиме таблицы
+   * он размонтируется. Поэтому наблюдатель привязывается через callback-ref, а
+   * не в useEffect с пустыми зависимостями — тот сработал бы один раз и после
+   * возврата из таблицы продолжал следить за узлом, которого на странице уже
+   * нет, так что новую ширину никто бы не измерил.
+   */
+  const containerRef = useCallback((node: HTMLDivElement | null) => {
+    observerRef.current?.disconnect();
+    observerRef.current = null;
+    if (!node) return;
+
     const observer = new ResizeObserver(([entry]) => {
-      setWidth(Math.max(320, entry.contentRect.width));
+      const measured = entry.contentRect.width;
+      // Узел, оторванный от страницы или скрытый, сообщает нулевую ширину.
+      // Пересчитывать по ней нельзя: график схлопнулся бы до минимума и
+      // остался таким после возврата из таблицы.
+      if (measured > 0) setWidth(Math.max(320, measured));
     });
-    observer.observe(element);
-    return () => observer.disconnect();
+    observer.observe(node);
+    observerRef.current = observer;
   }, []);
+
+  useEffect(() => () => observerRef.current?.disconnect(), []);
 
   const geometry = useMemo(() => {
     const innerWidth = Math.max(1, width - PADDING.left - PADDING.right);

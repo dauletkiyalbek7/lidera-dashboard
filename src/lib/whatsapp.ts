@@ -528,12 +528,36 @@ async function recordReferral(
     .eq('id', lead.id);
 }
 
-/** Отметка о доставке нашего автоответа. */
+/**
+ * Путь сообщения к клиенту. Двигаться по нему можно только вперёд.
+ *
+ * Отказ стоит последним не потому, что случается позже, а потому что он
+ * важнее любой отметки о доставке: сообщение, которое не дошло, не должно
+ * выглядеть отправленным.
+ */
+const DELIVERY_ORDER = ['received', 'sent', 'delivered', 'read', 'failed'] as const;
+
+/**
+ * Отметка о доставке нашего автоответа.
+ *
+ * Meta присылает эти отметки НЕ по порядку: на живом номере «прочитано»
+ * пришло раньше «доставлено», а «отправлено» — последним. Записывать просто
+ * последнюю пришедшую нельзя: прочитанное сообщение откатывалось бы обратно
+ * в «отправлено», и переписка врала бы о самом простом — дошло или нет.
+ *
+ * Поэтому обновляем, только если новая отметка дальше текущей по пути.
+ * Условие стоит в самом запросе, а не в коде: две отметки приходят с
+ * разницей в доли секунды, и проверка «прочитал, сравнил, записал» успела бы
+ * разойтись сама с собой.
+ */
 async function handleStatus(supabase: Supabase, status: StatusUpdate): Promise<void> {
   if (!status.id || !status.status) return;
 
-  const known = ['sent', 'delivered', 'read', 'failed'];
-  if (!known.includes(status.status)) return;
+  const next = DELIVERY_ORDER.indexOf(status.status as (typeof DELIVERY_ORDER)[number]);
+  if (next < 0) return;
+
+  const earlier = DELIVERY_ORDER.slice(0, next);
+  if (earlier.length === 0) return;
 
   await supabase
     .from('whatsapp_messages')
@@ -541,7 +565,8 @@ async function handleStatus(supabase: Supabase, status: StatusUpdate): Promise<v
       status: status.status as 'sent' | 'delivered' | 'read' | 'failed',
       error: status.errors?.[0]?.message ?? status.errors?.[0]?.title ?? null,
     })
-    .eq('wa_message_id', status.id);
+    .eq('wa_message_id', status.id)
+    .in('status', earlier);
 }
 
 /** Текст сообщения — то, что менеджер прочитает в карточке. */

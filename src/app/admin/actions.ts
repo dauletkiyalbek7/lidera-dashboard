@@ -73,7 +73,7 @@ export async function createCompany(
       status: input.status,
       funnel_type: input.funnelType,
     })
-    .select('id')
+    .select('id, lead_webhook_key')
     .single();
 
   if (companyError || !company) {
@@ -110,6 +110,18 @@ export async function createCompany(
     await supabase.auth.admin.deleteUser(created.user.id);
     await supabase.from('companies').delete().eq('id', company.id);
     return { error: 'Не удалось привязать директора к компании.' };
+  }
+
+  // Поток заявок по умолчанию. Без него адрес приёма, который компания видит
+  // в «Интеграциях», был бы мёртвым: вебхук ищет ключ среди потоков, а не у
+  // компании. Ключ берём тот же, что выдан компании, — он один и тот же адрес.
+  if (company.lead_webhook_key) {
+    await supabase.from('lead_sources').insert({
+      company_id: company.id,
+      name: 'Форма на сайте',
+      platform: 'site',
+      webhook_key: company.lead_webhook_key,
+    });
   }
 
   await supabase.from('subscriptions').insert({

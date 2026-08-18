@@ -146,6 +146,20 @@ export default async function WhatsappPage() {
                       <NumberForm defaults={number} departments={departments} />
                     </div>
                   </details>
+
+                  {/* Подсказка следующего шага внизу карточки. Переключатель есть
+                      и в шапке, но с раскрытой формой она уезжает за экран, и
+                      человек, только что вписавший секрет, кнопки не находит. */}
+                  {number.status !== 'connected' ? (
+                    <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-panel border border-line bg-surface-2 px-4 py-3">
+                      <p className="text-[13px] text-ink-soft">
+                        {number.hasAppSecret
+                          ? 'Секрет задан. Осталось включить приём.'
+                          : 'Впишите секрет приложения выше, затем включите приём.'}
+                      </p>
+                      <NumberSwitch numberId={number.id} status={number.status} />
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

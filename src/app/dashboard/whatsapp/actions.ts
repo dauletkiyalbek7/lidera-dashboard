@@ -10,6 +10,19 @@ import { createServerSupabase } from '@/lib/supabase/server';
 export type WhatsappState = { error?: string; success?: string };
 
 /**
+ * Значение поля формы.
+ *
+ * Отсутствующее поле FormData отдаёт как null, а не как undefined, и проверка
+ * «строка или ничего» на нём спотыкается. Отсутствуют же они постоянно:
+ * настройки автоответа рисуются только при включённом переключателе, и с
+ * выключенным их в форме просто нет.
+ */
+function text(formData: FormData, name: string): string | undefined {
+  const value = formData.get(name);
+  return typeof value === 'string' ? value : undefined;
+}
+
+/**
  * Подключение номера WhatsApp.
  *
  * Токен и секрет приложения вводятся здесь и больше никогда не показываются:
@@ -19,18 +32,18 @@ export type WhatsappState = { error?: string; success?: string };
 const numberSchema = z.object({
   id: z.string().uuid().optional(),
   label: z.string().trim().min(1, 'Назовите номер').max(60),
-  displayPhone: z.string().trim().max(40).optional(),
+  displayPhone: z.string().trim().max(40, 'Слишком длинный номер').optional(),
   phoneNumberId: z
     .string()
     .trim()
     .regex(/^\d{5,25}$/, 'Идентификатор номера — это число из Meta'),
-  wabaId: z.string().trim().max(40).optional(),
+  wabaId: z.string().trim().max(40, 'Слишком длинный идентификатор').optional(),
   departmentId: z.string().uuid().optional().or(z.literal('')),
   token: z.string().trim().optional(),
   appSecret: z.string().trim().optional(),
   autoReplyEnabled: z.boolean(),
-  autoReplyDay: z.string().trim().max(1000).optional(),
-  autoReplyNight: z.string().trim().max(1000).optional(),
+  autoReplyDay: z.string().trim().max(1000, 'Текст ответа слишком длинный').optional(),
+  autoReplyNight: z.string().trim().max(1000, 'Текст ответа слишком длинный').optional(),
   workStartTime: z.string().trim().optional(),
   workEndTime: z.string().trim().optional(),
 });
@@ -43,25 +56,29 @@ export async function saveWhatsappNumber(
   if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   const parsed = numberSchema.safeParse({
-    id: formData.get('id') || undefined,
-    label: formData.get('label'),
-    displayPhone: formData.get('displayPhone'),
-    phoneNumberId: formData.get('phoneNumberId'),
-    wabaId: formData.get('wabaId'),
-    departmentId: formData.get('departmentId') ?? '',
-    token: formData.get('token'),
-    appSecret: formData.get('appSecret'),
+    id: text(formData, 'id') || undefined,
+    label: text(formData, 'label'),
+    displayPhone: text(formData, 'displayPhone'),
+    phoneNumberId: text(formData, 'phoneNumberId'),
+    wabaId: text(formData, 'wabaId'),
+    departmentId: text(formData, 'departmentId') ?? '',
+    token: text(formData, 'token'),
+    appSecret: text(formData, 'appSecret'),
     autoReplyEnabled: formData.get('autoReplyEnabled') === 'on',
-    autoReplyDay: formData.get('autoReplyDay'),
-    autoReplyNight: formData.get('autoReplyNight'),
-    workStartTime: formData.get('workStartTime'),
-    workEndTime: formData.get('workEndTime'),
+    autoReplyDay: text(formData, 'autoReplyDay'),
+    autoReplyNight: text(formData, 'autoReplyNight'),
+    workStartTime: text(formData, 'workStartTime'),
+    workEndTime: text(formData, 'workEndTime'),
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const input = parsed.data;
   const supabase = await createServerSupabase();
+
+  // Выключенный автоответ не должен стирать заготовленные тексты: их писали
+  // руками, а переключатель — это «пока не отвечать», а не «забыть».
+  const keepAutoReply = !input.autoReplyEnabled;
 
   // Пустое поле означает «не менять»: иначе правка часов работы стирала бы
   // токен, и приём молча ломался бы после каждой мелкой настройки.
@@ -77,10 +94,14 @@ export async function saveWhatsappNumber(
     waba_id: input.wabaId || null,
     department_id: input.departmentId || null,
     auto_reply_enabled: input.autoReplyEnabled,
-    auto_reply_day: input.autoReplyDay || null,
-    auto_reply_night: input.autoReplyNight || null,
-    work_start_time: input.workStartTime || null,
-    work_end_time: input.workEndTime || null,
+    ...(keepAutoReply
+      ? {}
+      : {
+          auto_reply_day: input.autoReplyDay || null,
+          auto_reply_night: input.autoReplyNight || null,
+          work_start_time: input.workStartTime || null,
+          work_end_time: input.workEndTime || null,
+        }),
     ...secrets,
   };
 

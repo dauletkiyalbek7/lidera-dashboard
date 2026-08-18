@@ -50,13 +50,21 @@ export async function signIn(
     return { error: 'Неверный email или пароль' };
   }
 
-  const { data: profile } = await supabase
+  // Профилей у входа может быть несколько — по одному на проект. Берём тот
+  // же, что выберет сессия: самый старый, если проект ещё не выбирали.
+  // Требовать здесь ровно одну строку нельзя — владелец двух проектов просто
+  // не смог бы войти.
+  const { data: profiles } = await supabase
     .from('profiles')
     .select('role, status, company_id')
     .eq('user_id', data.user.id)
-    .maybeSingle();
+    .eq('status', 'active')
+    .order('created_at')
+    .limit(1);
 
-  if (!profile || profile.status !== 'active') {
+  const profile = profiles?.[0];
+
+  if (!profile) {
     await supabase.auth.signOut();
     return {
       error: 'Учётная запись не активна. Обратитесь к администратору Lidera.',

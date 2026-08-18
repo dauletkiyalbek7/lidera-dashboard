@@ -501,7 +501,18 @@ export async function revokeEmployeeLogin(employeeId: string): Promise<LoginStat
 
   await admin.from('employees').update({ profile_id: null }).eq('id', employee.id);
   await admin.from('profiles').delete().eq('id', employee.profile_id);
-  if (profile?.user_id) await admin.auth.admin.deleteUser(profile.user_id);
+
+  // Учётную запись стираем, только если это был последний её профиль: у входа
+  // может быть по профилю на проект, и удаление разом закрыло бы человеку
+  // доступ и туда, откуда его никто не увольнял.
+  if (profile?.user_id) {
+    const { count } = await admin
+      .from('profiles')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', profile.user_id);
+
+    if (!count) await admin.auth.admin.deleteUser(profile.user_id);
+  }
 
   revalidateTeam();
   return { success: 'Вход закрыт. Карточка и история сотрудника сохранены.' };

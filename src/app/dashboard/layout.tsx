@@ -19,13 +19,16 @@ const PLAN_HINT: Record<string, string> = {
 
 export default async function DashboardLayout({ children }: { children: ReactNode }) {
   // Единственный источник правды по доступу: сессия + роль + статус компании.
-  const { profile, company, email, readOnly, employee } = await requireCompanySession();
+  const { profile, company, email, readOnly, employee, companies } =
+    await requireCompanySession();
 
   return (
     <AppShell
       nav="company"
       funnelType={company.funnel_type}
       trialTerm={company.trial_term}
+      companies={companies}
+      currentCompanyId={company.id}
       staffOnly={employee !== null}
       staffRole={employee?.role ?? null}
       workspace={company.name}

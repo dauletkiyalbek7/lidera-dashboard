@@ -301,6 +301,18 @@ export type LeadRow = Timestamps & {
   leadgen_id: string | null;
 }
 
+/**
+ * Какой проект пользователь смотрит сейчас.
+ *
+ * Выбор живёт в базе, а не в куке: правила изоляции выполняются внутри
+ * Postgres и до браузера не достают.
+ */
+export type ActiveCompanyRow = {
+  user_id: string;
+  company_id: string;
+  updated_at: string;
+}
+
 /** Отдел продаж внутри компании. Архивируем, но не удаляем. */
 export type DepartmentRow = Timestamps & {
   id: string;
@@ -493,6 +505,7 @@ export type Database = {
       capi_settings: TableDef<CapiSettingsRow, 'company_id' | 'dataset_id' | 'token_encrypted'>;
       capi_events: TableDef<CapiEventRow, 'company_id' | 'event_name' | 'event_id' | 'status'>;
       leads: TableDef<LeadRow, 'company_id'>;
+      active_company: TableDef<ActiveCompanyRow, 'user_id' | 'company_id'>;
       departments: TableDef<DepartmentRow, 'company_id' | 'name'>;
       lead_sources: TableDef<LeadSourceRow, 'company_id' | 'name'>;
       employees: TableDef<EmployeeRow, 'company_id' | 'full_name' | 'role'>;

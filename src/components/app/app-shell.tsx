@@ -7,6 +7,7 @@ import { useState, type ReactNode } from 'react';
 import { IconClose, IconLogout, IconMenu } from '@/components/ui/icons';
 import { Logo } from '@/components/ui/logo';
 import type { FunnelType } from '@/lib/metrics';
+import { CompanySwitcher, type SwitchableCompany } from './company-switcher';
 import { navFor, type NavKey } from './nav-config';
 
 type AppShellProps = {
@@ -23,6 +24,9 @@ type AppShellProps = {
   /** Название компании или «Платформа Lidera» для админа. */
   workspace: string;
   workspaceHint: string;
+  /** Проекты этого входа. Больше одного — в шапке появляется переключатель. */
+  companies?: SwitchableCompany[];
+  currentCompanyId?: string | null;
   userName: string;
   userEmail: string;
   /** Полоса над содержимым: например, предупреждение о режиме наблюдения. */
@@ -38,6 +42,8 @@ export function AppShell({
   children,
   workspace,
   workspaceHint,
+  companies = [],
+  currentCompanyId = null,
   userName,
   userEmail,
   banner,
@@ -64,8 +70,18 @@ export function AppShell({
       </div>
 
       <div className="border-b border-line px-5 py-4">
-        <p className="truncate text-[14px] font-medium text-ink">{workspace}</p>
-        <p className="mt-0.5 truncate text-[12px] text-faint">{workspaceHint}</p>
+        {companies.length > 1 && currentCompanyId ? (
+          <CompanySwitcher
+            companies={companies}
+            currentId={currentCompanyId}
+            hint={workspaceHint}
+          />
+        ) : (
+          <>
+            <p className="truncate text-[14px] font-medium text-ink">{workspace}</p>
+            <p className="mt-0.5 truncate text-[12px] text-faint">{workspaceHint}</p>
+          </>
+        )}
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4" aria-label="Разделы кабинета">

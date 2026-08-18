@@ -31,6 +31,11 @@ export type SessionContext = {
    * У директора её нет — он видит компанию целиком.
    */
   employee: { id: string; role: string; fullName: string; telegramLinked: boolean } | null;
+  /**
+   * Проекты, доступные этому входу. У большинства он один; у Дарына бизнес
+   * один, а проектов два, и переключаться между ними логином неудобно.
+   */
+  companies: { id: string; name: string }[];
 };
 
 /**
@@ -46,13 +51,29 @@ export async function getSessionContext(): Promise<SessionContext | null> {
 
   if (!user) return null;
 
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('*')
-    .eq('user_id', user.id)
-    .maybeSingle();
+  // Профилей у входа может быть несколько — по одному на проект. Какой из них
+  // сейчас рабочий, решает active_company; порядок выбора здесь обязан
+  // совпадать с private.current_profile_id(), иначе интерфейс покажет один
+  // проект, а база отдаст данные другого.
+  const [{ data: profiles }, { data: active }] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('*')
+      .eq('user_id', user.id)
+      .eq('status', 'active')
+      .order('created_at')
+      .order('id'),
+    supabase
+      .from('active_company')
+      .select('company_id')
+      .eq('user_id', user.id)
+      .maybeSingle(),
+  ]);
 
-  if (!profile || profile.status !== 'active') return null;
+  if (!profiles || profiles.length === 0) return null;
+
+  const profile =
+    profiles.find((row) => row.company_id === active?.company_id) ?? profiles[0];
 
   let company: CompanyRow | null = null;
   if (profile.company_id) {
@@ -85,6 +106,23 @@ export async function getSessionContext(): Promise<SessionContext | null> {
       : null;
   }
 
+  // Названия всех доступных проектов — для переключателя в шапке.
+  const companyIds = profiles
+    .map((row) => row.company_id)
+    .filter((id): id is string => id !== null);
+
+  let companies: SessionContext['companies'] = [];
+  if (companyIds.length > 1) {
+    const { data } = await supabase
+      .from('companies')
+      .select('id, name')
+      .in('id', companyIds)
+      .order('name');
+    companies = data ?? [];
+  } else if (company) {
+    companies = [{ id: company.id, name: company.name }];
+  }
+
   return {
     userId: user.id,
     email: user.email ?? null,
@@ -92,6 +130,7 @@ export async function getSessionContext(): Promise<SessionContext | null> {
     company,
     readOnly: false,
     employee,
+    companies,
   };
 }
 

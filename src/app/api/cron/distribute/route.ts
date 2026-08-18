@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 
 import { runDistributionForAll } from '@/lib/lead-distribution';
+import { runDayReports } from '@/lib/day-report';
 import { runTouchReminders } from '@/lib/touch-runner';
 
 /**
@@ -39,5 +40,9 @@ export async function POST(request: Request) {
   const distribution = await runDistributionForAll();
   const touches = await runTouchReminders();
 
-  return NextResponse.json({ ok: true, ...distribution, ...touches });
+  // Отчёт за день считается последним: к этому моменту всё, что случилось
+  // за минуту, уже записано, и цифры в нём сходятся с кабинетом.
+  const day = await runDayReports();
+
+  return NextResponse.json({ ok: true, ...distribution, ...touches, ...day });
 }

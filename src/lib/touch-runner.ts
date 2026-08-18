@@ -240,8 +240,8 @@ async function sendDueReminders(supabase: Admin): Promise<number> {
       .filter((line) => line !== null)
       .join('\n');
 
-    await sendMessage(chatId, leadCard(context.lead, header), {
-      inline: statusButtons(touch.lead_id, context.funnelType),
+    await sendMessage(chatId, leadCard(context.lead, header, context.trialTerm), {
+      inline: statusButtons(touch.lead_id, context.funnelType, context.trialTerm),
     });
 
     sent += 1;
@@ -271,7 +271,7 @@ async function leadContext(supabase: Admin, companyId: string, leadId: string) {
       .maybeSingle(),
     supabase
       .from('companies')
-      .select('funnel_type, timezone')
+      .select('funnel_type, timezone, trial_term')
       .eq('id', companyId)
       .maybeSingle(),
   ]);
@@ -282,6 +282,9 @@ async function leadContext(supabase: Admin, companyId: string, leadId: string) {
     lead,
     funnelType: (company?.funnel_type === 'direct' ? 'direct' : 'trial') as FunnelType,
     timezone: company?.timezone ?? 'Asia/Almaty',
+    // Промежуточный шаг каждая компания зовёт по-своему: у школы «Пробный»,
+    // у Дарына «Вебинар». В напоминании подпись обязана совпадать с кнопкой.
+    trialTerm: company?.trial_term,
   };
 }
 

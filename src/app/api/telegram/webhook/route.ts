@@ -12,8 +12,15 @@ import { createRateLookup } from '@/lib/currency';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { parseSaleAmount } from '@/lib/sale-amount';
 import { runDistribution } from '@/lib/lead-distribution';
-import { instantInZone } from '@/lib/lead-touches';
-import { closeOpenTouches } from '@/lib/touch-runner';
+import {
+  instantInZone,
+  isTouchPreset,
+  resolveTouchTime,
+  touchPreset,
+  untilLabel,
+} from '@/lib/lead-touches';
+import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
+import { employeeStats, statsMessage } from '@/lib/employee-stats';
 import {
   formatTrialTime,
   sellerAvailability,
@@ -30,6 +37,9 @@ import {
   bookingTimeButtons,
   bookingSellerButtons,
   qualityButtons,
+  touchButtons,
+  NO_ANSWER_TOUCHES,
+  THINKING_TOUCHES,
   BOOKING_HOURS,
   escapeHtml,
 } from '@/lib/telegram-lead-card';
@@ -56,8 +66,16 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const KEYBOARD_OFF = [['🟢 Я на смене'], ['📋 Мои лиды', '📵 Недозвон']];
-const KEYBOARD_ON = [['🔴 Я ухожу'], ['📋 Мои лиды', '📵 Недозвон']];
+const KEYBOARD_OFF = [
+  ['🟢 Я на смене'],
+  ['📋 Мои лиды', '📵 Недозвон'],
+  ['📊 Мои показатели'],
+];
+const KEYBOARD_ON = [
+  ['🔴 Я ухожу'],
+  ['📋 Мои лиды', '📵 Недозвон'],
+  ['📊 Мои показатели'],
+];
 
 /** Какую пачку показываем: новых или тех, до кого не дозвонились. */
 type QueueMode = 'new' | 'no_answer';
@@ -130,11 +148,12 @@ async function handleMessage(message: TelegramMessage) {
   }
   if (text.includes('на смене')) return startShiftFlow(chatId, employee);
   if (text.includes('ухожу')) return closeShift(chatId, employee);
-  // Продажник только что отметил покупку — ждём сумму следующим сообщением.
-  if (employee.awaiting_amount_for) {
+  // Только что отметили покупку — ждём сумму следующим сообщением.
+  if (employee.awaiting_amount_for || employee.awaiting_sale_lead) {
     return saveSaleAmount(chatId, employee, text);
   }
 
+  if (text.includes('показатели')) return showStats(chatId, employee);
   if (text.includes('Недозвон')) return listLeads(chatId, employee, 0, 'no_answer');
   if (text.includes('Мои лиды')) return listLeads(chatId, employee);
 
@@ -547,6 +566,44 @@ async function listLeads(
   );
 }
 
+/**
+ * Личные показатели сотрудника.
+ *
+ * Свои цифры он должен видеть сам и в любой момент, а не ждать, пока их
+ * посчитает директор: человек, который видит свою конверсию, её и правит.
+ */
+async function showStats(chatId: number, employee: Employee) {
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+
+  const stats = await employeeStats(supabase, {
+    companyId: employee.company_id,
+    employeeId: employee.id,
+    timezone: company?.timezone ?? 'Asia/Almaty',
+  });
+
+  const open = await openShiftOf(employee.id);
+
+  return sendMessage(
+    chatId,
+    statsMessage(stats, {
+      title: `📊 <b>${escapeHtml(employee.full_name)}</b> — сегодня, ${formatDay(stats.date)}`,
+      currency: company?.sales_currency ?? 'KZT',
+      trialTerm: company?.trial_term,
+    }),
+    { keyboard: open ? KEYBOARD_ON : KEYBOARD_OFF },
+  );
+}
+
+/** «19 августа» — дата в отчёте читается словами, а не цифрами через дефис. */
+function formatDay(isoDate: string): string {
+  return new Date(`${isoDate}T12:00:00Z`).toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+  });
+}
+
 async function handleCallback(query: TelegramCallbackQuery) {
   const userId = query.from?.id;
   const chatId = query.message?.chat.id;
@@ -568,6 +625,7 @@ async function handleCallback(query: TelegramCallbackQuery) {
   if (!value) return answerCallback(query.id);
 
   if (kind === 's') return applyStatus(query, chatId, employee, leadId, value);
+  if (kind === 't') return applyTouch(query, chatId, employee, leadId, value);
   if (kind === 'bd') return pickDay(query, chatId, employee, leadId, value);
   if (kind === 'bt') return pickTime(query, chatId, employee, leadId, value);
   if (kind === 'bs') return pickSeller(query, chatId, employee, leadId, value);
@@ -663,9 +721,10 @@ async function applyTrial(
 /**
  * Смена статуса лида из чата.
  *
- * После любой отметки бот сразу даёт следующего клиента: менеджер работает
- * очередью, а не листает ленту. Тронутый лид уходит в конец очереди сам —
- * порядок держится на времени последнего изменения.
+ * Отметка — не конец работы, а развилка. Не дозвонился и «думает» требуют
+ * назначить, когда вернуться: обещание, записанное в момент разговора, —
+ * единственное, которое выполняется. Покупка требует суммы. Отказ закрывает
+ * клиента. Во всех прочих случаях бот сразу даёт следующего.
  */
 async function applyStatus(
   query: TelegramCallbackQuery,
@@ -689,10 +748,45 @@ async function applyStatus(
   if (error) return answerCallback(query.id, 'Не удалось сохранить статус.');
 
   const company = await companyOf(employee.company_id);
-
   const label = leadStatusFor(status, company?.trial_term).label;
+  const name = escapeHtml(lead.name || 'Клиент');
+
   await answerCallback(query.id, `Статус: ${label}`);
+
+  // Прежнее обещание больше не про этот статус: закрываем до того, как
+  // спросим новое, иначе менеджеру придут два напоминания об одном клиенте.
   await closeOpenTouches(supabase, lead.id);
+
+  // Не дозвонился — вернуться надо сегодня же, пока клиент помнит заявку.
+  if (status === 'no_answer') {
+    return sendMessage(chatId, `📵 <b>${name}</b> не отвечает.\nКогда перезвонить?`, {
+      inline: touchButtons(lead.id, NO_ANSWER_TOUCHES, '🚫 Не напоминать'),
+    });
+  }
+
+  // Взял паузу на решение — сроки длиннее: дёргать через час значит потерять.
+  if (status === 'thinking') {
+    return sendMessage(chatId, `🤔 <b>${name}</b> думает.\nКогда вернуться?`, {
+      inline: touchButtons(lead.id, THINKING_TOUCHES, '🚫 Не напоминать'),
+    });
+  }
+
+  // Продажа в прямой воронке: урока нет, закрывает тот же менеджер. Сумму
+  // спрашиваем сразу — без неё покупка не попадёт ни в выручку, ни в Meta,
+  // а возвращаться за ней потом никто не будет.
+  if (status === 'sale' && company?.funnel_type === 'direct') {
+    await supabase
+      .from('employees')
+      .update({ awaiting_sale_lead: lead.id })
+      .eq('id', employee.id);
+
+    const currency = company.sales_currency ?? 'KZT';
+    return sendMessage(
+      chatId,
+      `💰 <b>${name}</b> купил.\nНа какую сумму? Отправьте число одним сообщением — например <code>35000</code>.\n` +
+        `Считаем в <b>${escapeHtml(currency)}</b>. Платили в другой валюте — напишите её рядом: <code>300$</code>.`,
+    );
+  }
 
   // «Пробный» — это не просто отметка: у урока должны быть время и продажник.
   if (status === 'trial') {
@@ -708,7 +802,7 @@ async function applyStatus(
     if (trialId) {
       return sendMessage(
         chatId,
-        `🎓 <b>${escapeHtml(lead.name || 'Клиент')}</b> — записываем на урок.\nНа какой день?`,
+        `🎓 <b>${name}</b> — записываем на урок.\nНа какой день?`,
         { inline: bookingDayButtons(trialId) },
       );
     }
@@ -723,28 +817,88 @@ async function applyStatus(
     });
   }
 
-  await sendMessage(chatId, `✅ <b>${escapeHtml(lead.name || 'Клиент')}</b> → ${label}`);
+  await sendMessage(chatId, `✅ <b>${name}</b> → ${label}`);
   return listLeads(chatId, employee);
 }
 
 /**
- * Сумма продажи курса, присланная продажником.
+ * Срок следующего касания, выбранный кнопкой.
  *
- * Продажа заводится здесь же и сразу оплаченной: продажник называет сумму
- * только после того, как деньги пришли. Отсюда же событие уходит в Meta —
- * иначе реклама не узнает о покупке, ради которой всё и делалось.
+ * Клиент остаётся у того же менеджера: второй звонок с другого номера
+ * выглядит для человека как спам, а менеджер, у которого отбирают заявки,
+ * перестаёт их дожимать.
+ */
+async function applyTouch(
+  query: TelegramCallbackQuery,
+  chatId: number,
+  employee: Employee,
+  leadId: string,
+  preset: string,
+) {
+  const supabase = createAdminSupabase();
+  const lead = await ownLead(employee, leadId);
+  if (!lead) return answerCallback(query.id, 'Этот клиент уже не за вами.');
+
+  const name = escapeHtml(lead.name || 'Клиент');
+
+  // «Не напоминать» — не отказ клиента, а отказ от будильника. Лид остаётся
+  // в пачке «📵 Недозвон», вернуться к нему можно руками.
+  if (preset === 'skip') {
+    await answerCallback(query.id, 'Без напоминания');
+    await sendMessage(
+      chatId,
+      `<b>${name}</b> — без напоминания. Найдёте его в «📵 Недозвон».`,
+    );
+    return listLeads(chatId, employee);
+  }
+
+  if (!isTouchPreset(preset)) return answerCallback(query.id, 'Неизвестный срок.');
+
+  const company = await companyOf(employee.company_id);
+  const remindAt = resolveTouchTime(preset, company?.timezone ?? 'Asia/Almaty');
+
+  await scheduleTouch(supabase, {
+    companyId: employee.company_id,
+    leadId: lead.id,
+    employeeId: employee.id,
+    remindAt,
+    // Попытка дозвона считается только тогда, когда её и правда не было:
+    // «думает» — это состоявшийся разговор, а не промах.
+    countsAsAttempt: lead.status === 'no_answer',
+  });
+
+  await answerCallback(query.id, touchPreset(preset).label);
+  await sendMessage(chatId, `⏰ <b>${name}</b> — напомню ${untilLabel(remindAt)}.`);
+
+  return listLeads(chatId, employee);
+}
+
+/**
+ * Сумма продажи, присланная из чата.
+ *
+ * Продажа заводится здесь же и сразу оплаченной: сумму называют после того,
+ * как деньги пришли. Ждать её бот может по двум поводам — продажник отметил
+ * покупку после урока, либо менеджер прямой воронки нажал «Купил». Клиент в
+ * обоих случаях один и тот же, поэтому дальше путь общий.
  */
 async function saveSaleAmount(chatId: number, employee: Employee, text: string) {
   const supabase = createAdminSupabase();
-  const trialId = employee.awaiting_amount_for;
-  if (!trialId) return;
 
   const clear = () =>
-    supabase.from('employees').update({ awaiting_amount_for: null }).eq('id', employee.id);
+    supabase
+      .from('employees')
+      .update({ awaiting_amount_for: null, awaiting_sale_lead: null })
+      .eq('id', employee.id);
 
   if (/отмен/i.test(text)) {
     await clear();
     return sendMessage(chatId, 'Хорошо, сумму не записываем.', { keyboard: KEYBOARD_ON });
+  }
+
+  const leadId = await awaitedLead(employee);
+  if (!leadId) {
+    await clear();
+    return sendMessage(chatId, 'Не нашёл клиента, по которому ждал сумму.');
   }
 
   const parsed = parseSaleAmount(text);
@@ -757,39 +911,26 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
     );
   }
 
-  const { data: trial } = await supabase
-    .from('trials')
-    .select('id, lead_id')
-    .eq('id', trialId)
+  // Чек по этому клиенту мог провести кто-то на платформе, пока сумму
+  // набирали здесь. Второй раз записывать нельзя — выручка удвоится.
+  // Спрашиваем сразу оценку: за ней он и шёл.
+  const { data: paid } = await supabase
+    .from('sales')
+    .select('amount')
     .eq('company_id', employee.company_id)
+    .eq('lead_id', leadId)
+    .eq('status', 'paid')
+    .limit(1)
     .maybeSingle();
 
-  if (!trial) {
+  if (paid) {
     await clear();
-    return sendMessage(chatId, 'Запись урока не найдена.');
-  }
-
-  // Чек по этому клиенту мог провести кто-то на платформе, пока продажник
-  // набирал сумму здесь. Второй раз записывать нельзя — выручка удвоится, и
-  // база оплату всё равно отклонит. Спрашиваем сразу оценку: за ней он и шёл.
-  if (trial.lead_id) {
-    const { data: paid } = await supabase
-      .from('sales')
-      .select('amount')
-      .eq('company_id', employee.company_id)
-      .eq('lead_id', trial.lead_id)
-      .eq('status', 'paid')
-      .maybeSingle();
-
-    if (paid) {
-      await clear();
-      return sendMessage(
-        chatId,
-        `Продажа по этому клиенту уже проведена: <b>${formatAmount(Number(paid.amount))}</b>.\n\n` +
-          'Второй чек записывать не нужно. Осталось оценить клиента.',
-        { inline: qualityButtons(trial.lead_id) },
-      );
-    }
+    return sendMessage(
+      chatId,
+      `Продажа по этому клиенту уже проведена: <b>${formatAmount(Number(paid.amount))}</b>.\n\n` +
+        'Второй чек записывать не нужно. Осталось оценить клиента.',
+      { inline: qualityButtons(leadId) },
+    );
   }
 
   const company = await companyOf(employee.company_id);
@@ -819,7 +960,7 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
     .from('sales')
     .insert({
       company_id: employee.company_id,
-      lead_id: trial.lead_id,
+      lead_id: leadId,
       amount: converted.amount,
       status: 'paid',
       sale_date: saleDate,
@@ -837,20 +978,41 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
     );
   }
 
-  // Пересчёт показываем: продажник должен увидеть, что записалось, а не
+  // Пересчёт показываем: продавец должен увидеть, что записалось, а не
   // узнать о расхождении через неделю из отчёта.
   const note = converted.rate
     ? `\n<i>${formatAmount(parsed.amount)} ${escapeHtml(parsed.currency ?? '')} по курсу ${formatAmount(converted.rate)}</i>`
     : '';
 
-  // В Meta событие отсюда не уходит: сначала продажник оценивает клиента, а
+  // В Meta событие отсюда не уходит: сначала продавец оценивает клиента, а
   // отправляет его таргетолог. Обучать рекламу на случайном покупателе значит
   // просить её искать таких же.
   return sendMessage(
     chatId,
     `✅ Продажа записана: <b>${formatAmount(converted.amount)} ${escapeHtml(currency)}</b>.${note}\n\nКакой это клиент? От этого зависит, отправлять ли покупку в рекламный кабинет.`,
-    { inline: qualityButtons(trial.lead_id) },
+    { inline: qualityButtons(leadId) },
   );
+}
+
+/**
+ * Клиент, по которому ждём сумму.
+ *
+ * В прямой воронке он записан прямо в карточке сотрудника, в школьной — за
+ * уроком, который вёл продажник.
+ */
+async function awaitedLead(employee: Employee): Promise<string | null> {
+  if (employee.awaiting_sale_lead) return employee.awaiting_sale_lead;
+  if (!employee.awaiting_amount_for) return null;
+
+  const supabase = createAdminSupabase();
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('lead_id')
+    .eq('id', employee.awaiting_amount_for)
+    .eq('company_id', employee.company_id)
+    .maybeSingle();
+
+  return trial?.lead_id ?? null;
 }
 
 /**
@@ -1097,14 +1259,14 @@ async function pickSeller(
   return listLeads(chatId, employee);
 }
 
-type OwnLead = { id: string; name: string; touch_count: number };
+type OwnLead = { id: string; name: string; status: string; touch_count: number };
 
 /** Сотрудник двигает только свои лиды и только внутри своей компании. */
 async function ownLead(employee: Employee, leadId: string): Promise<OwnLead | null> {
   const supabase = createAdminSupabase();
   const { data } = await supabase
     .from('leads')
-    .select('id, name, touch_count')
+    .select('id, name, status, touch_count')
     .eq('id', leadId)
     .eq('company_id', employee.company_id)
     .eq('assigned_to', employee.id)
@@ -1128,6 +1290,8 @@ type Employee = {
   late_grace_minutes: number | null;
   /** Урок, по которому бот ждёт сумму продажи. */
   awaiting_amount_for: string | null;
+  /** Лид, по которому бот ждёт сумму: в прямой воронке урока нет. */
+  awaiting_sale_lead: string | null;
 };
 
 async function findEmployee(telegramUserId: number): Promise<Employee | null> {
@@ -1135,7 +1299,7 @@ async function findEmployee(telegramUserId: number): Promise<Employee | null> {
   const { data } = await supabase
     .from('employees')
     .select(
-      'id, company_id, full_name, role, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes, awaiting_amount_for',
+      'id, company_id, full_name, role, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes, awaiting_amount_for, awaiting_sale_lead',
     )
     .eq('telegram_user_id', telegramUserId)
     .eq('status', 'active')

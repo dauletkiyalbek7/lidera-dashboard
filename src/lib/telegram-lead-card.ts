@@ -1,4 +1,5 @@
-import { leadStatusFor, leadStatusesFor, type LeadStatus } from '@/lib/lead-status';
+import { leadStatusFor, type LeadStatus } from '@/lib/lead-status';
+import { touchPreset, type TouchPresetKey } from '@/lib/lead-touches';
 import type { FunnelType } from '@/lib/metrics';
 import { LEAD_QUALITY, LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import type { InlineButton } from '@/lib/telegram';
@@ -45,23 +46,26 @@ function sourceLabel(lead: LeadCardData): string {
 }
 
 /**
- * Кнопки менеджера.
+ * Кнопки менеджера — четыре исхода разговора и ничего лишнего.
  *
- * «Купил» здесь нет намеренно: продажу закрывает продажник на встрече, а
- * менеджер доводит до неё. Промежуточный статус и означает, что клиент на неё
- * записан. «В работе» тоже убран — «Дозвон» уже говорит, что разговор был.
+ * «Дозвон» убран намеренно: он отвечал на вопрос «состоялся ли разговор», а
+ * менеджеру после звонка надо отметить, чем разговор кончился. Каждый из
+ * четырёх исходов ведёт дальше сам — игнор и «думает» спрашивают, когда
+ * вернуться, а покупка спрашивает сумму.
+ *
+ * Набор зависит от воронки. Там, где есть пробное занятие, продажу закрывает
+ * продажник после урока, поэтому у менеджера вместо «Купил» стоит запись на
+ * урок. В прямой воронке урока нет и продаёт он сам.
  */
 export function statusButtons(
   leadId: string,
   funnelType: FunnelType,
   trialTerm?: string,
 ): InlineButton[][] {
-  const buttons = leadStatusesFor(funnelType)
-    .filter((status) => MANAGER_STATUSES.includes(status))
-    .map((status) => ({
-      text: leadStatusFor(status, trialTerm).label,
-      callback_data: `s:${leadId}:${status}`,
-    }));
+  const buttons = MANAGER_STATUSES[funnelType].map((status) => ({
+    text: `${STATUS_ICON[status]} ${leadStatusFor(status, trialTerm).label}`,
+    callback_data: `s:${leadId}:${status}`,
+  }));
 
   const rows: InlineButton[][] = [];
   for (let index = 0; index < buttons.length; index += 2) {
@@ -70,16 +74,66 @@ export function statusButtons(
   return rows;
 }
 
+const MANAGER_STATUSES: Record<FunnelType, LeadStatus[]> = {
+  direct: ['no_answer', 'thinking', 'rejected', 'sale'],
+  trial: ['no_answer', 'thinking', 'trial', 'rejected'],
+};
+
 /**
- * Что менеджер отмечает после звонка. Порядок — от частого к редкому.
- * Телефон в карточке Telegram и так делает ссылкой на звонок.
+ * Значки статусов. Живут здесь, а не в справочнике статусов: в таблицах
+ * кабинета значков нет, там роль подписи играет цвет.
  */
-const MANAGER_STATUSES: LeadStatus[] = [
-  'no_answer',
-  'contacted',
-  'thinking',
-  'trial',
-  'rejected',
+const STATUS_ICON: Record<LeadStatus, string> = {
+  new: '🆕',
+  no_answer: '📵',
+  contacted: '📞',
+  in_progress: '⏳',
+  thinking: '🤔',
+  trial: '🎓',
+  sale: '💰',
+  rejected: '🚫',
+};
+
+/**
+ * Когда вернуться к клиенту.
+ *
+ * Спрашивается сразу после «Игнора» и «Думает»: обещание, записанное в
+ * момент разговора, — единственное, которое выполняется. Сроки разные:
+ * не дозвонился — перезванивают в тот же день, взял паузу на решение —
+ * через день-два.
+ */
+export function touchButtons(
+  leadId: string,
+  keys: TouchPresetKey[],
+  skipText: string,
+): InlineButton[][] {
+  const buttons = keys.map((key) => ({
+    text: touchPreset(key).short,
+    callback_data: `t:${leadId}:${key}`,
+  }));
+
+  const rows: InlineButton[][] = [];
+  for (let index = 0; index < buttons.length; index += 2) {
+    rows.push(buttons.slice(index, index + 2));
+  }
+  rows.push([{ text: skipText, callback_data: `t:${leadId}:skip` }]);
+  return rows;
+}
+
+/** Сроки после «Игнора»: клиент не взял трубку — пробуем ещё сегодня. */
+export const NO_ANSWER_TOUCHES: TouchPresetKey[] = [
+  'in_1h',
+  'in_3h',
+  'evening',
+  'tomorrow',
+];
+
+/** Сроки после «Думает»: человеку дали время, дёргать его через час нельзя. */
+export const THINKING_TOUCHES: TouchPresetKey[] = [
+  'evening',
+  'tomorrow',
+  'in_2d',
+  'in_week',
 ];
 
 /**

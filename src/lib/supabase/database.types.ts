@@ -419,6 +419,8 @@ export type EmployeeRow = Timestamps & {
   profile_id: string | null;
   /** Урок, по которому бот ждёт от продажника сумму продажи. */
   awaiting_amount_for: string | null;
+  /** Лид, по которому бот ждёт сумму: в прямой воронке урока нет. */
+  awaiting_sale_lead: string | null;
   full_name: string;
   role: EmployeeRole;
   phone: string | null;
@@ -558,6 +560,16 @@ export type ShiftRow = Timestamps & {
   late: boolean;
 }
 
+export type DayReportRow = {
+  id: string;
+  company_id: string;
+  /** Пусто у сводки для руководителя: она одна на компанию. */
+  employee_id: string | null;
+  date: string;
+  kind: 'employee' | 'summary';
+  sent_at: string;
+}
+
 type TableDef<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Partial<Row> & Pick<Row, Required>;
@@ -597,6 +609,7 @@ export type Database = {
         'company_id' | 'employee_id' | 'token' | 'expires_at'
       >;
       shifts: TableDef<ShiftRow, 'company_id' | 'employee_id'>;
+      day_reports: TableDef<DayReportRow, 'company_id' | 'date' | 'kind'>;
       attendance: TableDef<
         AttendanceRow,
         'company_id' | 'employee_id' | 'date' | 'status'

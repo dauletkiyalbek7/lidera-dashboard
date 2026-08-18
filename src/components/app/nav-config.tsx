@@ -4,6 +4,8 @@ import type { FunnelType } from '@/lib/metrics';
 import { trialWords } from '@/lib/trial-term';
 import {
   IconAds,
+  IconAttendance,
+  IconChain,
   IconCompanies,
   IconCreatives,
   IconDashboard,
@@ -13,7 +15,6 @@ import {
   IconReceipts,
   IconSales,
   IconSettings,
-  IconAttendance,
   IconTeam,
   IconTrials,
 } from '@/components/ui/icons';
@@ -100,6 +101,7 @@ const COMPANY_NAV: NavGroup[] = [
   {
     title: 'Система',
     items: [
+      { href: '/dashboard/whatsapp', label: 'WhatsApp', icon: IconChain },
       { href: '/dashboard/integrations', label: 'Интеграции', icon: IconIntegrations },
       { href: '/dashboard/settings', label: 'Настройки', icon: IconSettings },
       // Рабочее место сотрудника: подключить Telegram и сменить свой пароль.

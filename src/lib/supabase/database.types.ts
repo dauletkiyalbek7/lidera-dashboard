@@ -299,6 +299,12 @@ export type LeadRow = Timestamps & {
   lead_source_id: string | null;
   /** Номер заявки в моментальной форме Meta — ключ сопоставления для CAPI. */
   leadgen_id: string | null;
+  /** Номер WhatsApp, на который человек написал. */
+  whatsapp_number_id: string | null;
+  /** Последнее входящее сообщение: от него считается окно в 24 часа. */
+  last_inbound_at: string | null;
+  /** Телефон одними цифрами — вычисляется базой, вручную не пишется. */
+  phone_digits: string;
 }
 
 /**
@@ -311,6 +317,76 @@ export type ActiveCompanyRow = {
   user_id: string;
   company_id: string;
   updated_at: string;
+}
+
+/** Подключённый номер WhatsApp Cloud API. Секреты только в шифрованном виде. */
+export type WhatsappNumberRow = Timestamps & {
+  id: string;
+  company_id: string;
+  department_id: string | null;
+  label: string;
+  display_phone: string | null;
+  /** Идентификатор номера в Meta: по нему разбираем входящие. */
+  phone_number_id: string;
+  waba_id: string | null;
+  token_encrypted: string | null;
+  app_secret_encrypted: string | null;
+  verify_token: string;
+  /** Ключ в адресе вебхука: говорит, чьим секретом проверять подпись. */
+  webhook_key: string;
+  status: 'connected' | 'disconnected' | 'error';
+  last_error: string | null;
+  last_message_at: string | null;
+  auto_reply_enabled: boolean;
+  auto_reply_day: string | null;
+  auto_reply_night: string | null;
+  work_start_time: string | null;
+  work_end_time: string | null;
+  timezone: string | null;
+}
+
+/** Сырое событие вебхука: страховка на случай неверного разбора и от повторов. */
+export type WhatsappEventRow = {
+  id: string;
+  whatsapp_number_id: string | null;
+  wa_message_id: string | null;
+  kind: 'message' | 'status' | 'other';
+  payload: Json;
+  signature_ok: boolean;
+  processed_at: string | null;
+  error: string | null;
+  received_at: string;
+}
+
+/** Сообщение переписки. Исходящие — это автоответы, вручную мы не пишем. */
+export type WhatsappMessageRow = {
+  id: string;
+  company_id: string;
+  whatsapp_number_id: string;
+  lead_id: string | null;
+  wa_message_id: string | null;
+  direction: 'in' | 'out';
+  type: string;
+  body: string | null;
+  media_id: string | null;
+  status: 'received' | 'sent' | 'delivered' | 'read' | 'failed';
+  error: string | null;
+  sent_at: string;
+  created_at: string;
+}
+
+/**
+ * Рекламный переход клиента. Первый клик объясняет, что человек искал,
+ * последний — тот, за который заплачено; в CAPI уходит последний.
+ */
+export type LeadClickRow = {
+  id: string;
+  company_id: string;
+  lead_id: string;
+  ctwa_clid: string;
+  ad_external_id: string | null;
+  source_type: string | null;
+  clicked_at: string;
 }
 
 /** Отдел продаж внутри компании. Архивируем, но не удаляем. */
@@ -506,6 +582,13 @@ export type Database = {
       capi_events: TableDef<CapiEventRow, 'company_id' | 'event_name' | 'event_id' | 'status'>;
       leads: TableDef<LeadRow, 'company_id'>;
       active_company: TableDef<ActiveCompanyRow, 'user_id' | 'company_id'>;
+      whatsapp_numbers: TableDef<WhatsappNumberRow, 'company_id' | 'phone_number_id'>;
+      whatsapp_events: TableDef<WhatsappEventRow, 'payload'>;
+      whatsapp_messages: TableDef<
+        WhatsappMessageRow,
+        'company_id' | 'whatsapp_number_id' | 'direction'
+      >;
+      lead_clicks: TableDef<LeadClickRow, 'company_id' | 'lead_id' | 'ctwa_clid'>;
       departments: TableDef<DepartmentRow, 'company_id' | 'name'>;
       lead_sources: TableDef<LeadSourceRow, 'company_id' | 'name'>;
       employees: TableDef<EmployeeRow, 'company_id' | 'full_name' | 'role'>;

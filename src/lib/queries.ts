@@ -1042,6 +1042,162 @@ export async function getLeads(
 }
 
 /**
+ * Найденный клиент — вся его история в одной карточке.
+ *
+ * Отдельный тип, а не LeadListItem: в списке за период нужна строка таблицы,
+ * а здесь человек ищет конкретного клиента и хочет увидеть про него всё
+ * сразу — откуда пришёл, кто с ним работал, был ли на встрече, сколько
+ * заплатил.
+ */
+export type ClientMatch = {
+  id: string;
+  name: string;
+  phone: string | null;
+  email: string | null;
+  status: string;
+  createdAt: string;
+  source: string | null;
+  platform: string | null;
+  creativeName: string | null;
+  assignedName: string | null;
+  departmentName: string | null;
+  /** Записи на промежуточный шаг воронки: когда и чем закончились. */
+  visits: { id: string; date: string; status: string; sellerName: string | null }[];
+  /** Оплаченные продажи. Отменённые и возвращённые тоже видны — это история. */
+  purchases: { id: string; date: string; amount: number; product: string | null; status: string }[];
+  /** Сколько клиент заплатил всего: только оплаченные чеки. */
+  totalPaid: number;
+  touchCount: number;
+  lastTouchAt: string | null;
+  nextTouchAt: string | null;
+};
+
+/** Больше этого числа совпадений не показываем: значит запрос слишком общий. */
+export const SEARCH_LIMIT = 20;
+
+/**
+ * Поиск клиента по номеру телефона или имени.
+ *
+ * Ищет по ВСЕЙ истории, а не за выбранный период, и это главное: человека
+ * ищут именно тогда, когда он позвонил сам, — а пришёл он мог полгода назад,
+ * и в фильтре «последние 7 дней» его нет.
+ *
+ * Номер сравниваем одними цифрами: в базе он записан то с пробелами, то
+ * скобками, а в поиске набирают как помнят. Достаточно любой части номера.
+ *
+ * Что именно найдётся, решает RLS: директор видит всех клиентов компании,
+ * менеджер — только своих.
+ */
+export async function searchClients(
+  companyId: string,
+  query: string,
+): Promise<ClientMatch[]> {
+  const trimmed = query.trim();
+  if (trimmed.length < 3) return [];
+
+  const supabase = await createServerSupabase();
+
+  const digits = trimmed.replace(/\D/g, '');
+  // Часть номера — если цифр набрали достаточно, чтобы это был не просто год
+  // в имени. Иначе ищем только по имени.
+  const byPhone = digits.length >= 4 ? `phone_digits.like.*${digits}*` : null;
+  const byName = `name.ilike.*${escapeFilterValue(trimmed)}*`;
+
+  const { data: leads } = await supabase
+    .from('leads')
+    .select(
+      'id, name, phone, email, source, platform, status, created_at, creative_id, assigned_to, department_id, touch_count, last_touch_at, next_touch_at',
+    )
+    .eq('company_id', companyId)
+    .or([byPhone, byName].filter(Boolean).join(','))
+    .order('created_at', { ascending: false })
+    .limit(SEARCH_LIMIT);
+
+  if (!leads || leads.length === 0) return [];
+
+  const leadIds = leads.map((lead) => lead.id);
+
+  const [{ data: creatives }, { data: employees }, { data: departments }, { data: visits }, { data: purchases }] =
+    await Promise.all([
+      supabase
+        .from('creatives')
+        .select('id, name, label, format, created_at')
+        .eq('company_id', companyId)
+        .order('created_at'),
+      supabase.from('employees').select('id, full_name').eq('company_id', companyId),
+      supabase.from('departments').select('id, name').eq('company_id', companyId),
+      supabase
+        .from('trials')
+        .select('id, lead_id, date, status, assigned_to')
+        .eq('company_id', companyId)
+        .in('lead_id', leadIds)
+        .order('date', { ascending: false }),
+      supabase
+        .from('sales')
+        .select('id, lead_id, sale_date, amount, product, status')
+        .eq('company_id', companyId)
+        .in('lead_id', leadIds)
+        .order('sale_date', { ascending: false }),
+    ]);
+
+  const creativeNames = new Map(
+    (creatives ?? []).map((row, index) => [row.id, creativeLabel(row, index + 1)]),
+  );
+  const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
+  const departmentNames = new Map((departments ?? []).map((row) => [row.id, row.name]));
+
+  return leads.map((lead) => {
+    const leadVisits = (visits ?? []).filter((row) => row.lead_id === lead.id);
+    const leadPurchases = (purchases ?? []).filter((row) => row.lead_id === lead.id);
+
+    return {
+      id: lead.id,
+      name: lead.name,
+      phone: lead.phone,
+      email: lead.email,
+      status: lead.status,
+      createdAt: lead.created_at,
+      source: lead.source,
+      platform: lead.platform,
+      creativeName: lead.creative_id ? (creativeNames.get(lead.creative_id) ?? null) : null,
+      assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
+      departmentName: lead.department_id
+        ? (departmentNames.get(lead.department_id) ?? null)
+        : null,
+      visits: leadVisits.map((row) => ({
+        id: row.id,
+        date: row.date,
+        status: row.status,
+        sellerName: row.assigned_to ? (employeeNames.get(row.assigned_to) ?? null) : null,
+      })),
+      purchases: leadPurchases.map((row) => ({
+        id: row.id,
+        date: row.sale_date,
+        amount: Number(row.amount),
+        product: row.product,
+        status: row.status,
+      })),
+      totalPaid: leadPurchases
+        .filter((row) => row.status === 'paid')
+        .reduce((sum, row) => sum + Number(row.amount), 0),
+      touchCount: lead.touch_count ?? 0,
+      lastTouchAt: lead.last_touch_at,
+      nextTouchAt: lead.next_touch_at,
+    };
+  });
+}
+
+/**
+ * Экранирование значения для фильтра PostgREST.
+ *
+ * В `or(...)` запятая и скобки разделяют условия, поэтому имя вроде
+ * «Иванов, А.» разорвало бы запрос на части. Кавычки внутри тоже опасны.
+ */
+function escapeFilterValue(value: string): string {
+  return value.replace(/[,()"\\]/g, ' ');
+}
+
+/**
  * Сколько заявок лежит без ответственного прямо сейчас.
  *
  * Считается вне выбранного периода: ночная очередь — это то, что скопилось,

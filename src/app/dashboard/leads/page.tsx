@@ -15,12 +15,14 @@ import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { PLATFORM_LABELS } from '@/lib/labels';
 import type { FunnelType } from '@/lib/metrics';
 import { resolveRange } from '@/lib/period';
+import { ClientSearchForm, ClientSearchResults } from './client-search';
 import {
   countUnassignedLeads,
   getAssignableEmployees,
   getCreativeOptions,
   getLeadStats,
   getLeads,
+  searchClients,
 } from '@/lib/queries';
 import {
   AddLeadButton,
@@ -58,21 +60,26 @@ const TABLE_MIN_WIDTH = { base: 520, md: 820, lg: 1040, xl: 1280 };
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
+  searchParams: Promise<{ period?: string; from?: string; to?: string; q?: string }>;
 }) {
   const { company, employee } = await requireCompanySession();
+  const params = await searchParams;
+  // Поиск конкретного клиента идёт по всей истории и не зависит от периода:
+  // человек звонит сам, а пришёл он мог и полгода назад.
+  const query = (params.q ?? '').trim();
   // Менеджер ведёт свои заявки, но не распоряжается чужими: раздача и смена
   // ответственного — работа руководителя.
   const isStaff = employee !== null;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = resolveRange(params, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
-  const [leads, stats, creatives, employees, queued] = await Promise.all([
+  const [leads, stats, creatives, employees, queued, matches] = await Promise.all([
     getLeads(company.id, range.from, range.to, company.timezone),
     getLeadStats(company.id, range.from, range.to, company.timezone),
     getCreativeOptions(company.id),
     getAssignableEmployees(company.id),
     countUnassignedLeads(company.id),
+    query ? searchClients(company.id, query) : Promise.resolve([]),
   ]);
 
   // Лиды раздаются менеджерам: РОП руководит, продажник подключается на пробном.
@@ -89,6 +96,7 @@ export default async function LeadsPage({
         description="Каждый лид хранит источник, площадку и креатив — это и есть основа сквозной аналитики."
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
+            <ClientSearchForm query={query} />
             {isStaff ? null : <DistributeButton queued={queued} />}
             <AddLeadButton
               creatives={creatives}
@@ -101,138 +109,149 @@ export default async function LeadsPage({
       />
 
       <PageBody>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          <StatTile
-            label="Всего лидов"
-            value={formatNumber(stats.total)}
-            hint={`${formatNumber(stats.attributed)} с привязкой к креативу`}
+        {query ? (
+          <ClientSearchResults
+            query={query}
+            matches={matches}
+            trialTerm={company.trial_term}
+            currency={company.sales_currency}
           />
-          <StatTile
-            label="Дозвонились"
-            value={formatNumber(stats.reached)}
-            hint={`${formatPercent(share(stats.reached))} лидов — живой контакт`}
-          />
-          <StatTile
-            label="Купили"
-            value={formatNumber(stats.won)}
-            hint={`Конверсия ${formatPercent(share(stats.won))}`}
-            accent
-          />
-          <StatTile
-            label="Ждут первого касания"
-            value={formatNumber(stats.untouched)}
-            hint={
-              queued > 0
-                ? `Без ответственного сейчас: ${formatNumber(queued)} — ждут смены`
-                : `Новые лиды старше ${UNTOUCHED_HOURS} часов — их никто не взял`
-            }
-          />
-        </div>
-
-        {stats.total > 0 ? (
-          <Card className="mt-4">
-            <CardHeader
-              title="Разбор по статусам"
-              subtitle="Как менеджеры отработали лидов за выбранный период"
-            />
-            <StatusBreakdown
-              counts={stats.counts}
-              total={stats.total}
-              funnelType={funnelType}
-              trialTerm={company.trial_term}
-            />
-          </Card>
-        ) : null}
-
-        <Card className="mt-4">
-          <CardHeader
-            title="Список лидов"
-            subtitle={
-              stats.total > leads.length
-                ? `Показаны последние ${formatNumber(leads.length)} из ${formatNumber(stats.total)} за ${range.label}`
-                : `Показаны все ${formatNumber(leads.length)} за ${range.label}`
-            }
-          />
-          {leads.length === 0 ? (
-            <div className="p-5 sm:p-6">
-              <EmptyState
-                icon={<IconLeads className="size-5" />}
-                title="Лидов за этот период нет"
-                description="Добавьте лид вручную или подключите рекламные кабинеты — тогда заявки будут приходить автоматически."
-                action={
-                  <ButtonLink href="/dashboard/integrations" variant="secondary">
-                    Настроить интеграции
-                  </ButtonLink>
+        ) : (
+          <>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatTile
+                label="Всего лидов"
+                value={formatNumber(stats.total)}
+                hint={`${formatNumber(stats.attributed)} с привязкой к креативу`}
+              />
+              <StatTile
+                label="Дозвонились"
+                value={formatNumber(stats.reached)}
+                hint={`${formatPercent(share(stats.reached))} лидов — живой контакт`}
+              />
+              <StatTile
+                label="Купили"
+                value={formatNumber(stats.won)}
+                hint={`Конверсия ${formatPercent(share(stats.won))}`}
+                accent
+              />
+              <StatTile
+                label="Ждут первого касания"
+                value={formatNumber(stats.untouched)}
+                hint={
+                  queued > 0
+                    ? `Без ответственного сейчас: ${formatNumber(queued)} — ждут смены`
+                    : `Новые лиды старше ${UNTOUCHED_HOURS} часов — их никто не взял`
                 }
               />
             </div>
-          ) : (
-            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
-              {leads.map((lead) => (
-                <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
-                  <Td first className="font-medium text-ink">
-                    {lead.name || 'Без имени'}
-                  </Td>
-                  <Td showFrom="lg" className="tabular text-ink-soft">
-                    {lead.phone ?? '—'}
-                  </Td>
-                  <Td showFrom="md" className="text-ink-soft">
-                    {lead.platform
-                      ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
-                      : (lead.source ?? '—')}
-                  </Td>
-                  <Td showFrom="xl" className="text-ink-soft">
-                    {lead.creativeId && lead.creativeName ? (
-                      <Link
-                        href={`/dashboard/creatives/${lead.creativeId}`}
-                        className="whitespace-nowrap text-lime transition-colors hover:text-lime-strong"
-                      >
-                        {lead.creativeName}
-                      </Link>
-                    ) : (
-                      '—'
-                    )}
-                  </Td>
-                  <Td>
-                    {isStaff ? (
-                      <span className="text-[12.5px] text-ink-soft">
-                        {lead.assignedName ?? '—'}
-                      </span>
-                    ) : (
-                      <LeadOwnerSelect
-                        leadId={lead.id}
-                        assignedTo={lead.assignedTo}
-                        employees={owners}
-                      />
-                    )}
-                  </Td>
-                  <Td showFrom="md" className="tabular text-muted">
-                    {formatDateTime(lead.created_at)}
-                  </Td>
-                  <Td>
-                    <LeadStatusSelect
-                      leadId={lead.id}
-                      status={lead.status}
-                      funnelType={funnelType}
-                      trialTerm={company.trial_term}
-                    />
-                  </Td>
-                  <Td last align="right">
-                    <LeadRowActions
-                      leadId={lead.id}
-                      leadName={lead.name}
-                      funnelType={funnelType}
-                      trialTerm={company.trial_term}
-                      status={lead.status}
-                      saleAmount={lead.saleAmount}
-                      currency={company.sales_currency}
-                    />
-                  </Td>
-                </tr>
-              ))}
-            </TableShell>
-          )}
-        </Card>
+
+            {stats.total > 0 ? (
+              <Card className="mt-4">
+                <CardHeader
+                  title="Разбор по статусам"
+                  subtitle="Как менеджеры отработали лидов за выбранный период"
+                />
+                <StatusBreakdown
+                  counts={stats.counts}
+                  total={stats.total}
+                  funnelType={funnelType}
+                  trialTerm={company.trial_term}
+                />
+              </Card>
+            ) : null}
+
+            <Card className="mt-4">
+              <CardHeader
+                title="Список лидов"
+                subtitle={
+                  stats.total > leads.length
+                    ? `Показаны последние ${formatNumber(leads.length)} из ${formatNumber(stats.total)} за ${range.label}`
+                    : `Показаны все ${formatNumber(leads.length)} за ${range.label}`
+                }
+              />
+              {leads.length === 0 ? (
+                <div className="p-5 sm:p-6">
+                  <EmptyState
+                    icon={<IconLeads className="size-5" />}
+                    title="Лидов за этот период нет"
+                    description="Добавьте лид вручную или подключите рекламные кабинеты — тогда заявки будут приходить автоматически."
+                    action={
+                      <ButtonLink href="/dashboard/integrations" variant="secondary">
+                        Настроить интеграции
+                      </ButtonLink>
+                    }
+                  />
+                </div>
+              ) : (
+                <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
+                  {leads.map((lead) => (
+                    <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
+                      <Td first className="font-medium text-ink">
+                        {lead.name || 'Без имени'}
+                      </Td>
+                      <Td showFrom="lg" className="tabular text-ink-soft">
+                        {lead.phone ?? '—'}
+                      </Td>
+                      <Td showFrom="md" className="text-ink-soft">
+                        {lead.platform
+                          ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
+                          : (lead.source ?? '—')}
+                      </Td>
+                      <Td showFrom="xl" className="text-ink-soft">
+                        {lead.creativeId && lead.creativeName ? (
+                          <Link
+                            href={`/dashboard/creatives/${lead.creativeId}`}
+                            className="whitespace-nowrap text-lime transition-colors hover:text-lime-strong"
+                          >
+                            {lead.creativeName}
+                          </Link>
+                        ) : (
+                          '—'
+                        )}
+                      </Td>
+                      <Td>
+                        {isStaff ? (
+                          <span className="text-[12.5px] text-ink-soft">
+                            {lead.assignedName ?? '—'}
+                          </span>
+                        ) : (
+                          <LeadOwnerSelect
+                            leadId={lead.id}
+                            assignedTo={lead.assignedTo}
+                            employees={owners}
+                          />
+                        )}
+                      </Td>
+                      <Td showFrom="md" className="tabular text-muted">
+                        {formatDateTime(lead.created_at)}
+                      </Td>
+                      <Td>
+                        <LeadStatusSelect
+                          leadId={lead.id}
+                          status={lead.status}
+                          funnelType={funnelType}
+                          trialTerm={company.trial_term}
+                        />
+                      </Td>
+                      <Td last align="right">
+                        <LeadRowActions
+                          leadId={lead.id}
+                          leadName={lead.name}
+                          funnelType={funnelType}
+                          trialTerm={company.trial_term}
+                          status={lead.status}
+                          saleAmount={lead.saleAmount}
+                          currency={company.sales_currency}
+                        />
+                      </Td>
+                    </tr>
+                  ))}
+                </TableShell>
+              )}
+            </Card>
+          </>
+        )}
       </PageBody>
     </>
   );

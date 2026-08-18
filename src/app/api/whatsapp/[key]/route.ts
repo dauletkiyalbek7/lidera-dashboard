@@ -45,6 +45,17 @@ export async function GET(
     return NextResponse.json({ error: 'неверный ключ' }, { status: 403 });
   }
 
+  // Отмечаем сам факт подключения. Без этой записи при разборе «почему нет
+  // сообщений» нельзя отличить «Meta до нас не дошла» от «дошла, но забыли
+  // подписаться на поле messages» — а это разные починки.
+  await supabase.from('whatsapp_events').insert({
+    whatsapp_number_id: number.id,
+    kind: 'other',
+    payload: { event: 'webhook_verified' },
+    signature_ok: true,
+    processed_at: new Date().toISOString(),
+  });
+
   // Ответ обязан быть голым текстом загадки — JSON Meta не принимает.
   return new Response(challenge, {
     status: 200,

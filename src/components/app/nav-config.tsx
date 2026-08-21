@@ -78,6 +78,9 @@ const COMPANY_NAV: NavGroup[] = [
     title: 'Продажи',
     items: [
       { href: '/dashboard/leads', label: 'Лиды', icon: IconLeads, staff: true },
+      // Номер на Cloud API в приложении WhatsApp не открывается — это
+      // единственное место, где можно ответить клиенту.
+      { href: '/dashboard/inbox', label: 'Переписки', icon: IconChain, staff: true },
       {
         href: '/dashboard/trials',
         label: 'Пробные уроки',

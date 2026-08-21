@@ -45,6 +45,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   google: 'Google Ads',
   telegram: 'Telegram',
   whatsapp: 'WhatsApp',
+  inbox: 'Переписки',
   crm: 'CRM',
   other: 'Другое',
 };

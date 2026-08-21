@@ -30,7 +30,7 @@ import { createAdminSupabase } from '@/lib/supabase/admin';
 const API_VERSION = 'v21.0';
 
 /** Сутки — окно, в котором WhatsApp разрешает свободно отвечать клиенту. */
-const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const REPLY_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /** Рабочие часы по умолчанию, если их не задали ни номеру, ни компании. */
 const DEFAULT_DAY_START = '09:00';
@@ -118,6 +118,24 @@ async function numberByPhoneNumberId(
     )
     .eq('company_id', companyId)
     .eq('phone_number_id', phoneNumberId)
+    .maybeSingle();
+
+  return data ? toRecord(data) : null;
+}
+
+/** Номер по идентификатору — для отправки из раздела «Переписки». */
+export async function numberById(
+  supabase: Supabase,
+  companyId: string,
+  id: string,
+): Promise<NumberRecord | null> {
+  const { data } = await supabase
+    .from('whatsapp_numbers')
+    .select(
+      'id, company_id, department_id, phone_number_id, verify_token, status, app_secret_encrypted, token_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time, timezone',
+    )
+    .eq('company_id', companyId)
+    .eq('id', id)
     .maybeSingle();
 
   return data ? toRecord(data) : null;
@@ -646,10 +664,15 @@ export function withinWorkingHours(
 /**
  * Отправка текста клиенту.
  *
- * Единственное, что мы пишем сами, — автоответ: переписку менеджеры ведут в
- * своём приложении. Поэтому здесь нет ни шаблонов, ни очередей.
+ * Отсюда уходит и автоответ, и то, что менеджер написал руками в разделе
+ * «Переписки». Номер, подключённый к Cloud API, в приложении WhatsApp не
+ * открывается вовсе, поэтому другого способа ответить человеку нет.
+ *
+ * Запись в журнал делается всегда — и при успехе, и при отказе Meta. Иначе
+ * менеджер видит своё сообщение в переписке и считает, что оно доставлено,
+ * хотя Meta его не приняла.
  */
-async function sendText(
+export async function sendText(
   supabase: Supabase,
   target: NumberRecord,
   leadId: string,

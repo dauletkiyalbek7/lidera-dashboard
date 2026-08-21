@@ -119,6 +119,15 @@ export default async function WhatsappPage() {
                     </p>
                   ) : null}
 
+                  {number.hasAppSecret && !number.datasetId ? (
+                    <p className="mt-3 rounded-control border border-line bg-surface-2 px-3 py-2 text-[12.5px] leading-relaxed text-muted">
+                      Набор данных не указан — приём заявок работает, но покупки
+                      из переписок в рекламный кабинет уходить не будут. Meta
+                      привяжет продажу к объявлению только через набор,
+                      привязанный к этому WhatsApp-аккаунту.
+                    </p>
+                  ) : null}
+
                   <dl className="mt-4 space-y-3">
                     <div>
                       <dt className="text-[12px] text-faint">Адрес приёма (Callback URL)</dt>
@@ -188,6 +197,7 @@ export default async function WhatsappPage() {
               'Заполните форму выше и сохраните — появятся адрес приёма и проверочная строка.',
               'В приложении Meta: WhatsApp → Configuration → Webhook. Вставьте адрес и проверочную строку, подпишитесь на поле messages.',
               'Напишите на номер с личного телефона: клиент появится в разделе «Лиды» с источником WhatsApp.',
+              'Для отправки покупок в рекламу: Meta → «События» → набор данных этого WhatsApp-аккаунта. Его номер впишите в поле «Набор данных для покупок».',
             ].map((step, index) => (
               <li key={step} className="flex gap-3.5">
                 <span className="tabular flex size-6 shrink-0 items-center justify-center rounded-full border border-line bg-surface-2 text-[12px] font-medium text-lime">
@@ -197,6 +207,12 @@ export default async function WhatsappPage() {
               </li>
             ))}
           </ol>
+          <p className="px-5 pb-5 text-[12px] leading-relaxed text-faint sm:px-6">
+            Покупка привязывается к объявлению по метке клика, которую Meta
+            присылает с первым сообщением. Срок привязки — семь дней: продали
+            позже, и событие уйдёт, но конверсия у объявления не появится.
+            Отправляет покупки таргетолог в разделе «CAPI».
+          </p>
           <p className="px-5 pb-5 text-[12px] leading-relaxed text-faint sm:px-6">
             Отвечать клиенту из платформы нельзя — переписку менеджеры ведут у себя.
             Отсюда уходит только автоответ, и только в первые 24 часа после

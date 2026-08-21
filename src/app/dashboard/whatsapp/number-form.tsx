@@ -13,6 +13,7 @@ export type NumberDefaults = {
   displayPhone: string | null;
   phoneNumberId: string;
   wabaId: string | null;
+  datasetId: string | null;
   departmentId: string | null;
   hasToken: boolean;
   hasAppSecret: boolean;
@@ -81,6 +82,14 @@ export function NumberForm({
           hint="Нужен для отправки покупок в Meta"
         />
       </div>
+
+      <Field
+        label="Набор данных для покупок"
+        name="datasetId"
+        defaultValue={defaults?.datasetId ?? ''}
+        placeholder="2243766002860567"
+        hint="Тот, что привязан к этому WhatsApp-аккаунту, — не тот, что у сайта. Без него покупки из переписок в рекламный кабинет не уйдут."
+      />
 
       {departments.length > 0 ? (
         <div>

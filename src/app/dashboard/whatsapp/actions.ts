@@ -38,6 +38,12 @@ const numberSchema = z.object({
     .trim()
     .regex(/^\d{5,25}$/, 'Идентификатор номера — это число из Meta'),
   wabaId: z.string().trim().max(40, 'Слишком длинный идентификатор').optional(),
+  datasetId: z
+    .string()
+    .trim()
+    .regex(/^\d{10,25}$/, 'Набор данных — только цифры')
+    .optional()
+    .or(z.literal('')),
   departmentId: z.string().uuid().optional().or(z.literal('')),
   token: z.string().trim().optional(),
   appSecret: z.string().trim().optional(),
@@ -61,6 +67,7 @@ export async function saveWhatsappNumber(
     displayPhone: text(formData, 'displayPhone'),
     phoneNumberId: text(formData, 'phoneNumberId'),
     wabaId: text(formData, 'wabaId'),
+    datasetId: text(formData, 'datasetId') ?? '',
     departmentId: text(formData, 'departmentId') ?? '',
     token: text(formData, 'token'),
     appSecret: text(formData, 'appSecret'),
@@ -92,6 +99,7 @@ export async function saveWhatsappNumber(
     display_phone: input.displayPhone || null,
     phone_number_id: input.phoneNumberId,
     waba_id: input.wabaId || null,
+    dataset_id: input.datasetId || null,
     department_id: input.departmentId || null,
     auto_reply_enabled: input.autoReplyEnabled,
     ...(keepAutoReply

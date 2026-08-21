@@ -329,6 +329,8 @@ export type WhatsappNumberRow = Timestamps & {
   /** Идентификатор номера в Meta: по нему разбираем входящие. */
   phone_number_id: string;
   waba_id: string | null;
+  /** Набор данных Meta для событий из переписок (привязан к WABA). */
+  dataset_id: string | null;
   token_encrypted: string | null;
   app_secret_encrypted: string | null;
   verify_token: string;

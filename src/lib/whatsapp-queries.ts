@@ -16,6 +16,8 @@ export type WhatsappNumberView = {
   displayPhone: string | null;
   phoneNumberId: string;
   wabaId: string | null;
+  /** Набор данных Meta для покупок из переписок. */
+  datasetId: string | null;
   departmentId: string | null;
   departmentName: string | null;
   webhookKey: string;
@@ -53,7 +55,7 @@ export async function getWhatsappOverview(companyId: string): Promise<WhatsappOv
       supabase
         .from('whatsapp_numbers')
         .select(
-          'id, label, display_phone, phone_number_id, waba_id, department_id, webhook_key, verify_token, status, last_error, last_message_at, token_encrypted, app_secret_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time',
+          'id, label, display_phone, phone_number_id, waba_id, dataset_id, department_id, webhook_key, verify_token, status, last_error, last_message_at, token_encrypted, app_secret_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time',
         )
         .eq('company_id', companyId)
         .order('created_at'),
@@ -93,6 +95,7 @@ export async function getWhatsappOverview(companyId: string): Promise<WhatsappOv
       displayPhone: row.display_phone,
       phoneNumberId: row.phone_number_id,
       wabaId: row.waba_id,
+      datasetId: row.dataset_id,
       departmentId: row.department_id,
       departmentName: row.department_id
         ? (departmentNames.get(row.department_id) ?? null)

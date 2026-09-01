@@ -35,7 +35,7 @@ import {
   LeadStatusSelect,
 } from './lead-controls';
 import { Pagination } from '@/components/app/pagination';
-import { DepartmentFilter } from './department-filter';
+import { DepartmentFilter } from '@/components/app/department-filter';
 import { ExportLeadsButton } from './export-button';
 import { StatusBreakdown } from './status-breakdown';
 
@@ -149,11 +149,7 @@ export default async function LeadsPage({
           />
         ) : (
           <>
-            <DepartmentFilter
-              departments={activeDepartments}
-              selected={departmentId}
-              params={params}
-            />
+            <DepartmentFilter departments={activeDepartments} selected={departmentId} />
 
             <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <StatTile

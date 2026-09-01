@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
+import { DepartmentFilter } from '@/components/app/department-filter';
 import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -12,7 +13,7 @@ import { requireFullAccess } from '@/lib/auth';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { averageCheck } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
-import { getLeads, getSales } from '@/lib/queries';
+import { getDepartments, getLeads, getSales } from '@/lib/queries';
 import { RefundButton } from '@/app/dashboard/returns/return-controls';
 import { AddSaleButton, SaleStatusSelect } from './sale-controls';
 
@@ -44,18 +45,31 @@ const TABLE_MIN_WIDTH = { base: 420, md: 900, lg: 1240, xl: 1400 };
 export default async function SalesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    period?: string;
+    from?: string;
+    to?: string;
+    department?: string;
+  }>;
 }) {
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
-  const range = await currentRange(await searchParams, company.timezone);
+  const params = await searchParams;
+  const range = await currentRange(params, company.timezone);
 
-  const [sales, leadPage] = await Promise.all([
-    getSales(company.id, range.from, range.to),
+  // Отдел из адреса: у проекта бывает два отдела продаж, и руководитель
+  // смотрит их порознь — как в «Лидах».
+  const departmentId = params.department ?? null;
+
+  const [sales, leadPage, departments] = await Promise.all([
+    getSales(company.id, range.from, range.to, departmentId),
     // Список для выбора при записи продажи: берём столько же, сколько даёт
     // самая большая страница списка заявок.
-    getLeads(company.id, range.from, range.to, company.timezone, null, 1, 100),
+    getLeads(company.id, range.from, range.to, company.timezone, departmentId, 1, 100),
+    getDepartments(company.id),
   ]);
+
+  const activeDepartments = departments.filter((row) => row.status === 'active');
 
   // Подпись лида в выпадающем списке: по имени и телефону его легко узнать.
   const leadOptions = leadPage.items.map((lead) => ({
@@ -80,7 +94,9 @@ export default async function SalesPage({
       />
 
       <PageBody>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <DepartmentFilter departments={activeDepartments} selected={departmentId} />
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-3">
           <StatTile label="Продаж" value={formatNumber(paid.length)} />
           <StatTile label="Выручка" value={formatMoney(revenue, { currency })} accent />
           <StatTile

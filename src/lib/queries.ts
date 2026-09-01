@@ -112,6 +112,37 @@ async function withoutSkippedCampaigns<T extends { campaign_id?: string | null }
   return rows.filter((row) => !row.campaign_id || !skipped.has(row.campaign_id));
 }
 
+/**
+ * Кампания → отдел продаж.
+ *
+ * Отдел стоит на кампании, а расход и показы приходят строками статистики,
+ * где от кампании остался только её номер. Поэтому раскладку строим один раз
+ * и потом делим по ней рекламные строки любого раздела.
+ */
+async function departmentByCampaign(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+): Promise<Map<string, string | null>> {
+  const rows = await selectAll<{ id: string; department_id: string | null }>((start, end) =>
+    supabase
+      .from('campaigns')
+      .select('id, department_id')
+      .eq('company_id', companyId)
+      .range(start, end),
+  );
+
+  return new Map(rows.map((row) => [row.id, row.department_id]));
+}
+
+/** Оставить только рекламные строки выбранного отдела. */
+function adRowsOfDepartment<T extends { campaign_id?: string | null }>(
+  rows: T[],
+  departments: Map<string, string | null>,
+  departmentId: string,
+): T[] {
+  return rows.filter((row) => row.campaign_id && departments.get(row.campaign_id) === departmentId);
+}
+
 export type CurrencyNote = {
   /** Валюта рекламного кабинета. */
   source: string;
@@ -200,6 +231,7 @@ export async function getDashboardData(
   from: string,
   to: string,
   timeZone: string,
+  departmentId?: string | null,
 ): Promise<DashboardData> {
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
@@ -233,26 +265,46 @@ export async function getDashboardData(
       .eq('status', 'paid')
       .gte('sale_date', from)
       .lte('sale_date', to),
-    selectAll((start, end) =>
-      supabase
+    selectAll((start, end) => {
+      let query = supabase
         .from('leads')
         .select('id, creative_id, status')
         .eq('company_id', companyId)
         .gte('created_at', day.startsAt)
         .lt('created_at', day.endsBefore)
-        .range(start, end),
-    ),
+        .range(start, end);
+
+      if (departmentId) query = query.eq('department_id', departmentId);
+      return query;
+    }),
   ]);
 
-  const metrics = await withoutSkippedCampaigns(
+  const countedMetrics = await withoutSkippedCampaigns(
     supabase,
     companyId,
     await toCompanyCurrency(supabase, companyId, metricsRows),
   );
+
+  // Выбран отдел — оставляем только его: расход берём по кампаниям отдела,
+  // а продажи и занятия — по его заявкам. Продажа без заявки в срез отдела не
+  // попадает: чья она — неизвестно.
+  const metrics = departmentId
+    ? adRowsOfDepartment(
+        countedMetrics,
+        await departmentByCampaign(supabase, companyId),
+        departmentId,
+      )
+    : countedMetrics;
+
   const creatives = creativesResult.data ?? [];
-  const trials = trialsResult.data ?? [];
-  const sales = salesResult.data ?? [];
   const leads = leadRows;
+
+  const ownLeads = new Set(leads.map((lead) => lead.id));
+  const ofDepartment = <T extends { lead_id: string | null }>(rows: T[]) =>
+    departmentId ? rows.filter((row) => row.lead_id && ownLeads.has(row.lead_id)) : rows;
+
+  const trials = ofDepartment(trialsResult.data ?? []);
+  const sales = ofDepartment(salesResult.data ?? []);
 
   // Лид → креатив: связь, ради которой существует вся платформа.
   const leadToCreative = new Map(leads.map((lead) => [lead.id, lead.creative_id]));
@@ -469,6 +521,7 @@ export async function getCreativeCards(
   from: string,
   to: string,
   timeZone: string,
+  departmentId?: string | null,
 ): Promise<CreativeCard[]> {
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
@@ -500,16 +553,19 @@ export async function getCreativeCards(
           .lte('date', to)
           .range(start, end),
       ),
-      selectAll((start, end) =>
-        supabase
+      selectAll((start, end) => {
+        let query = supabase
           .from('leads')
           .select('id, creative_id')
           .eq('company_id', companyId)
           .not('creative_id', 'is', null)
           .gte('created_at', day.startsAt)
           .lt('created_at', day.endsBefore)
-          .range(start, end),
-      ),
+          .range(start, end);
+
+        if (departmentId) query = query.eq('department_id', departmentId);
+        return query;
+      }),
       supabase
         .from('sales')
         .select('amount, lead_id')
@@ -527,21 +583,44 @@ export async function getCreativeCards(
 
   const creativeOfLead = new Map(leadRows.map((lead) => [lead.id, lead.creative_id]));
 
-  const { data: campaignRows } = await supabase
-    .from('campaigns')
-    .select('id, name, whatsapp_number')
-    .eq('company_id', companyId);
+  // Срез отдела: продажи и занятия считаем только по его заявкам.
+  const ownLeads = new Set(leadRows.map((lead) => lead.id));
+  const ofDepartment = <T extends { lead_id: string | null }>(rows: T[]) =>
+    departmentId ? rows.filter((row) => row.lead_id && ownLeads.has(row.lead_id)) : rows;
 
-  const campaignById = new Map((campaignRows ?? []).map((row) => [row.id, row]));
+  const campaignRows = await selectAll<{
+    id: string;
+    name: string;
+    whatsapp_number: string | null;
+    department_id: string | null;
+  }>((start, end) =>
+    supabase
+      .from('campaigns')
+      .select('id, name, whatsapp_number, department_id')
+      .eq('company_id', companyId)
+      .range(start, end),
+  );
+
+  const campaignById = new Map(campaignRows.map((row) => [row.id, row]));
   const placement = new Map<string, { campaigns: Set<string>; numbers: Set<string> }>();
 
   // Расход приходит в валюте кабинета — приводим к валюте компании, а кампании
   // найма из отчёта убираем.
-  const spendRows = await withoutSkippedCampaigns(
+  const countedRows = await withoutSkippedCampaigns(
     supabase,
     companyId,
     await toCompanyCurrency(supabase, companyId, metricRows),
   );
+
+  // Расход отдела — это расход его кампаний: отдел стоит на кампании, а не на
+  // самом ролике, и один ролик может крутиться у обоих отделов.
+  const spendRows = departmentId
+    ? adRowsOfDepartment(
+        countedRows,
+        new Map(campaignRows.map((row) => [row.id, row.department_id])),
+        departmentId,
+      )
+    : countedRows;
 
   const stats = new Map<
     string,
@@ -615,12 +694,12 @@ export async function getCreativeCards(
   }
 
   // Пробное занятие — середина воронки: между обращением и покупкой.
-  for (const trial of trials ?? []) {
+  for (const trial of ofDepartment(trials ?? [])) {
     const creativeId = trial.lead_id ? creativeOfLead.get(trial.lead_id) : null;
     if (creativeId && trial.status === 'completed') bucket(creativeId).trials += 1;
   }
 
-  for (const sale of sales ?? []) {
+  for (const sale of ofDepartment(sales ?? [])) {
     const creativeId = sale.lead_id ? creativeOfLead.get(sale.lead_id) : null;
     if (!creativeId) continue;
     const target = bucket(creativeId);
@@ -1765,6 +1844,7 @@ export async function getSales(
   companyId: string,
   from: string,
   to: string,
+  departmentId?: string | null,
 ): Promise<SaleListItem[]> {
   const supabase = await createServerSupabase();
 
@@ -1793,7 +1873,13 @@ export async function getSales(
   );
   const departmentNames = new Map((departments ?? []).map((row) => [row.id, row.name]));
 
-  return (sales ?? []).map((sale) => {
+  // Отдел у продажи берётся с её заявки: в самой продаже отдела нет. Продажу
+  // без заявки в срез отдела не показываем — чья она, неизвестно.
+  const ofDepartment = (sale: { lead_id: string | null }) =>
+    !departmentId ||
+    (sale.lead_id ? leads.get(sale.lead_id)?.departmentId === departmentId : false);
+
+  return (sales ?? []).filter(ofDepartment).map((sale) => {
     const lead = sale.lead_id ? leads.get(sale.lead_id) : undefined;
 
     return {

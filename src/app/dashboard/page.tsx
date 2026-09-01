@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 
 import { CreativeTable } from '@/components/app/creative-table';
 import { DateRangePicker } from '@/components/app/date-range-picker';
+import { DepartmentFilter } from '@/components/app/department-filter';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { Funnel } from '@/components/charts/funnel';
 import { TrendChart } from '@/components/charts/trend-chart';
@@ -15,23 +16,37 @@ import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/for
 import { funnelLabels, middleStepValue, type FunnelType } from '@/lib/metrics';
 import { moneyView } from '@/lib/money-view';
 import { currentRange } from '@/lib/period-preference';
-import { getAdSpendCurrency, getDashboardData } from '@/lib/queries';
+import { getAdSpendCurrency, getDashboardData, getDepartments } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Главная' };
 
 export default async function DashboardPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    period?: string;
+    from?: string;
+    to?: string;
+    department?: string;
+  }>;
 }) {
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
-  const range = await currentRange(await searchParams, company.timezone);
-  const [{ totals, trend, creatives, hasAdData, spendSource }, accountCurrency] =
+  const params = await searchParams;
+  const range = await currentRange(params, company.timezone);
+
+  // Отдел из адреса: сводку по проекту можно смотреть и целиком, и по одному
+  // отделу продаж — расход его кампаний против выручки его заявок.
+  const departmentId = params.department ?? null;
+
+  const [{ totals, trend, creatives, hasAdData, spendSource }, accountCurrency, departments] =
     await Promise.all([
-      getDashboardData(company.id, range.from, range.to, company.timezone),
+      getDashboardData(company.id, range.from, range.to, company.timezone, departmentId),
       getAdSpendCurrency(company.id),
+      getDepartments(company.id),
     ]);
+
+  const activeDepartments = departments.filter((row) => row.status === 'active');
 
   // Правило то же, что в «Рекламе»: деньги площадки — в её валюте, деньги
   // бизнеса — в валюте продаж. Одно на все разделы, чтобы не разъезжалось.
@@ -70,8 +85,10 @@ export default async function DashboardPage({
           </div>
         ) : null}
 
+        <DepartmentFilter departments={activeDepartments} selected={departmentId} />
+
         {/* KPI-строка: расход и выручка — главные числа, поэтому выделены */}
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <StatTile
             label="Расход"
             value={formatMoney(adSpend, { currency: view.adCurrency })}

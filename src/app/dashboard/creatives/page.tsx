@@ -5,6 +5,7 @@ import Link from 'next/link';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
+import { DepartmentFilter } from '@/components/app/department-filter';
 import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
@@ -22,7 +23,7 @@ import {
 } from '@/lib/format';
 import { moneyView } from '@/lib/money-view';
 import { currentRange } from '@/lib/period-preference';
-import { getAdSpendCurrency, getCreativeCards } from '@/lib/queries';
+import { getAdSpendCurrency, getCreativeCards, getDepartments } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
 
@@ -50,18 +51,30 @@ const columnsFor = (funnelType: string, ad: string, own: string, term: unknown) 
 export default async function CreativesPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    period?: string;
+    from?: string;
+    to?: string;
+    department?: string;
+  }>;
 }) {
   const { company } = await requireAdsAccess();
   // Выручка и прибыль — деньги компании; расход показываем так же, как в
   // «Рекламе»: в выбранной валюте, со второй мелкой подписью.
   const currency = company.sales_currency;
-  const range = await currentRange(await searchParams, company.timezone);
+  const params = await searchParams;
+  const range = await currentRange(params, company.timezone);
 
-  const [cards, accountCurrency] = await Promise.all([
-    getCreativeCards(company.id, range.from, range.to, company.timezone),
+  // Отдел из адреса: ролики у отделов разные, и смотреть их надо порознь.
+  const departmentId = params.department ?? null;
+
+  const [cards, accountCurrency, departments] = await Promise.all([
+    getCreativeCards(company.id, range.from, range.to, company.timezone, departmentId),
     getAdSpendCurrency(company.id),
+    getDepartments(company.id),
   ]);
+
+  const activeDepartments = departments.filter((row) => row.status === 'active');
 
   // Показываем только то, что за период работало: тратило бюджет или приводило
   // людей. Креатив, который не крутился, в отчёте за этот период не при чём.
@@ -89,6 +102,8 @@ export default async function CreativesPage({
       />
 
       <PageBody>
+        <DepartmentFilter departments={activeDepartments} selected={departmentId} />
+
         {shown.length === 0 ? (
           <EmptyState
             icon={<IconCreatives className="size-5" />}
@@ -102,7 +117,7 @@ export default async function CreativesPage({
           />
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <StatTile
                 label="Креативов работало"
                 value={formatNumber(shown.length)}

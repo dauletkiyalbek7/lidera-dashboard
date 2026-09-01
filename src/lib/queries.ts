@@ -1157,15 +1157,34 @@ export async function getLeads(
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
 
+  // Сначала — сколько заявок в периоде всего, отдельным запросом.
+  //
+  // База на просьбу выдать строки за последней страницей отвечает отказом, а
+  // не пустым списком, и тогда раздел пропадал целиком: номер страницы висит
+  // в адресе с прошлого раза, а после смены периода или отдела заявок стало
+  // меньше. Зная итог, номер прижимаем к последней существующей странице —
+  // человек видит конец списка, а не пустоту.
+  let countQuery = supabase
+    .from('leads')
+    .select('id', { count: 'exact', head: true })
+    .eq('company_id', companyId)
+    .gte('created_at', day.startsAt)
+    .lt('created_at', day.endsBefore);
+
+  if (departmentId) countQuery = countQuery.eq('department_id', departmentId);
+
+  const { count } = await countQuery;
+  const total = count ?? 0;
+
   // Страницу считаем от единицы: она приходит из адреса, и «?page=0» там
   // выглядел бы опечаткой, а не первой страницей.
-  const start = Math.max(0, (page - 1) * perPage);
+  const lastPage = Math.max(1, Math.ceil(total / perPage));
+  const start = (Math.min(Math.max(1, page), lastPage) - 1) * perPage;
 
   let leadQuery = supabase
     .from('leads')
     .select(
       'id, name, phone, source, platform, status, created_at, creative_id, assigned_to, department_id',
-      { count: 'exact' },
     )
     .eq('company_id', companyId)
     .gte('created_at', day.startsAt)
@@ -1175,7 +1194,7 @@ export async function getLeads(
 
   if (departmentId) leadQuery = leadQuery.eq('department_id', departmentId);
 
-  const [{ data: leads, count }, { data: creatives }, { data: employees }, { data: departments }] =
+  const [{ data: leads }, { data: creatives }, { data: employees }, { data: departments }] =
     await Promise.all([
       leadQuery,
       supabase
@@ -1228,7 +1247,7 @@ export async function getLeads(
     saleAmount: saleByLead.get(lead.id) ?? null,
   }));
 
-  return { items, total: count ?? items.length };
+  return { items, total };
 }
 
 /**

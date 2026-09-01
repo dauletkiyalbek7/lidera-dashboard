@@ -49,6 +49,14 @@ const campaignColumns = (ad: string, own: string) => [
   { key: 'counted', label: 'В отчёте', align: 'right' as const },
 ];
 
+const departmentColumns = (ad: string) => [
+  { key: 'name', label: 'Отдел продаж' },
+  { key: 'spend', label: `Бюджет, ${ad}`, align: 'right' as const },
+  { key: 'conversions', label: 'Лиды', align: 'right' as const },
+  { key: 'cost', label: `Цена лида, ${ad}`, align: 'right' as const },
+  { key: 'share', label: 'Доля бюджета', align: 'right' as const },
+];
+
 const numberColumns = (ad: string) => [
   { key: 'number', label: 'Номер WhatsApp' },
   { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
@@ -192,6 +200,36 @@ export default async function AdsPage({
             }
           />
         </div>
+
+        {breakdown.departments.length > 0 ? (
+          <Card className="mt-4">
+            <CardHeader
+              title="Отделы продаж"
+              subtitle="Сколько потратил каждый отдел и почём ему обошёлся лид"
+            />
+            <TableShell columns={departmentColumns(currencySymbol(adCurrency))} minWidth={720}>
+              {breakdown.departments.map((row) => (
+                <tr key={row.key} className="transition-colors hover:bg-surface-2/60">
+                  <Td first className="font-medium text-ink">
+                    {row.title}
+                  </Td>
+                  <Td align="right" className="tabular text-ink">
+                    {formatNumber(adMoney(row), 2)}
+                  </Td>
+                  <Td align="right" className="tabular text-ink">
+                    {formatNumber(row.conversions)}
+                  </Td>
+                  <Td align="right" className="tabular font-medium text-ink">
+                    {row.conversions ? formatNumber(adMoney(row) / row.conversions, 2) : '—'}
+                  </Td>
+                  <Td last align="right" className="tabular text-muted">
+                    {totals.spend ? formatPercent((row.spend / totals.spend) * 100, 0) : '—'}
+                  </Td>
+                </tr>
+              ))}
+            </TableShell>
+          </Card>
+        ) : null}
 
         {breakdown.numbers.length > 0 ? (
           <Card className="mt-4">

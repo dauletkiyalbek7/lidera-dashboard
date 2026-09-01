@@ -703,6 +703,8 @@ export type AdBreakdown = {
   };
   campaigns: AdBreakdownRow[];
   numbers: AdBreakdownRow[];
+  /** Отделы продаж: у каждого свои кампании и свой бюджет. */
+  departments: AdBreakdownRow[];
 };
 
 /**
@@ -712,6 +714,23 @@ export type AdBreakdown = {
  * Кампании без единого дня в периоде не показываем: пустая строка в отчёте
  * только мешает искать глазами ту, которая крутится.
  */
+/** Названия отделов по списку номеров. */
+async function getDepartmentNames(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  ids: string[],
+): Promise<{ id: string; name: string }[]> {
+  if (ids.length === 0) return [];
+
+  const { data } = await supabase
+    .from('departments')
+    .select('id, name')
+    .eq('company_id', companyId)
+    .in('id', ids);
+
+  return data ?? [];
+}
+
 /** Сколько кампаний спрашиваем за один запрос: длина адреса не безгранична. */
 const CAMPAIGN_LOOKUP_CHUNK = 200;
 
@@ -721,14 +740,21 @@ async function campaignsByIds(
   companyId: string,
   ids: string[],
 ): Promise<
-  { id: string; name: string; status: string | null; whatsapp_number: string | null; counted: boolean | null }[]
+  {
+    id: string;
+    name: string;
+    status: string | null;
+    whatsapp_number: string | null;
+    counted: boolean | null;
+    department_id: string | null;
+  }[]
 > {
   const rows: Awaited<ReturnType<typeof campaignsByIds>> = [];
 
   for (let start = 0; start < ids.length; start += CAMPAIGN_LOOKUP_CHUNK) {
     const { data } = await supabase
       .from('campaigns')
-      .select('id, name, status, whatsapp_number, counted')
+      .select('id, name, status, whatsapp_number, counted, department_id')
       .eq('company_id', companyId)
       .in('id', ids.slice(start, start + CAMPAIGN_LOOKUP_CHUNK));
 
@@ -837,6 +863,7 @@ export async function getAdBreakdown(
 
   const byCampaign = new Map<string, Bucket>();
   const byNumber = new Map<string, Bucket>();
+  const byDepartment = new Map<string, Bucket>();
 
   const add = (map: Map<string, Bucket>, key: string, row: MetricRow) => {
     let bucket = map.get(key);
@@ -859,10 +886,14 @@ export async function getAdBreakdown(
   }
 
   for (const row of spendRows) {
-    const number = row.campaign_id
-      ? campaignById.get(row.campaign_id)?.whatsapp_number
-      : null;
+    const campaign = row.campaign_id ? campaignById.get(row.campaign_id) : null;
+
+    const number = campaign?.whatsapp_number;
     if (number) add(byNumber, number, row);
+
+    // Кампания без отдела — общий бюджет проекта; отдельной строкой она в
+    // разбивку не идёт, иначе «ничьё» выглядит как ещё один отдел продаж.
+    if (campaign?.department_id) add(byDepartment, campaign.department_id, row);
   }
 
   const toRow = (
@@ -904,6 +935,16 @@ export async function getAdBreakdown(
 
   const numberRows = Array.from(byNumber, ([number, bucket]) =>
     toRow(number, bucket, number, null, null),
+  ).sort((a, b) => b.spend - a.spend);
+
+  const departmentNames = new Map(
+    (await getDepartmentNames(supabase, companyId, Array.from(byDepartment.keys()))).map(
+      (row) => [row.id, row.name],
+    ),
+  );
+
+  const departmentRows = Array.from(byDepartment, ([id, bucket]) =>
+    toRow(id, bucket, departmentNames.get(id) ?? 'Без отдела', null, null),
   ).sort((a, b) => b.spend - a.spend);
 
   // Итоги считаем по тем же пересчитанным строкам, что и разбивку: иначе
@@ -953,6 +994,7 @@ export async function getAdBreakdown(
     },
     campaigns: campaignRows,
     numbers: numberRows,
+    departments: departmentRows,
   };
 }
 
@@ -970,6 +1012,8 @@ export type LeadListItem = {
   creativeId: string | null;
   assignedTo: string | null;
   assignedName: string | null;
+  /** Отдел продаж, которому досталась заявка. */
+  departmentName: string | null;
   /** Сумма оплаченной продажи, если чек уже проведён. */
   saleAmount: number | null;
 };
@@ -993,16 +1037,21 @@ export async function getLeadStats(
   from: string,
   to: string,
   timeZone: string,
+  departmentId?: string | null,
 ): Promise<LeadStats> {
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
 
-  const { data } = await supabase
+  let query = supabase
     .from('leads')
     .select('status, created_at, creative_id')
     .eq('company_id', companyId)
     .gte('created_at', day.startsAt)
     .lt('created_at', day.endsBefore);
+
+  if (departmentId) query = query.eq('department_id', departmentId);
+
+  const { data } = await query;
 
   const leads = data ?? [];
   const counts: Record<string, number> = {};
@@ -1023,33 +1072,41 @@ export async function getLeads(
   from: string,
   to: string,
   timeZone: string,
+  departmentId?: string | null,
 ): Promise<LeadListItem[]> {
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
 
-  const [{ data: leads }, { data: creatives }, { data: employees }] = await Promise.all([
-    supabase
-      .from('leads')
-      .select(
-        'id, name, phone, source, platform, status, created_at, creative_id, assigned_to',
-      )
-      .eq('company_id', companyId)
-      .gte('created_at', day.startsAt)
-      .lt('created_at', day.endsBefore)
-      .order('created_at', { ascending: false })
-      .limit(LIST_LIMIT),
-    supabase
-      .from('creatives')
-      .select('id, name, label, format, created_at')
-      .eq('company_id', companyId)
-      .order('created_at'),
-    supabase.from('employees').select('id, full_name').eq('company_id', companyId),
-  ]);
+  let leadQuery = supabase
+    .from('leads')
+    .select(
+      'id, name, phone, source, platform, status, created_at, creative_id, assigned_to, department_id',
+    )
+    .eq('company_id', companyId)
+    .gte('created_at', day.startsAt)
+    .lt('created_at', day.endsBefore)
+    .order('created_at', { ascending: false })
+    .limit(LIST_LIMIT);
+
+  if (departmentId) leadQuery = leadQuery.eq('department_id', departmentId);
+
+  const [{ data: leads }, { data: creatives }, { data: employees }, { data: departments }] =
+    await Promise.all([
+      leadQuery,
+      supabase
+        .from('creatives')
+        .select('id, name, label, format, created_at')
+        .eq('company_id', companyId)
+        .order('created_at'),
+      supabase.from('employees').select('id, full_name').eq('company_id', companyId),
+      supabase.from('departments').select('id, name').eq('company_id', companyId),
+    ]);
 
   const creativeNames = new Map(
     (creatives ?? []).map((row, index) => [row.id, creativeLabel(row, index + 1)]),
   );
   const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
+  const departmentNames = new Map((departments ?? []).map((row) => [row.id, row.name]));
 
   // Продажи по этим заявкам: чек мог быть проведён продажником в боте, и
   // тогда предлагать «оформить продажу» второй раз нельзя — так и появляются
@@ -1082,6 +1139,7 @@ export async function getLeads(
     creativeId: lead.creative_id ?? null,
     assignedTo: lead.assigned_to,
     assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
+    departmentName: lead.department_id ? (departmentNames.get(lead.department_id) ?? null) : null,
     saleAmount: saleByLead.get(lead.id) ?? null,
   }));
 }

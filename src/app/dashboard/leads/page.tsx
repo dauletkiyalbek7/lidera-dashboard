@@ -20,6 +20,7 @@ import {
   countUnassignedLeads,
   getAssignableEmployees,
   getCreativeOptions,
+  getDepartments,
   getLeadStats,
   getLeads,
   searchClients,
@@ -31,6 +32,7 @@ import {
   LeadRowActions,
   LeadStatusSelect,
 } from './lead-controls';
+import { DepartmentFilter } from './department-filter';
 import { StatusBreakdown } from './status-breakdown';
 
 /** Лид без первого касания дольше суток — уже потерянные деньги. */
@@ -47,6 +49,7 @@ const COLUMNS: TableColumn[] = [
   { key: 'name', label: 'Лид' },
   { key: 'phone', label: 'Телефон', showFrom: 'lg' },
   { key: 'source', label: 'Источник', showFrom: 'md' },
+  { key: 'department', label: 'Отдел', showFrom: 'xl' },
   { key: 'creative', label: 'Креатив', showFrom: 'xl' },
   { key: 'owner', label: 'Ответственный' },
   { key: 'created', label: 'Получен', showFrom: 'md' },
@@ -55,12 +58,18 @@ const COLUMNS: TableColumn[] = [
 ];
 
 /** Ширина таблицы для каждого набора видимых колонок. */
-const TABLE_MIN_WIDTH = { base: 520, md: 820, lg: 1040, xl: 1280 };
+const TABLE_MIN_WIDTH = { base: 520, md: 820, lg: 1040, xl: 1400 };
 
 export default async function LeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; from?: string; to?: string; q?: string }>;
+  searchParams: Promise<{
+    period?: string;
+    from?: string;
+    to?: string;
+    q?: string;
+    department?: string;
+  }>;
 }) {
   const { company, employee } = await requireCompanySession();
   const params = await searchParams;
@@ -73,14 +82,21 @@ export default async function LeadsPage({
   const range = resolveRange(params, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
-  const [leads, stats, creatives, employees, queued, matches] = await Promise.all([
-    getLeads(company.id, range.from, range.to, company.timezone),
-    getLeadStats(company.id, range.from, range.to, company.timezone),
+  // Отдел из адреса: переключатель ниже оставляет его в ссылке, чтобы выбор
+  // переживал смену периода и его можно было отправить руководителю.
+  const departmentId = params.department ?? null;
+
+  const [leads, stats, creatives, employees, queued, matches, departments] = await Promise.all([
+    getLeads(company.id, range.from, range.to, company.timezone, departmentId),
+    getLeadStats(company.id, range.from, range.to, company.timezone, departmentId),
     getCreativeOptions(company.id),
     getAssignableEmployees(company.id),
     countUnassignedLeads(company.id),
     query ? searchClients(company.id, query) : Promise.resolve([]),
+    getDepartments(company.id),
   ]);
+
+  const activeDepartments = departments.filter((row) => row.status === 'active');
 
   // Лиды раздаются менеджерам: РОП руководит, продажник подключается на пробном.
   const owners = employees
@@ -118,7 +134,13 @@ export default async function LeadsPage({
           />
         ) : (
           <>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <DepartmentFilter
+              departments={activeDepartments}
+              selected={departmentId}
+              params={params}
+            />
+
+            <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <StatTile
                 label="Всего лидов"
                 value={formatNumber(stats.total)}
@@ -197,6 +219,9 @@ export default async function LeadsPage({
                         {lead.platform
                           ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
                           : (lead.source ?? '—')}
+                      </Td>
+                      <Td showFrom="xl" className="text-ink-soft">
+                        {lead.departmentName ?? '—'}
                       </Td>
                       <Td showFrom="xl" className="text-ink-soft">
                         {lead.creativeId && lead.creativeName ? (

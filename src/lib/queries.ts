@@ -217,6 +217,18 @@ export type CreativePerformance = PerformanceSummary & {
   spendSource: number | null;
 };
 
+/** Итог одного отдела продаж: его кампании против его же заявок. */
+export type DepartmentTotals = {
+  id: string;
+  name: string;
+  spend: number;
+  /** Расход в валюте кабинета — до пересчёта. */
+  spendSource: number | null;
+  leads: number;
+  sales: number;
+  revenue: number;
+};
+
 export type DashboardData = {
   totals: PerformanceSummary;
   /** Общий расход в валюте кабинета. null — пересчёта не было. */
@@ -224,6 +236,11 @@ export type DashboardData = {
   trend: TrendPoint[];
   creatives: CreativePerformance[];
   hasAdData: boolean;
+  /**
+   * Разбивка по отделам продаж — пусто, если отдел один или уже выбран
+   * конкретный: тогда вся страница и есть его срез.
+   */
+  departments: DepartmentTotals[];
 };
 
 export async function getDashboardData(
@@ -236,7 +253,8 @@ export async function getDashboardData(
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
 
-  const [metricsRows, creativesResult, trialsResult, salesResult, leadRows] = await Promise.all([
+  const [metricsRows, creativesResult, trialsResult, salesResult, leadRows, departmentsResult] =
+    await Promise.all([
     selectAll((start, end) =>
       supabase
         .from('ad_metrics')
@@ -268,7 +286,7 @@ export async function getDashboardData(
     selectAll((start, end) => {
       let query = supabase
         .from('leads')
-        .select('id, creative_id, status')
+        .select('id, creative_id, status, department_id')
         .eq('company_id', companyId)
         .gte('created_at', day.startsAt)
         .lt('created_at', day.endsBefore)
@@ -277,6 +295,12 @@ export async function getDashboardData(
       if (departmentId) query = query.eq('department_id', departmentId);
       return query;
     }),
+    supabase
+      .from('departments')
+      .select('id, name')
+      .eq('company_id', companyId)
+      .eq('status', 'active')
+      .order('name'),
   ]);
 
   const countedMetrics = await withoutSkippedCampaigns(
@@ -285,15 +309,22 @@ export async function getDashboardData(
     await toCompanyCurrency(supabase, companyId, metricsRows),
   );
 
+  // Разбивка нужна, только когда отделов несколько и не выбран один из них:
+  // при выбранном отделе вся страница и есть его срез.
+  const allDepartments = departmentsResult.data ?? [];
+  const splitByDepartment = !departmentId && allDepartments.length > 1;
+
+  // Отдел стоит на кампании, а расход приходит её строками статистики.
+  const campaignDepartments =
+    departmentId || splitByDepartment
+      ? await departmentByCampaign(supabase, companyId)
+      : new Map<string, string | null>();
+
   // Выбран отдел — оставляем только его: расход берём по кампаниям отдела,
   // а продажи и занятия — по его заявкам. Продажа без заявки в срез отдела не
   // попадает: чья она — неизвестно.
   const metrics = departmentId
-    ? adRowsOfDepartment(
-        countedMetrics,
-        await departmentByCampaign(supabase, companyId),
-        departmentId,
-      )
+    ? adRowsOfDepartment(countedMetrics, campaignDepartments, departmentId)
     : countedMetrics;
 
   const creatives = creativesResult.data ?? [];
@@ -412,12 +443,35 @@ export async function getDashboardData(
     .filter((creative) => creative.spend > 0 || creative.leads > 0)
     .sort((a, b) => b.revenue - a.revenue);
 
+  // --- Итоги по отделам продаж -------------------------------------------
+  const departmentOfLead = new Map(leads.map((lead) => [lead.id, lead.department_id]));
+
+  const departmentTotals: DepartmentTotals[] = splitByDepartment
+    ? allDepartments.map((department) => {
+        const own = adRowsOfDepartment(metrics, campaignDepartments, department.id);
+        const ownSales = sales.filter(
+          (sale) => sale.lead_id && departmentOfLead.get(sale.lead_id) === department.id,
+        );
+
+        return {
+          id: department.id,
+          name: department.name,
+          spend: sum(own, (row) => Number(row.spend)),
+          spendSource: sum(own, (row) => Number(row.spend_source ?? 0)) || null,
+          leads: leads.filter((lead) => lead.department_id === department.id).length,
+          sales: ownSales.length,
+          revenue: sum(ownSales, (row) => Number(row.amount)),
+        };
+      })
+    : [];
+
   return {
     totals,
     spendSource: sum(metrics, (row) => Number(row.spend_source ?? 0)) || null,
     trend,
     creatives: creativePerformance,
     hasAdData: metrics.length > 0,
+    departments: departmentTotals,
   };
 }
 

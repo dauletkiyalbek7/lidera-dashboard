@@ -4,6 +4,7 @@ import { CreativeTable } from '@/components/app/creative-table';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { DepartmentFilter } from '@/components/app/department-filter';
 import { PageBody, PageHeader } from '@/components/app/page-header';
+import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Funnel } from '@/components/charts/funnel';
 import { TrendChart } from '@/components/charts/trend-chart';
 import { ButtonLink } from '@/components/ui/button';
@@ -12,13 +13,28 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconAds } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
-import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
+import { currencySymbol, formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { funnelLabels, middleStepValue, type FunnelType } from '@/lib/metrics';
 import { moneyView } from '@/lib/money-view';
 import { currentRange } from '@/lib/period-preference';
 import { getAdSpendCurrency, getDashboardData, getDepartments } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Главная' };
+
+/**
+ * Разбивка по отделам продаж: у каждого свои кампании, свой бюджет и свои
+ * заявки. Валюта расхода — рекламная, выручка — своя: складывать их в одной
+ * колонке нельзя, поэтому подписаны обе.
+ */
+const departmentColumns = (ad: string, own: string): TableColumn[] => [
+  { key: 'name', label: 'Отдел' },
+  { key: 'spend', label: `Расход, ${ad}`, align: 'right' as const },
+  { key: 'leads', label: 'Лиды', align: 'right' as const },
+  { key: 'cpl', label: `Цена лида, ${ad}`, align: 'right' as const },
+  { key: 'sales', label: 'Продажи', align: 'right' as const },
+  { key: 'revenue', label: `Выручка, ${own}`, align: 'right' as const },
+  { key: 'roas', label: 'ROAS', align: 'right' as const },
+];
 
 export default async function DashboardPage({
   searchParams,
@@ -39,7 +55,11 @@ export default async function DashboardPage({
   // отделу продаж — расход его кампаний против выручки его заявок.
   const departmentId = params.department ?? null;
 
-  const [{ totals, trend, creatives, hasAdData, spendSource }, accountCurrency, departments] =
+  const [
+    { totals, trend, creatives, hasAdData, spendSource, departments: departmentTotals },
+    accountCurrency,
+    departments,
+  ] =
     await Promise.all([
       getDashboardData(company.id, range.from, range.to, company.timezone, departmentId),
       getAdSpendCurrency(company.id),
@@ -160,6 +180,49 @@ export default async function DashboardPage({
             />
           </Card>
         </div>
+
+        {departmentTotals.length > 0 ? (
+          <Card className="mt-4">
+            <CardHeader
+              title="Отделы продаж"
+              subtitle="У каждого свои кампании и свой бюджет — итог выше складывается из них"
+            />
+            <TableShell
+              columns={departmentColumns(currencySymbol(view.adCurrency), currencySymbol(currency))}
+              minWidth={{ base: 640, md: 860 }}
+            >
+              {departmentTotals.map((row) => {
+                const spend = view.spendOf(row);
+
+                return (
+                  <tr key={row.id} className="transition-colors hover:bg-surface-2/60">
+                    <Td first truncate="md" title={row.name} className="font-medium text-ink">
+                      {row.name}
+                    </Td>
+                    <Td align="right" className="tabular text-ink">
+                      {formatNumber(spend, 2)}
+                    </Td>
+                    <Td align="right" className="tabular text-ink">
+                      {formatNumber(row.leads)}
+                    </Td>
+                    <Td align="right" className="tabular text-ink">
+                      {row.leads ? formatNumber(spend / row.leads, 2) : '—'}
+                    </Td>
+                    <Td align="right" className="tabular text-ink">
+                      {formatNumber(row.sales)}
+                    </Td>
+                    <Td align="right" className="tabular font-medium text-ink">
+                      {formatNumber(row.revenue)}
+                    </Td>
+                    <Td last align="right" className="tabular text-ink-soft">
+                      {row.spend ? formatRatio(row.revenue / row.spend) : '—'}
+                    </Td>
+                  </tr>
+                );
+              })}
+            </TableShell>
+          </Card>
+        ) : null}
 
         <Card className="mt-4">
           <CardHeader

@@ -151,6 +151,12 @@ export const IconPlus = (p: IconProps) => (
   </Icon>
 );
 
+export const IconDownload = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 4v10m0 0 4-4m-4 4-4-4M5 18h14" />
+  </Icon>
+);
+
 export const IconMenu = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 7h16M4 12h16M4 17h16" />

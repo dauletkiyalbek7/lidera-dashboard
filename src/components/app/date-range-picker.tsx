@@ -36,7 +36,17 @@ function remember(value: string) {
  * Выбранное уезжает в адрес страницы (?from=&to=), поэтому им можно поделиться,
  * и запоминается на остальные разделы.
  */
-export function DateRangePicker({ range }: { range: DateRange }) {
+export function DateRangePicker({
+  range,
+  /**
+   * Без своей рамки: когда выбор периода стоит в общей рамке с соседней
+   * кнопкой, вторая рамка вокруг него выглядит лишней обводкой.
+   */
+  bare = false,
+}: {
+  range: DateRange;
+  bare?: boolean;
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -121,9 +131,11 @@ export function DateRangePicker({ range }: { range: DateRange }) {
         onClick={() => setOpen((value) => !value)}
         aria-expanded={open}
         aria-haspopup="dialog"
-        className={`flex h-10 items-center gap-2.5 rounded-control border border-line bg-surface px-3.5 text-[13.5px] text-ink transition-colors hover:border-line-strong ${
-          pending ? 'opacity-60' : ''
-        }`}
+        className={`flex h-10 items-center gap-2.5 px-3.5 text-[13.5px] text-ink transition-colors ${
+          bare
+            ? 'rounded-r-control hover:bg-surface-2'
+            : 'rounded-control border border-line bg-surface hover:border-line-strong'
+        } ${pending ? 'opacity-60' : ''}`}
       >
         <CalendarIcon />
         <span className="tabular whitespace-nowrap">{range.label}</span>

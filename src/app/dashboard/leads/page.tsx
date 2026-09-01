@@ -127,14 +127,22 @@ export default async function LeadsPage({
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
             <ClientSearchForm query={query} />
-            <ExportLeadsButton total={stats.total} />
             {isStaff ? null : <DistributeButton queued={queued} />}
             <AddLeadButton
               creatives={creatives}
               funnelType={funnelType}
               trialTerm={company.trial_term}
             />
-            <DateRangePicker range={range} />
+
+            {/*
+              Период и выгрузка — про одно и то же: файл всегда за те даты, что
+              выбраны рядом. Поэтому держим их в одной рамке, разделив чертой,
+              а не двумя одинаковыми кнопками в общем ряду.
+            */}
+            <div className="flex items-center divide-x divide-line rounded-control border border-line bg-surface">
+              <ExportLeadsButton total={stats.total} />
+              <DateRangePicker range={range} bare />
+            </div>
           </div>
         }
       />

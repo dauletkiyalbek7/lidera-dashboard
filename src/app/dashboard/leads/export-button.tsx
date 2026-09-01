@@ -1,8 +1,9 @@
 'use client';
 
+import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
-import { ButtonLink } from '@/components/ui/button';
+import { IconDownload } from '@/components/ui/icons';
 
 /**
  * Выгрузка заявок за период.
@@ -13,6 +14,9 @@ import { ButtonLink } from '@/components/ui/button';
  *
  * Обычная ссылка, а не запрос из скрипта: браузер сам покажет прогресс и
  * положит файл в загрузки, а мы не держим весь список в памяти вкладки.
+ *
+ * Живёт в одной рамке с выбором периода: экспорт всегда за тот период, что
+ * выбран рядом, и рядом их читать правильнее, чем порознь.
  */
 export function ExportLeadsButton({ total }: { total: number }) {
   const searchParams = useSearchParams();
@@ -26,12 +30,13 @@ export function ExportLeadsButton({ total }: { total: number }) {
   const query = params.toString();
 
   return (
-    <ButtonLink
+    <Link
       href={query ? `/api/leads/export?${query}` : '/api/leads/export'}
-      variant="secondary"
       aria-disabled={total === 0}
+      className="flex h-10 items-center gap-2 rounded-l-control px-3.5 text-[13.5px] text-ink-soft transition-colors hover:bg-surface-2 hover:text-ink"
     >
-      Выгрузить
-    </ButtonLink>
+      <IconDownload className="size-4" />
+      Экспорт
+    </Link>
   );
 }

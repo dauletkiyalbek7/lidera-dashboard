@@ -20,7 +20,7 @@ import {
 } from '@/lib/format';
 import { INTEGRATION_STATUS, PLATFORM_LABELS, statusOf } from '@/lib/labels';
 import { moneyView } from '@/lib/money-view';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import {
   getAdAccounts,
   getAdBreakdown,
@@ -79,7 +79,7 @@ export default async function AdsPage({
   const { company, profile } = await requireAdsAccess();
   // Выручка и прибыль — деньги компании, они всегда в валюте продаж.
   const currency = company.sales_currency;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
 
   const [accounts, anyCampaign, breakdown, currencyNote] = await Promise.all([
     getAdAccounts(company.id),

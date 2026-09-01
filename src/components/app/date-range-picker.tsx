@@ -15,10 +15,26 @@ import {
 
 const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
 
+/** Сколько живёт запомненный период — столько же, сколько на сервере. */
+const PERIOD_COOKIE_MAX_AGE = 180 * 24 * 60 * 60;
+
+/**
+ * Запомнить выбранный период.
+ *
+ * Директор выбирает месяц в «Рекламе» и переходит в «Лиды» — там должен быть
+ * тот же месяц, а не снова последние семь дней. Адрес при переходе по меню не
+ * переносится, поэтому выбор дублируем в куку: её читает сервер и подставляет
+ * там, где периода в адресе нет.
+ */
+function remember(value: string) {
+  document.cookie = `lidera_period=${encodeURIComponent(value)}; path=/; max-age=${PERIOD_COOKIE_MAX_AGE}; samesite=lax`;
+}
+
 /**
  * Выбор периода: пресеты слева, календарь справа.
  * Диапазон выбирается двумя кликами — первый ставит начало, второй конец.
- * Выбранное уезжает в адрес страницы (?from=&to=), поэтому им можно поделиться.
+ * Выбранное уезжает в адрес страницы (?from=&to=), поэтому им можно поделиться,
+ * и запоминается на остальные разделы.
  */
 export function DateRangePicker({ range }: { range: DateRange }) {
   const router = useRouter();
@@ -58,6 +74,7 @@ export function DateRangePicker({ range }: { range: DateRange }) {
     params.delete('period');
     params.set('from', from);
     params.set('to', to);
+    remember(`from=${from}&to=${to}`);
     setOpen(false);
     setDraftFrom(null);
     setHovered(null);
@@ -69,6 +86,7 @@ export function DateRangePicker({ range }: { range: DateRange }) {
     params.delete('from');
     params.delete('to');
     params.set('period', preset);
+    remember(`period=${preset}`);
     setOpen(false);
     setDraftFrom(null);
     startTransition(() => router.replace(`${pathname}?${params.toString()}`));

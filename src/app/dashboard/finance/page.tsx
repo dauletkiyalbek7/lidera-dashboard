@@ -7,7 +7,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatPercent, formatRatio } from '@/lib/format';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getDashboardData, getSubscription } from '@/lib/queries';
 import { PLAN_LABELS } from '@/lib/labels';
 
@@ -20,7 +20,7 @@ export default async function FinancePage({
 }) {
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
 
   const [{ totals, trend }, subscription] = await Promise.all([
     getDashboardData(company.id, range.from, range.to, company.timezone),

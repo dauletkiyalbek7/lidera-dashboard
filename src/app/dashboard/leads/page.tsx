@@ -14,7 +14,7 @@ import { takesLeads, type EmployeeRole } from '@/lib/employee-role';
 import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { PLATFORM_LABELS } from '@/lib/labels';
 import type { FunnelType } from '@/lib/metrics';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { ClientSearchForm, ClientSearchResults } from './client-search';
 import {
   countUnassignedLeads,
@@ -79,7 +79,7 @@ export default async function LeadsPage({
   // Менеджер ведёт свои заявки, но не распоряжается чужими: раздача и смена
   // ответственного — работа руководителя.
   const isStaff = employee !== null;
-  const range = resolveRange(params, company.timezone);
+  const range = await currentRange(params, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
   // Отдел из адреса: переключатель ниже оставляет его в ссылке, чтобы выбор

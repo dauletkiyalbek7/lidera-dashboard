@@ -10,7 +10,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
 import { averageCheck } from '@/lib/metrics';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getLeads, getSales } from '@/lib/queries';
 import { RefundButton } from '@/app/dashboard/returns/return-controls';
 import { AddSaleButton, SaleStatusSelect } from './sale-controls';
@@ -37,7 +37,7 @@ export default async function SalesPage({
 }) {
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
 
   const [sales, leads] = await Promise.all([
     getSales(company.id, range.from, range.to),

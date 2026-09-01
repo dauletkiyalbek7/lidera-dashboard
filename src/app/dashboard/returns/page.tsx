@@ -9,7 +9,7 @@ import { IconReceipts } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireFullAccess } from '@/lib/auth';
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from '@/lib/format';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getReturns, getSales } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Возвраты' };
@@ -35,7 +35,7 @@ export default async function ReturnsPage({
 }) {
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
 
   const [returns, sales] = await Promise.all([
     getReturns(company.id, range.from, range.to, company.timezone),

@@ -14,7 +14,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireAdsAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { moneyView, per } from '@/lib/money-view';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getAdSpendCurrency, getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креатив' };
@@ -31,7 +31,7 @@ export default async function CreativePage({
   // показываем в выбранной рекламной валюте со второй строкой рядом.
   const currency = company.sales_currency;
   const { id } = await params;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
 
   const [cards, accountCurrency] = await Promise.all([
     getCreativeCards(company.id, range.from, range.to, company.timezone),

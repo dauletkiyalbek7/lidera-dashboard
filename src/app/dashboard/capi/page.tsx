@@ -12,7 +12,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireAdsAccess } from '@/lib/auth';
 import { getCapiOverview, getCompanyCapiSettings } from '@/lib/capi-queries';
 import { formatDate, formatDateTime, formatMoney, formatNumber } from '@/lib/format';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { CapiSettingsForm } from './settings-form';
 import { PendingSend, QualityMark } from './pending-list';
 
@@ -51,7 +51,7 @@ export default async function CapiPage({
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
   const { company } = await requireAdsAccess();
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
 
   const [overview, settings] = await Promise.all([
     getCapiOverview(company.id, range.from, range.to, company.timezone),

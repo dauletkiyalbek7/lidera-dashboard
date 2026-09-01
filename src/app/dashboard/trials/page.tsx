@@ -11,7 +11,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { formatDate, formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { safeDivide } from '@/lib/metrics';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getTrials } from '@/lib/queries';
 import { wasHeld } from '@/lib/trial-status';
 import { trialWords } from '@/lib/trial-term';
@@ -43,7 +43,7 @@ export default async function TrialsPage({
 
   // Слово компании: у школы «Пробный урок», у Дарына «Вебинар».
   const words = trialWords(company.trial_term);
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
   const trials = await getTrials(company.id, range.from, range.to);
 
   // Урок состоялся — это и «Проведён», и любой исход после него: клиент

@@ -19,7 +19,7 @@ import { requireFullAccess } from '@/lib/auth';
 import { employeeRoleLabel } from '@/lib/employee-role';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import type { FunnelType } from '@/lib/metrics';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getTeam } from '@/lib/queries';
 import {
   AddEmployeeButton,
@@ -61,7 +61,7 @@ export default async function TeamPage({
 }) {
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
   const team = await getTeam(company.id, range.from, range.to, company.timezone);

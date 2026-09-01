@@ -21,7 +21,7 @@ import {
   formatRatio,
 } from '@/lib/format';
 import { moneyView } from '@/lib/money-view';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getAdSpendCurrency, getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
@@ -56,7 +56,7 @@ export default async function CreativesPage({
   // Выручка и прибыль — деньги компании; расход показываем так же, как в
   // «Рекламе»: в выбранной валюте, со второй мелкой подписью.
   const currency = company.sales_currency;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
 
   const [cards, accountCurrency] = await Promise.all([
     getCreativeCards(company.id, range.from, range.to, company.timezone),

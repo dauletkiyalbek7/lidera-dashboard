@@ -14,7 +14,7 @@ import { requireFullAccess } from '@/lib/auth';
 import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { funnelLabels, middleStepValue, type FunnelType } from '@/lib/metrics';
 import { moneyView } from '@/lib/money-view';
-import { resolveRange } from '@/lib/period';
+import { currentRange } from '@/lib/period-preference';
 import { getAdSpendCurrency, getDashboardData } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Главная' };
@@ -26,7 +26,7 @@ export default async function DashboardPage({
 }) {
   const { company } = await requireFullAccess();
   const currency = company.sales_currency;
-  const range = resolveRange(await searchParams, company.timezone);
+  const range = await currentRange(await searchParams, company.timezone);
   const [{ totals, trend, creatives, hasAdData, spendSource }, accountCurrency] =
     await Promise.all([
       getDashboardData(company.id, range.from, range.to, company.timezone),

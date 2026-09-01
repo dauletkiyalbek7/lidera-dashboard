@@ -210,7 +210,7 @@ export default async function AdsPage({
             <TableShell columns={departmentColumns(currencySymbol(adCurrency))} minWidth={720}>
               {breakdown.departments.map((row) => (
                 <tr key={row.key} className="transition-colors hover:bg-surface-2/60">
-                  <Td first className="font-medium text-ink">
+                  <Td first truncate="md" title={row.title} className="font-medium text-ink">
                     {row.title}
                   </Td>
                   <Td align="right" className="tabular text-ink">
@@ -294,7 +294,9 @@ export default async function AdsPage({
                     }`}
                   >
                     <Td first className="font-medium text-ink">
-                      {row.title}
+                      <span className="block max-w-[260px] truncate" title={row.title}>
+                        {row.title}
+                      </span>
                       {row.counted === false ? (
                         <span className="mt-0.5 block text-[11.5px] font-normal text-faint">
                           не входит в итоги

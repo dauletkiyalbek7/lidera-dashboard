@@ -101,13 +101,23 @@ export default async function SalesPage({
             <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
               {sales.map((sale) => (
                 <tr key={sale.id} className="transition-colors hover:bg-surface-2/60">
-                  <Td first className="font-medium text-ink">
+                  <Td
+                    first
+                    truncate="md"
+                    title={sale.leadName ?? undefined}
+                    className="font-medium text-ink"
+                  >
                     {sale.leadName ?? 'Без привязки'}
                   </Td>
                   <Td showFrom="lg" className="tabular text-ink-soft">
                     {sale.leadPhone ?? '—'}
                   </Td>
-                  <Td showFrom="lg" className="text-ink-soft">
+                  <Td
+                    showFrom="lg"
+                    truncate="sm"
+                    title={sale.creativeName ?? undefined}
+                    className="text-ink-soft"
+                  >
                     {sale.creativeId && sale.creativeName ? (
                       <Link
                         href={`/dashboard/creatives/${sale.creativeId}`}
@@ -122,7 +132,12 @@ export default async function SalesPage({
                   <Td showFrom="xl" className="text-ink-soft">
                     {sale.departmentName ?? '—'}
                   </Td>
-                  <Td showFrom="md" className="text-ink-soft">
+                  <Td
+                    showFrom="md"
+                    truncate="sm"
+                    title={sale.product ?? undefined}
+                    className="text-ink-soft"
+                  >
                     {sale.product ?? '—'}
                   </Td>
                   <Td showFrom="md" className="tabular text-ink-soft">

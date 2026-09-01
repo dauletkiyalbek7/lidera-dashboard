@@ -18,6 +18,23 @@ const SHOW_FROM: Record<ColumnBreakpoint, string> = {
   xl: 'hidden xl:table-cell',
 };
 
+/**
+ * До какой ширины ужимаем длинную ячейку.
+ *
+ * Имена приходят из рекламных форм как есть, и одно такое — «Квартирный
+ * субсидия/Банкрот/Аннуитет/Уип/Пенсионка/Арест/График/» — растягивает всю
+ * строку и выдавливает остальные колонки за край экрана. Ужатую ячейку
+ * дополняем подсказкой: наведите — увидите целиком.
+ */
+export type TruncateWidth = 'sm' | 'md' | 'lg';
+
+/** Классы перечислены целиком: Tailwind ищет их в исходниках по тексту. */
+const TRUNCATE: Record<TruncateWidth, string> = {
+  sm: 'max-w-[130px]',
+  md: 'max-w-[210px]',
+  lg: 'max-w-[320px]',
+};
+
 export type TableColumn = {
   key: string;
   label: string;
@@ -87,6 +104,8 @@ export function Td({
   first = false,
   last = false,
   showFrom,
+  truncate,
+  title,
   className = '',
 }: {
   children: ReactNode;
@@ -95,6 +114,10 @@ export function Td({
   last?: boolean;
   /** То же значение, что у колонки в шапке: ячейка прячется вместе с ней. */
   showFrom?: ColumnBreakpoint;
+  /** Ужать длинный текст до многоточия. */
+  truncate?: TruncateWidth;
+  /** Полный текст для подсказки при наведении — виден, когда ячейка ужата. */
+  title?: string;
   className?: string;
 }) {
   return (
@@ -103,7 +126,13 @@ export function Td({
         first ? 'pl-5 pr-3 sm:pl-6' : last ? 'pl-3 pr-5 sm:pr-6' : 'px-3'
       } ${showFrom ? SHOW_FROM[showFrom] : ''} ${className}`}
     >
-      {children}
+      {truncate ? (
+        <span className={`block truncate ${TRUNCATE[truncate]}`} title={title}>
+          {children}
+        </span>
+      ) : (
+        children
+      )}
     </td>
   );
 }

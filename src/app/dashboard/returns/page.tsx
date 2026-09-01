@@ -100,10 +100,20 @@ export default async function ReturnsPage({
             <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
               {returns.map((row) => (
                 <tr key={row.id} className="transition-colors hover:bg-surface-2/60">
-                  <Td first className="font-medium text-ink">
+                  <Td
+                    first
+                    truncate="md"
+                    title={row.leadName ?? undefined}
+                    className="font-medium text-ink"
+                  >
                     {row.leadName ?? 'Без привязки'}
                   </Td>
-                  <Td showFrom="lg" className="text-ink-soft">
+                  <Td
+                    showFrom="lg"
+                    truncate="sm"
+                    title={row.product ?? undefined}
+                    className="text-ink-soft"
+                  >
                     {row.product ?? '—'}
                   </Td>
                   <Td showFrom="xl" className="tabular text-muted">
@@ -112,7 +122,12 @@ export default async function ReturnsPage({
                   <Td showFrom="md" className="tabular text-ink-soft">
                     {formatDateTime(row.createdAt)}
                   </Td>
-                  <Td showFrom="md" className="text-ink-soft">
+                  <Td
+                    showFrom="md"
+                    truncate="md"
+                    title={row.reason ?? undefined}
+                    className="text-ink-soft"
+                  >
                     {row.reason ?? <span className="text-faint">не указана</span>}
                   </Td>
                   <Td showFrom="lg" className="text-ink-soft">

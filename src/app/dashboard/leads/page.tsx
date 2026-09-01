@@ -209,7 +209,12 @@ export default async function LeadsPage({
                 <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
                   {leads.map((lead) => (
                     <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
-                      <Td first className="font-medium text-ink">
+                      <Td
+                        first
+                        truncate="md"
+                        title={lead.name || undefined}
+                        className="font-medium text-ink"
+                      >
                         {lead.name || 'Без имени'}
                       </Td>
                       <Td showFrom="lg" className="tabular text-ink-soft">
@@ -223,7 +228,12 @@ export default async function LeadsPage({
                       <Td showFrom="xl" className="text-ink-soft">
                         {lead.departmentName ?? '—'}
                       </Td>
-                      <Td showFrom="xl" className="text-ink-soft">
+                      <Td
+                        showFrom="xl"
+                        truncate="sm"
+                        title={lead.creativeName ?? undefined}
+                        className="text-ink-soft"
+                      >
                         {lead.creativeId && lead.creativeName ? (
                           <Link
                             href={`/dashboard/creatives/${lead.creativeId}`}

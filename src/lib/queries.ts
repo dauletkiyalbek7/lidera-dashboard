@@ -1673,6 +1673,11 @@ export type SaleListItem = {
   status: string;
   leadName: string | null;
   leadPhone: string | null;
+  /** С какого ролика пришёл покупатель — ради этой связи и строилась платформа. */
+  creativeId: string | null;
+  creativeName: string | null;
+  /** Отдел продаж, если у проекта их несколько. */
+  departmentName: string | null;
 };
 
 export async function getSales(
@@ -1691,17 +1696,40 @@ export async function getSales(
     .order('sale_date', { ascending: false })
     .limit(LIST_LIMIT);
 
-  const leads = await fetchLeadContacts(companyId, sales ?? []);
+  const [leads, { data: creatives }, { data: departments }] = await Promise.all([
+    fetchLeadContacts(companyId, sales ?? []),
+    // Порядок тот же, что везде: номер в подписи «Видео 7» — это место в списке.
+    supabase
+      .from('creatives')
+      .select('id, name, label, format, created_at')
+      .eq('company_id', companyId)
+      .order('created_at'),
+    supabase.from('departments').select('id, name').eq('company_id', companyId),
+  ]);
 
-  return (sales ?? []).map((sale) => ({
-    id: sale.id,
-    sale_date: sale.sale_date,
-    product: sale.product,
-    amount: Number(sale.amount),
-    status: sale.status,
-    leadName: sale.lead_id ? (leads.get(sale.lead_id)?.name ?? null) : null,
-    leadPhone: sale.lead_id ? (leads.get(sale.lead_id)?.phone ?? null) : null,
-  }));
+  const creativeNames = new Map(
+    (creatives ?? []).map((row, index) => [row.id, creativeLabel(row, index + 1)]),
+  );
+  const departmentNames = new Map((departments ?? []).map((row) => [row.id, row.name]));
+
+  return (sales ?? []).map((sale) => {
+    const lead = sale.lead_id ? leads.get(sale.lead_id) : undefined;
+
+    return {
+      id: sale.id,
+      sale_date: sale.sale_date,
+      product: sale.product,
+      amount: Number(sale.amount),
+      status: sale.status,
+      leadName: lead?.name ?? null,
+      leadPhone: lead?.phone ?? null,
+      creativeId: lead?.creativeId ?? null,
+      creativeName: lead?.creativeId ? (creativeNames.get(lead.creativeId) ?? null) : null,
+      departmentName: lead?.departmentId
+        ? (departmentNames.get(lead.departmentId) ?? null)
+        : null,
+    };
+  });
 }
 
 export type ReturnListItem = {
@@ -1777,28 +1805,41 @@ export async function getReturns(
   });
 }
 
+/** Кто такой лид: имя, телефон, ролик и отдел — всё, чем его подписывают. */
+export type LeadContact = {
+  name: string;
+  phone: string | null;
+  creativeId: string | null;
+  departmentId: string | null;
+};
+
 /** Контакты лидов, на которые ссылаются переданные записи. */
 async function fetchLeadContacts(
   companyId: string,
   rows: { lead_id: string | null }[],
-): Promise<Map<string, { name: string; phone: string | null }>> {
+): Promise<Map<string, LeadContact>> {
   const ids = [...new Set(rows.map((row) => row.lead_id).filter(Boolean))] as string[];
   if (ids.length === 0) return new Map();
 
   const supabase = await createServerSupabase();
-  const contacts = new Map<string, { name: string; phone: string | null }>();
+  const contacts = new Map<string, LeadContact>();
 
   // Пачками: и длина адреса запроса не безгранична, и ответ обрезается на
   // тысяче строк — список продаж за большой период легко переваливает за неё.
   for (let start = 0; start < ids.length; start += CAMPAIGN_LOOKUP_CHUNK) {
     const { data } = await supabase
       .from('leads')
-      .select('id, name, phone')
+      .select('id, name, phone, creative_id, department_id')
       .eq('company_id', companyId)
       .in('id', ids.slice(start, start + CAMPAIGN_LOOKUP_CHUNK));
 
     for (const lead of data ?? []) {
-      contacts.set(lead.id, { name: lead.name, phone: lead.phone });
+      contacts.set(lead.id, {
+        name: lead.name,
+        phone: lead.phone,
+        creativeId: lead.creative_id ?? null,
+        departmentId: lead.department_id ?? null,
+      });
     }
   }
 

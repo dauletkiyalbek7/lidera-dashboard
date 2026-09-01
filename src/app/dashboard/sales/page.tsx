@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import Link from 'next/link';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
@@ -17,9 +18,19 @@ import { AddSaleButton, SaleStatusSelect } from './sale-controls';
 
 export const metadata: Metadata = { title: 'Продажи' };
 
-/** На телефоне важны трое: кто купил, на сколько и подтверждена ли продажа. */
+/**
+ * На телефоне важны трое: кто купил, на сколько и подтверждена ли продажа.
+ * Телефон и ролик подключаются по мере ширины экрана — ими пользуются, когда
+ * разбираются с конкретным клиентом, а не когда смотрят итог дня.
+ *
+ * Колонка с роликом — то, ради чего вся платформа и строилась: здесь видно не
+ * «продали на столько-то», а «эта реклама принесла этого покупателя».
+ */
 const COLUMNS: TableColumn[] = [
   { key: 'lead', label: 'Клиент' },
+  { key: 'phone', label: 'Телефон', showFrom: 'lg' },
+  { key: 'creative', label: 'Пришёл с ролика', showFrom: 'lg' },
+  { key: 'department', label: 'Отдел', showFrom: 'xl' },
   { key: 'product', label: 'Продукт', showFrom: 'md' },
   { key: 'date', label: 'Дата', showFrom: 'md' },
   { key: 'status', label: 'Статус' },
@@ -28,7 +39,7 @@ const COLUMNS: TableColumn[] = [
 ];
 
 /** Ширина таблицы для каждого набора видимых колонок. */
-const TABLE_MIN_WIDTH = { base: 420, md: 900 };
+const TABLE_MIN_WIDTH = { base: 420, md: 900, lg: 1240, xl: 1400 };
 
 export default async function SalesPage({
   searchParams,
@@ -92,6 +103,24 @@ export default async function SalesPage({
                 <tr key={sale.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
                     {sale.leadName ?? 'Без привязки'}
+                  </Td>
+                  <Td showFrom="lg" className="tabular text-ink-soft">
+                    {sale.leadPhone ?? '—'}
+                  </Td>
+                  <Td showFrom="lg" className="text-ink-soft">
+                    {sale.creativeId && sale.creativeName ? (
+                      <Link
+                        href={`/dashboard/creatives/${sale.creativeId}`}
+                        className="whitespace-nowrap text-lime transition-colors hover:text-lime-strong"
+                      >
+                        {sale.creativeName}
+                      </Link>
+                    ) : (
+                      '—'
+                    )}
+                  </Td>
+                  <Td showFrom="xl" className="text-ink-soft">
+                    {sale.departmentName ?? '—'}
                   </Td>
                   <Td showFrom="md" className="text-ink-soft">
                     {sale.product ?? '—'}

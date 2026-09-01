@@ -1164,17 +1164,38 @@ export async function getLeads(
   // в адресе с прошлого раза, а после смены периода или отдела заявок стало
   // меньше. Зная итог, номер прижимаем к последней существующей странице —
   // человек видит конец списка, а не пустоту.
+  //
+  // Итог берём обычным запросом на одну строку, а не «пустым» HEAD: число
+  // приезжает в заголовке ответа, и по дороге до браузера заголовок иногда
+  // теряется. Тогда счётчик приходит пустым, страниц выходит одна, и кнопки
+  // перелистывания пропадают при полной таблице на экране. Если счётчика
+  // всё-таки нет — пересчитываем заявки построчно.
   let countQuery = supabase
     .from('leads')
-    .select('id', { count: 'exact', head: true })
+    .select('id', { count: 'exact' })
     .eq('company_id', companyId)
     .gte('created_at', day.startsAt)
-    .lt('created_at', day.endsBefore);
+    .lt('created_at', day.endsBefore)
+    .limit(1);
 
   if (departmentId) countQuery = countQuery.eq('department_id', departmentId);
 
   const { count } = await countQuery;
-  const total = count ?? 0;
+  const total =
+    count ??
+    (
+      await selectAll<{ id: string }>((chunkFrom, chunkTo) => {
+        let query = supabase
+          .from('leads')
+          .select('id')
+          .eq('company_id', companyId)
+          .gte('created_at', day.startsAt)
+          .lt('created_at', day.endsBefore)
+          .range(chunkFrom, chunkTo);
+        if (departmentId) query = query.eq('department_id', departmentId);
+        return query;
+      })
+    ).length;
 
   // Страницу считаем от единицы: она приходит из адреса, и «?page=0» там
   // выглядел бы опечаткой, а не первой страницей.

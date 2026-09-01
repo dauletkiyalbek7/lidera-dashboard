@@ -127,7 +127,7 @@ export default async function LeadsPage({
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
             <ClientSearchForm query={query} />
-            <ExportLeadsButton total={leadPage.total} />
+            <ExportLeadsButton total={stats.total} />
             {isStaff ? null : <DistributeButton queued={queued} />}
             <AddLeadButton
               creatives={creatives}
@@ -299,9 +299,15 @@ export default async function LeadsPage({
                   ))}
                 </TableShell>
               )}
+              {/*
+                Сколько всего заявок — берём из разбора по статусам: там число
+                посчитано по самим строкам, а не по служебному заголовку
+                ответа, который по дороге может потеряться. Именно от него
+                зависит, появятся ли кнопки страниц.
+              */}
               <Pagination
                 page={page}
-                total={leadPage.total}
+                total={stats.total}
                 perPage={perPage}
                 perPageOptions={LEADS_PER_PAGE_OPTIONS}
                 defaultPerPage={LEADS_PER_PAGE}

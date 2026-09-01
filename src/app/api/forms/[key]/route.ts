@@ -65,16 +65,52 @@ const SERVICE_KEYS = [
 ];
 
 /**
- * Числовой идентификатор из выгрузки.
+ * Снятие приставки выгрузки.
  *
- * Посредники помечают тип строки приставкой — `l:` у заявки, `ag:` у
- * объявления, `as:` у группы. В Meta эти приставки не существуют, и с ними
- * ни один номер не совпадёт ни с чем.
+ * Посредники помечают тип значения приставкой — `l:` у заявки, `ag:` у
+ * объявления, `as:` у группы, `p:` у телефона. В Meta их не существует, а в
+ * карточке клиента `p:+7705…` — это номер, по которому нельзя позвонить.
  */
-function idValue(raw: string | null): string | null {
+function stripTag(raw: string | null): string | null {
   if (!raw) return null;
-  const digits = raw.replace(/^[a-z]+:/i, '').trim();
-  return /^\d{5,25}$/.test(digits) ? digits : null;
+  const value = raw.replace(/^[a-z]{1,3}:/i, '').trim();
+  return value || null;
+}
+
+/** Числовой идентификатор из выгрузки — уже без приставки. */
+function idValue(raw: string | null): string | null {
+  const digits = stripTag(raw);
+  return digits && /^\d{5,25}$/.test(digits) ? digits : null;
+}
+
+/**
+ * Проверочная заявка Meta.
+ *
+ * Инструмент проверки формы кладёт в выгрузку строку с подставными данными.
+ * Она выглядит как настоящая заявка и в списке клиентов не нужна никому.
+ */
+const TEST_LEAD = /<\s*test lead/i;
+
+/**
+ * Когда заявка пришла на самом деле.
+ *
+ * Без этого у всей залитой истории оказывается сегодняшняя дата: месяц старых
+ * заявок ложится на один день, и отчёт показывает сотню заявок при
+ * однодневном расходе. Даты из будущего и глубокого прошлого — признак мусора
+ * в выгрузке, их не берём.
+ */
+const THREE_YEARS_MS = 3 * 365 * 24 * 60 * 60 * 1000;
+
+function arrivedAt(raw: string | null): string | null {
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  const now = Date.now();
+  if (parsed.getTime() > now + 60_000) return null;
+  if (parsed.getTime() < now - THREE_YEARS_MS) return null;
+
+  return parsed.toISOString();
 }
 
 export async function POST(
@@ -128,8 +164,18 @@ export async function POST(
   // Поле телефона на разных лендингах называют по-разному — «Ваш телефон»,
   // «Номер WhatsApp». Не нашли по названию — ищем по виду значения: заявка с
   // живым номером не должна пропадать из-за подписи поля.
-  const phone = pick(payload, PHONE_KEYS) ?? guessPhone(payload);
-  const email = pick(payload, EMAIL_KEYS) ?? null;
+  const phone = stripTag(pick(payload, PHONE_KEYS)) ?? guessPhone(payload);
+  const email = stripTag(pick(payload, EMAIL_KEYS));
+
+  // Проверочная заявка Meta приходит с подставными именем и телефоном.
+  // В журнал её пишем — иначе непонятно, почему в выгрузке строк больше.
+  if (TEST_LEAD.test(name) || TEST_LEAD.test(phone ?? '')) {
+    await logSubmission(supabase, company.id, payload, {
+      status: 'rejected',
+      reason: 'проверочная заявка Meta',
+    });
+    return NextResponse.json({ ok: true, test: true });
+  }
 
   // Заявка без единого контакта бесполезна: звонить и писать некуда. Но в
   // журнал она попадает — иначе о ней никто никогда не узнает.
@@ -159,6 +205,7 @@ export async function POST(
   // Объявление знает и свой креатив, и свою кампанию — заявка попадёт в оба
   // отчёта сразу.
   const placement = await adPlacement(supabase, company.id, adExternalId);
+  const arrived = arrivedAt(pick(payload, ['created_time']));
 
   const { data: created, error } = await supabase.from('leads').insert({
     company_id: company.id,
@@ -172,18 +219,24 @@ export async function POST(
     department_id: source?.department_id ?? null,
     lead_source_id: source?.id ?? null,
     leadgen_id: idValue(pick(payload, LEADGEN_KEYS)),
-    // Объявление подставляем, если в utm_content стоит его номер: в Meta это
-    // подстановка {{ad.id}}. Не нашли — лид всё равно сохраняем.
+    // Объявление подставляем, если знаем его. Не нашли — лид всё равно
+    // сохраняем: номер объявления останется в utm_content, и креатив
+    // доставится после ближайшей синхронизации.
     creative_id: placement.creativeId,
     utm_source: pick(payload, ['utm_source']) ?? null,
     utm_medium: pick(payload, ['utm_medium']) ?? null,
     utm_campaign: pick(payload, ['utm_campaign']) ?? null,
-    utm_content: utmContent,
+    // Номер объявления кладём сюда же, когда своей метки нет: смысл поля тот
+    // же — какое объявление привело человека. Без этого номер теряется
+    // навсегда, и заявку, пришедшую раньше синхронизации, привязать уже нечем.
+    utm_content: utmContent ?? adExternalId,
     utm_term: pick(payload, ['utm_term']) ?? null,
     fbc,
     fbp: pick(payload, ['fbp', '_fbp']) ?? null,
     external_id: pick(payload, ['tranid', 'transaction_id', 'external_id']) ?? null,
     status: 'new',
+    // Выгрузку заливают и задним числом — дата из неё честнее даты загрузки.
+    ...(arrived ? { created_at: arrived } : {}),
   })
     .select('id')
     .maybeSingle();

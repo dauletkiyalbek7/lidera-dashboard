@@ -278,6 +278,76 @@ async function noteSync(
  * Окно перезаписываем целиком: Meta уточняет вчерашние цифры ещё пару дней,
  * и «дописывать» их было бы неверно.
  */
+/**
+ * Заявки, пришедшие раньше, чем мы узнали об их объявлении.
+ *
+ * Выгрузка моментальной формы приносит номер объявления, и он остаётся на
+ * заявке в utm_content, даже когда самого объявления в базе ещё нет. База
+ * пополняется синхронизацией — значит именно после неё недостающие креативы
+ * можно доставить.
+ *
+ * Без этого первый день новой кампании навсегда остаётся слепым пятном в
+ * отчёте «какой ролик приводит покупателей» — а это ровно тот день, когда
+ * решают, оставлять кампанию или выключать.
+ */
+export async function backfillAdAttribution(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  companyId: string,
+): Promise<number> {
+  const { data: pending } = await supabase
+    .from('leads')
+    .select('id, utm_content')
+    .eq('company_id', companyId)
+    .is('creative_id', null)
+    .not('utm_content', 'is', null)
+    .limit(2000);
+
+  if (!pending || pending.length === 0) return 0;
+
+  // В utm_content бывает и обычная текстовая метка — берём только номера.
+  const wanted = new Map<string, string[]>();
+  for (const lead of pending) {
+    const value = (lead.utm_content ?? '').trim();
+    if (!/^\d{5,25}$/.test(value)) continue;
+    wanted.set(value, [...(wanted.get(value) ?? []), lead.id]);
+  }
+
+  if (wanted.size === 0) return 0;
+
+  const numbers = [...wanted.keys()];
+  let filled = 0;
+
+  // Номера спрашиваем пачками: две тысячи штук в одном запросе не помещаются
+  // в адрес, и он отваливается целиком вместе со всей добивкой.
+  for (let from = 0; from < numbers.length; from += BACKFILL_BATCH) {
+    const batch = numbers.slice(from, from + BACKFILL_BATCH);
+
+    const { data: ads } = await supabase
+      .from('ads')
+      .select('external_id, creative_id, campaign_id')
+      .eq('company_id', companyId)
+      .in('external_id', batch);
+
+    for (const ad of ads ?? []) {
+      const leadIds = ad.external_id ? wanted.get(ad.external_id) : undefined;
+      if (!leadIds || !ad.creative_id) continue;
+
+      const { error } = await supabase
+        .from('leads')
+        .update({ creative_id: ad.creative_id, campaign_id: ad.campaign_id })
+        .in('id', leadIds)
+        .eq('company_id', companyId);
+
+      if (!error) filled += leadIds.length;
+    }
+  }
+
+  return filled;
+}
+
+/** Сколько номеров объявлений спрашиваем за один запрос. */
+const BACKFILL_BATCH = 200;
+
 export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncResult> {
   const supabase = createAdminSupabase();
 
@@ -724,6 +794,15 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     await backfillClickAttribution(supabase, account.company_id);
   } catch {
     // Молча: цифры важнее подписи к ним.
+  }
+
+  // То же самое для заявок из моментальных форм: выгрузка приносит номер
+  // объявления, но самого объявления в базе может ещё не быть — новую
+  // кампанию запускают утром, а узнаём мы о ней этой синхронизацией.
+  try {
+    await backfillAdAttribution(supabase, account.company_id);
+  } catch {
+    // Молча, по той же причине.
   }
 
   return {

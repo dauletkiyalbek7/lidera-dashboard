@@ -772,8 +772,30 @@ async function selectAll<T>(
   return rows;
 }
 
-/** Сколько кампаний спрашиваем за один запрос: длина адреса не безгранична. */
-const CAMPAIGN_LOOKUP_CHUNK = 200;
+/** Сколько номеров помещается в один запрос: длина адреса не безгранична. */
+const LOOKUP_CHUNK = 200;
+
+/**
+ * Выборка по списку номеров — пачками.
+ *
+ * Список уезжает в адрес запроса, а он не резиновый: пятьсот заявок дают
+ * восемнадцать тысяч символов, и запрос не уходит вовсе. Отказ приходит не от
+ * базы, а от самой отправки, и на экране выглядит как пустой раздел —
+ * поэтому режем заранее, а не разбираемся по факту.
+ */
+async function inChunks<T>(
+  ids: string[],
+  page: (chunk: string[]) => PromiseLike<{ data: T[] | null }>,
+): Promise<T[]> {
+  const rows: T[] = [];
+
+  for (let start = 0; start < ids.length; start += LOOKUP_CHUNK) {
+    const { data } = await page(ids.slice(start, start + LOOKUP_CHUNK));
+    rows.push(...(data ?? []));
+  }
+
+  return rows;
+}
 
 /** Кампании по списку номеров — пачками, чтобы не упереться в длину адреса. */
 async function campaignsByIds(
@@ -792,12 +814,12 @@ async function campaignsByIds(
 > {
   const rows: Awaited<ReturnType<typeof campaignsByIds>> = [];
 
-  for (let start = 0; start < ids.length; start += CAMPAIGN_LOOKUP_CHUNK) {
+  for (let start = 0; start < ids.length; start += LOOKUP_CHUNK) {
     const { data } = await supabase
       .from('campaigns')
       .select('id, name, status, whatsapp_number, counted, department_id')
       .eq('company_id', companyId)
-      .in('id', ids.slice(start, start + CAMPAIGN_LOOKUP_CHUNK));
+      .in('id', ids.slice(start, start + LOOKUP_CHUNK));
 
     rows.push(...((data ?? []) as typeof rows));
   }
@@ -1175,17 +1197,17 @@ export async function getLeads(
   // тогда предлагать «оформить продажу» второй раз нельзя — так и появляются
   // задвоенные суммы в отчёте.
   const leadIds = (leads ?? []).map((lead) => lead.id);
-  const { data: sales } = leadIds.length
-    ? await supabase
-        .from('sales')
-        .select('lead_id, amount')
-        .eq('company_id', companyId)
-        .eq('status', 'paid')
-        .in('lead_id', leadIds)
-    : { data: [] as { lead_id: string | null; amount: number }[] };
+  const sales = await inChunks(leadIds, (chunk) =>
+    supabase
+      .from('sales')
+      .select('lead_id, amount')
+      .eq('company_id', companyId)
+      .eq('status', 'paid')
+      .in('lead_id', chunk),
+  );
 
   const saleByLead = new Map<string, number>();
-  for (const sale of sales ?? []) {
+  for (const sale of sales) {
     if (!sale.lead_id) continue;
     saleByLead.set(sale.lead_id, (saleByLead.get(sale.lead_id) ?? 0) + Number(sale.amount));
   }
@@ -1649,23 +1671,23 @@ export async function getTrials(
 
   const leadIds = [...new Set((trials ?? []).map((row) => row.lead_id).filter(Boolean))] as string[];
 
-  const [leads, { data: employees }, { data: sales }] = await Promise.all([
+  const [leads, { data: employees }, sales] = await Promise.all([
     fetchLeadContacts(companyId, trials ?? []),
     supabase.from('employees').select('id, full_name').eq('company_id', companyId),
     // Чек мог провести бот — тогда сумму спрашивать во второй раз нельзя.
-    leadIds.length
-      ? supabase
-          .from('sales')
-          .select('lead_id, amount')
-          .eq('company_id', companyId)
-          .eq('status', 'paid')
-          .in('lead_id', leadIds)
-      : Promise.resolve({ data: [] as { lead_id: string | null; amount: number }[] }),
+    inChunks(leadIds, (chunk) =>
+      supabase
+        .from('sales')
+        .select('lead_id, amount')
+        .eq('company_id', companyId)
+        .eq('status', 'paid')
+        .in('lead_id', chunk),
+    ),
   ]);
 
   const sellerNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
   const paidByLead = new Map(
-    (sales ?? [])
+    sales
       .filter((row) => row.lead_id)
       .map((row) => [row.lead_id as string, Number(row.amount)]),
   );
@@ -1792,18 +1814,20 @@ export async function getReturns(
   const saleIds = [...new Set(rows.map((row) => row.sale_id))];
   const staffIds = [...new Set(rows.map((row) => row.processed_by).filter(Boolean))] as string[];
 
-  const [{ data: sales }, { data: staff }] = await Promise.all([
-    supabase
-      .from('sales')
-      .select('id, amount, product, sale_date, lead_id')
-      .eq('company_id', companyId)
-      .in('id', saleIds),
+  const [sales, { data: staff }] = await Promise.all([
+    inChunks(saleIds, (chunk) =>
+      supabase
+        .from('sales')
+        .select('id, amount, product, sale_date, lead_id')
+        .eq('company_id', companyId)
+        .in('id', chunk),
+    ),
     staffIds.length
       ? supabase.from('employees').select('id, full_name').in('id', staffIds)
       : Promise.resolve({ data: [] as { id: string; full_name: string }[] }),
   ]);
 
-  const saleById = new Map((sales ?? []).map((sale) => [sale.id, sale]));
+  const saleById = new Map(sales.map((sale) => [sale.id, sale]));
   const staffById = new Map((staff ?? []).map((row) => [row.id, row.full_name]));
   const leads = await fetchLeadContacts(companyId, sales ?? []);
 
@@ -1845,12 +1869,12 @@ async function fetchLeadContacts(
 
   // Пачками: и длина адреса запроса не безгранична, и ответ обрезается на
   // тысяче строк — список продаж за большой период легко переваливает за неё.
-  for (let start = 0; start < ids.length; start += CAMPAIGN_LOOKUP_CHUNK) {
+  for (let start = 0; start < ids.length; start += LOOKUP_CHUNK) {
     const { data } = await supabase
       .from('leads')
       .select('id, name, phone, creative_id, department_id')
       .eq('company_id', companyId)
-      .in('id', ids.slice(start, start + CAMPAIGN_LOOKUP_CHUNK));
+      .in('id', ids.slice(start, start + LOOKUP_CHUNK));
 
     for (const lead of data ?? []) {
       contacts.set(lead.id, {

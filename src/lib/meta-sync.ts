@@ -564,6 +564,10 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
     if (hiring.length > 0) {
       await supabase.from('campaigns').update({ counted: false }).in('id', hiring);
     }
+
+    // Отдел кампании — по имени РОПа в названии. Тоже только новым: отдел
+    // могут поправить руками, и синхронизация не вправе решать заново.
+    await assignDepartments(supabase, account, campaigns, known, campaignIdByExternal);
   }
 
   // --- 3. Статистика по объявлениям ---------------------------------------
@@ -1010,6 +1014,94 @@ async function accountCampaignIds(
   return ids;
 }
 
+/**
+ * Казахские буквы к близким русским.
+ *
+ * Один и тот же отдел пишут и «Құралай», и «Куралай», а проект — и «ҰБТ»,
+ * и «УБТ». Сравнивать надо так, чтобы написание не решало.
+ */
+const KAZAKH_LETTERS: Record<string, string> = {
+  ә: 'а',
+  ғ: 'г',
+  қ: 'к',
+  ң: 'н',
+  ө: 'о',
+  ұ: 'у',
+  ү: 'у',
+  һ: 'х',
+  і: 'и',
+};
+
+function normalizeName(value: string): string {
+  return value.toLowerCase().replace(/[әғқңөұүһі]/g, (letter) => KAZAKH_LETTERS[letter] ?? letter);
+}
+
+/**
+ * Кириллица латиницей.
+ *
+ * Имя РОПа в названии кампании пишут и так, и эдак: отдел «Алибек», а
+ * кампании зовутся «NIS Alibek» и «...24 ALIBEK». Ищем оба написания, иначе
+ * половина кампаний отдела остаётся ничьей.
+ */
+const LATIN_LETTERS: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ж: 'zh', з: 'z', и: 'i',
+  й: 'y', к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's',
+  т: 't', у: 'u', ф: 'f', х: 'h', ц: 'c', ч: 'ch', ш: 'sh', щ: 'sch',
+  ы: 'y', э: 'e', ю: 'yu', я: 'ya', ё: 'e', ъ: '', ь: '',
+};
+
+function toLatin(value: string): string {
+  return value.replace(/[а-яё]/g, (letter) => LATIN_LETTERS[letter] ?? letter);
+}
+
+/**
+ * Отдел кампании — по имени РОПа в её названии.
+ *
+ * У проекта может быть несколько отделов продаж, и каждый ведёт свои
+ * кампании: имя РОПа вписывают прямо в название. Другого признака
+ * принадлежности Meta не даёт.
+ *
+ * Кампанию без имени отдела не трогаем — пусть лучше останется общей, чем
+ * уедет в чужой бюджет.
+ */
+async function assignDepartments(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  account: AdAccount,
+  campaigns: { id: string; name: string }[],
+  known: Set<string | null>,
+  campaignIdByExternal: Map<string, string>,
+): Promise<void> {
+  const { data: departments } = await supabase
+    .from('departments')
+    .select('id, name')
+    .eq('company_id', account.company_id)
+    .eq('status', 'active');
+
+  if (!departments || departments.length === 0) return;
+
+  const fresh = campaigns.filter((campaign) => !known.has(campaign.id));
+
+  for (const department of departments) {
+    const needle = normalizeName(department.name);
+    if (!needle) continue;
+
+    // Ищем и кириллицей, и латиницей: «Алибек» и «Alibek» — один человек.
+    const needles = Array.from(new Set([needle, toLatin(needle)])).filter(Boolean);
+
+    const ids = fresh
+      .filter((campaign) => {
+        const name = normalizeName(campaign.name);
+        return needles.some((word) => name.includes(word));
+      })
+      .map((campaign) => campaignIdByExternal.get(campaign.id))
+      .filter((id): id is string => Boolean(id));
+
+    for (const chunk of chunked(ids, CAMPAIGN_FILTER_CHUNK)) {
+      await supabase.from('campaigns').update({ department_id: department.id }).in('id', chunk);
+    }
+  }
+}
+
 /** Сколько номеров кампаний влезает в один адрес запроса. */
 const CAMPAIGN_FILTER_CHUNK = 100;
 
@@ -1024,13 +1116,13 @@ const CAMPAIGN_FILTER_CHUNK = 100;
 function pickCampaigns<T extends { name: string }>(campaigns: T[], filter: string | null): T[] {
   const words = (filter ?? '')
     .split(',')
-    .map((word) => word.trim().toLowerCase())
+    .map((word) => normalizeName(word.trim()))
     .filter(Boolean);
 
   if (words.length === 0) return campaigns;
 
   return campaigns.filter((campaign) => {
-    const name = campaign.name.toLowerCase();
+    const name = normalizeName(campaign.name);
     return words.some((word) => name.includes(word));
   });
 }

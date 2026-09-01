@@ -140,6 +140,13 @@ export type AdAccountRow = Timestamps & {
   currency: string | null;
   /** Пояс кабинета: в его сутках Meta отдаёт дневную статистику. */
   timezone: string | null;
+  /**
+   * Какие кампании кабинета относятся к этому проекту.
+   *
+   * Слова в названии через запятую, регистр не важен. Пусто — берём кабинет
+   * целиком. Нужно там, где один кабинет обслуживает несколько проектов.
+   */
+  campaign_filter: string | null;
 }
 
 export type CampaignRow = Timestamps & {

@@ -383,14 +383,21 @@ export async function getAdAccounts(companyId: string) {
   return data ?? [];
 }
 
-export async function getCampaigns(companyId: string) {
+/**
+ * Заведена ли у компании хоть одна кампания.
+ *
+ * Раздел «Реклама» спрашивает об этом, чтобы отличить «ничего не подключено»
+ * от «подключено, но за период пусто». Выгружать ради такого ответа тысячи
+ * строк незачем — да и нельзя: PostgREST отдаёт не больше тысячи за раз.
+ */
+export async function hasCampaigns(companyId: string): Promise<boolean> {
   const supabase = await createServerSupabase();
   const { data } = await supabase
     .from('campaigns')
-    .select('id, name, platform, status, objective, whatsapp_number, created_at')
+    .select('id')
     .eq('company_id', companyId)
-    .order('created_at', { ascending: false });
-  return data ?? [];
+    .limit(1);
+  return (data ?? []).length > 0;
 }
 
 /**
@@ -705,6 +712,32 @@ export type AdBreakdown = {
  * Кампании без единого дня в периоде не показываем: пустая строка в отчёте
  * только мешает искать глазами ту, которая крутится.
  */
+/** Сколько кампаний спрашиваем за один запрос: длина адреса не безгранична. */
+const CAMPAIGN_LOOKUP_CHUNK = 200;
+
+/** Кампании по списку номеров — пачками, чтобы не упереться в длину адреса. */
+async function campaignsByIds(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  ids: string[],
+): Promise<
+  { id: string; name: string; status: string | null; whatsapp_number: string | null; counted: boolean | null }[]
+> {
+  const rows: Awaited<ReturnType<typeof campaignsByIds>> = [];
+
+  for (let start = 0; start < ids.length; start += CAMPAIGN_LOOKUP_CHUNK) {
+    const { data } = await supabase
+      .from('campaigns')
+      .select('id, name, status, whatsapp_number, counted')
+      .eq('company_id', companyId)
+      .in('id', ids.slice(start, start + CAMPAIGN_LOOKUP_CHUNK));
+
+    rows.push(...((data ?? []) as typeof rows));
+  }
+
+  return rows;
+}
+
 export async function getAdBreakdown(
   companyId: string,
   from: string,
@@ -712,20 +745,32 @@ export async function getAdBreakdown(
 ): Promise<AdBreakdown> {
   const supabase = await createServerSupabase();
 
-  const [{ data: metrics }, { data: campaigns }] = await Promise.all([
-    supabase
-      .from('ad_metrics')
-      .select('campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
-      .eq('company_id', companyId)
-      .gte('date', from)
-      .lte('date', to),
-    supabase
-      .from('campaigns')
-      .select('id, name, status, whatsapp_number, counted')
-      .eq('company_id', companyId),
-  ]);
+  const { data: metrics } = await supabase
+    .from('ad_metrics')
+    .select('campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
+    .eq('company_id', companyId)
+    .gte('date', from)
+    .lte('date', to);
 
-  const campaignById = new Map((campaigns ?? []).map((row) => [row.id, row]));
+  // Кампании берём только те, что встретились в цифрах.
+  //
+  // Раньше выбирались все кампании компании разом, и у крупного кабинета это
+  // молча ломалось: PostgREST отдаёт не больше тысячи строк, а кампаний у
+  // Дарына за тысячу двести. Нужные в срез не попадали, и таблица показывала
+  // «Без названия» вместо имени кампании.
+  const campaigns = await campaignsByIds(
+    supabase,
+    companyId,
+    Array.from(
+      new Set(
+        (metrics ?? [])
+          .map((row) => row.campaign_id)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ),
+  );
+
+  const campaignById = new Map(campaigns.map((row) => [row.id, row]));
 
   // Выручка приходит из CRM: продажа привязана к заявке, заявка знает свою
   // кампанию. Без продаж колонка честно пустует, а не показывает ноль-обман.

@@ -160,7 +160,7 @@ export async function syncAllMetaAccounts(): Promise<{
 
   const { data: allAccounts } = await supabase
     .from('ad_accounts')
-    .select('id, company_id, account_id, account_name')
+    .select('id, company_id, account_id, account_name, campaign_filter')
     .eq('platform', 'meta')
     .not('account_id', 'is', null);
 
@@ -353,7 +353,7 @@ export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncR
 
   const { data: account } = await supabase
     .from('ad_accounts')
-    .select('id, company_id, account_id, account_name')
+    .select('id, company_id, account_id, account_name, campaign_filter')
     .eq('id', adAccountRowId)
     .maybeSingle();
 
@@ -410,6 +410,8 @@ type AdAccount = {
   company_id: string;
   account_id: string | null;
   account_name: string;
+  /** Слова в названии кампании через запятую; пусто — берём кабинет целиком. */
+  campaign_filter: string | null;
 };
 
 async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
@@ -468,20 +470,39 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
 
   const companyTimeZone = companyRow?.timezone ?? DEFAULT_TIME_ZONE;
 
-  // --- 1. Номера WhatsApp: они живут в настройках групп объявлений ---------
-  const numberByCampaign = new Map<string, string>();
-  const adSets = await graph<{ campaign_id?: string; promoted_object?: { whatsapp_phone_number?: string } }>(
-    `${GRAPH}/${actId}/adsets?fields=campaign_id,promoted_object&limit=100&access_token=${token}`,
-  );
-  for (const adSet of adSets) {
-    const number = adSet.promoted_object?.whatsapp_phone_number;
-    if (adSet.campaign_id && number) numberByCampaign.set(adSet.campaign_id, number);
-  }
-
-  // --- 2. Кампании --------------------------------------------------------
-  const campaigns = await graph<{ id: string; name: string; status: string; objective?: string }>(
+  // --- 1. Кампании проекта ------------------------------------------------
+  // Кабинет может обслуживать несколько проектов сразу — тогда у него задан
+  // фильтр по названию, и всё остальное мы у Meta даже не спрашиваем.
+  const allCampaigns = await graph<{ id: string; name: string; status: string; objective?: string }>(
     `${GRAPH}/${actId}/campaigns?fields=name,status,objective&limit=100&access_token=${token}`,
   );
+
+  const campaigns = pickCampaigns(allCampaigns, account.campaign_filter);
+
+  // Дальше кампании проекта нужны Meta списком номеров: и группам
+  // объявлений, и статистике. Пустой список означает «кабинет целиком».
+  const scope = account.campaign_filter?.trim()
+    ? chunked(campaigns.map((campaign) => campaign.id), CAMPAIGN_FILTER_CHUNK)
+    : [null];
+
+  // --- 2. Номера WhatsApp: они живут в настройках групп объявлений ---------
+  const numberByCampaign = new Map<string, string>();
+
+  for (const chunk of scope) {
+    const adSets = await graph<{
+      campaign_id?: string;
+      promoted_object?: { whatsapp_phone_number?: string };
+    }>(
+      `${GRAPH}/${actId}/adsets?fields=campaign_id,promoted_object&limit=100` +
+        campaignScope(chunk) +
+        `&access_token=${token}`,
+    );
+
+    for (const adSet of adSets) {
+      const number = adSet.promoted_object?.whatsapp_phone_number;
+      if (adSet.campaign_id && number) numberByCampaign.set(adSet.campaign_id, number);
+    }
+  }
 
   // Пишем одной пачкой: в крупном кабинете кампаний сотни, и запись по одной
   // не укладывается в отведённое функции время.
@@ -547,8 +568,8 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
 
   // --- 3. Статистика по объявлениям ---------------------------------------
   // Идём на уровень объявления: только там видно, какой креатив принёс
-  // переписки. Период режем неделями — за месяц разом крупный кабинет
-  // отвечает отказом «слишком много данных».
+  // переписки. Период режем неделями, а если и неделя не проходит —
+  // окно дробится само, см. hourlyInsights.
   //
   // Запросов два, и это не дублирование:
   //   почасовой — то, что складывается (расход, показы, клики, заявки).
@@ -558,29 +579,35 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   //     часов дало бы цифру больше правды. Такие метрики оставляем дневными.
   const windows = weekWindows(since, until);
 
+  // Куски списка кампаний идём по очереди, окна — параллельно: Meta считает
+  // частоту обращений по токену, и веером запросов её легко исчерпать.
   const [hourlyPages, dailyPages] = await Promise.all([
     Promise.all(
-      windows.map((window) =>
-        graph<MetaInsight>(
-          `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
-            `&breakdowns=${HOURLY_BREAKDOWN}` +
-            `&fields=ad_id,campaign_id,spend,impressions,clicks,actions,date_start,` +
-            `video_play_actions,video_p100_watched_actions` +
-            `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
-            `&limit=500&access_token=${token}`,
-        ),
-      ),
+      windows.map(async (window) => {
+        const rows: MetaInsight[] = [];
+        for (const chunk of scope) {
+          rows.push(...(await hourlyInsights(actId, token, window, chunk)));
+        }
+        return rows;
+      }),
     ),
     Promise.all(
-      windows.map((window) =>
-        graph<MetaInsight>(
-          `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
-            `&fields=ad_id,campaign_id,reach,date_start,video_avg_time_watched_actions,` +
-            `spend,impressions,clicks,actions` +
-            `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
-            `&limit=100&access_token=${token}`,
-        ),
-      ),
+      windows.map(async (window) => {
+        const rows: MetaInsight[] = [];
+        for (const chunk of scope) {
+          rows.push(
+            ...(await graph<MetaInsight>(
+              `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
+                `&fields=ad_id,campaign_id,reach,date_start,video_avg_time_watched_actions,` +
+                `spend,impressions,clicks,actions` +
+                `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
+                campaignScope(chunk) +
+                `&limit=100&access_token=${token}`,
+            )),
+          );
+        }
+        return rows;
+      }),
     ),
   ]);
 
@@ -768,14 +795,23 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // Окно перезаписываем: так повторный запуск не удваивает дни. Но стирать
   // его, когда писать нечего, нельзя — однажды сбойный ответ Meta так и унёс
   // месяц статистики целиком. Нет новых строк — оставляем что было.
+  //
+  // Стираем только кампании своего кабинета. Раньше удаление шло по всей
+  // компании, и у проекта с двумя кабинетами второй уносил цифры первого:
+  // в отчёте оставался расход того, кто синхронизировался последним.
   if (rows.length > 0) {
-    await supabase
-      .from('ad_metrics')
-      .delete()
-      .eq('company_id', account.company_id)
-      .eq('platform', 'meta')
-      .gte('date', since)
-      .lte('date', until);
+    const ourCampaigns = await accountCampaignIds(supabase, account);
+
+    for (const chunk of chunked(ourCampaigns, CAMPAIGN_FILTER_CHUNK)) {
+      await supabase
+        .from('ad_metrics')
+        .delete()
+        .eq('company_id', account.company_id)
+        .eq('platform', 'meta')
+        .gte('date', since)
+        .lte('date', until)
+        .in('campaign_id', chunk);
+    }
 
     const { error } = await supabase.from('ad_metrics').insert(rows);
     if (error) throw new Error(`не удалось сохранить метрики: ${error.message}`);
@@ -941,6 +977,151 @@ function campaignStatus(status: string): 'active' | 'paused' | 'archived' {
 
 function isoDate(date: Date): string {
   return date.toISOString().slice(0, 10);
+}
+
+/** Сколько строк отдаёт PostgREST за один запрос. */
+const PAGE_SIZE = 1000;
+
+/**
+ * Кампании, заведённые этим кабинетом.
+ *
+ * Читаем страницами: у крупного кабинета кампаний больше тысячи, а PostgREST
+ * молча обрезает выборку ровно на тысяче — без страниц часть кампаний просто
+ * не попала бы в список.
+ */
+async function accountCampaignIds(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  account: AdAccount,
+): Promise<string[]> {
+  const ids: string[] = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data } = await supabase
+      .from('campaigns')
+      .select('id')
+      .eq('company_id', account.company_id)
+      .eq('ad_account_id', account.id)
+      .range(from, from + PAGE_SIZE - 1);
+
+    ids.push(...(data ?? []).map((row) => row.id));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+
+  return ids;
+}
+
+/** Сколько номеров кампаний влезает в один адрес запроса. */
+const CAMPAIGN_FILTER_CHUNK = 100;
+
+/**
+ * Кампании проекта.
+ *
+ * Один кабинет обслуживает несколько проектов сразу, и отличить их можно
+ * только по названию кампании — другого признака Meta не даёт. Слова через
+ * запятую, регистр не важен, достаточно одного совпадения. Пустой фильтр
+ * означает «кабинет целиком»: так живут проекты с отдельным кабинетом.
+ */
+function pickCampaigns<T extends { name: string }>(campaigns: T[], filter: string | null): T[] {
+  const words = (filter ?? '')
+    .split(',')
+    .map((word) => word.trim().toLowerCase())
+    .filter(Boolean);
+
+  if (words.length === 0) return campaigns;
+
+  return campaigns.filter((campaign) => {
+    const name = campaign.name.toLowerCase();
+    return words.some((word) => name.includes(word));
+  });
+}
+
+/** Условие Meta «только эти кампании»; пустой список — без условия. */
+function campaignScope(ids: string[] | null): string {
+  if (!ids || ids.length === 0) return '';
+
+  const filtering = JSON.stringify([{ field: 'campaign.id', operator: 'IN', value: ids }]);
+  return `&filtering=${encodeURIComponent(filtering)}`;
+}
+
+/** Разбивка списка на куски: длина адреса запроса не безгранична. */
+function chunked<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let start = 0; start < items.length; start += size) {
+    chunks.push(items.slice(start, start + size));
+  }
+  return chunks;
+}
+
+/**
+ * Отказ «слишком много данных».
+ *
+ * Meta отвечает на него по-разному: крупному кабинету — безымянной ошибкой с
+ * кодом 1, кабинету поменьше — внятной просьбой сузить запрос. Общее у них
+ * одно: то же окно, разрезанное надвое, проходит.
+ */
+function isTooMuchData(message: string): boolean {
+  return /код (1|2)\)|reduce the amount of data|too much data/i.test(message);
+}
+
+/** Окно пополам; сутки уже не делятся. */
+function splitWindow(window: {
+  since: string;
+  until: string;
+}): { since: string; until: string }[] | null {
+  const since = new Date(`${window.since}T00:00:00Z`);
+  const until = new Date(`${window.until}T00:00:00Z`);
+  const days = Math.round((until.getTime() - since.getTime()) / DAY_MS);
+  if (days < 1) return null;
+
+  const middle = new Date(since);
+  middle.setUTCDate(middle.getUTCDate() + Math.floor(days / 2));
+  const next = new Date(middle);
+  next.setUTCDate(next.getUTCDate() + 1);
+
+  return [
+    { since: window.since, until: isoDate(middle) },
+    { since: isoDate(next), until: window.until },
+  ];
+}
+
+/**
+ * Почасовая статистика за окно — с дроблением, если Meta откажет.
+ *
+ * Неделя годится не всякому кабинету: где объявлений за сотню, недельный
+ * запрос Meta не выполняет вовсе. Отказ здесь не окончательный — то же окно
+ * половинами проходит, вплоть до суток. Половины идём по очереди: отказ мог
+ * прийти и от ограничения частоты, а параллельные запросы его усугубят.
+ */
+async function hourlyInsights(
+  actId: string,
+  token: string,
+  window: { since: string; until: string },
+  campaignIds: string[] | null,
+): Promise<MetaInsight[]> {
+  const url =
+    `${GRAPH}/${actId}/insights?level=ad&time_increment=1` +
+    `&breakdowns=${HOURLY_BREAKDOWN}` +
+    `&fields=ad_id,campaign_id,spend,impressions,clicks,actions,date_start,` +
+    `video_play_actions,video_p100_watched_actions` +
+    `&time_range=${encodeURIComponent(JSON.stringify(window))}` +
+    campaignScope(campaignIds) +
+    `&limit=500&access_token=${token}`;
+
+  try {
+    return await graph<MetaInsight>(url);
+  } catch (error) {
+    const halves = splitWindow(window);
+    const message = error instanceof Error ? error.message : '';
+
+    // Сутки уже не разрезать, а посторонняя ошибка дроблением не лечится.
+    if (!halves || !isTooMuchData(message)) throw error;
+
+    const rows: MetaInsight[] = [];
+    for (const half of halves) {
+      rows.push(...(await hourlyInsights(actId, token, half, campaignIds)));
+    }
+    return rows;
+  }
 }
 
 /** Разбивка периода на недели: крупные кабинеты не отдают месяц за раз. */

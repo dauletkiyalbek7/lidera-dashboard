@@ -24,8 +24,8 @@ import { resolveRange } from '@/lib/period';
 import {
   getAdAccounts,
   getAdBreakdown,
-  getCampaigns,
   getCurrencyNote,
+  hasCampaigns,
 } from '@/lib/queries';
 import { SyncMetaButton } from '@/app/dashboard/integrations/sync-button';
 import { CampaignToggle } from './campaign-toggle';
@@ -73,9 +73,9 @@ export default async function AdsPage({
   const currency = company.sales_currency;
   const range = resolveRange(await searchParams, company.timezone);
 
-  const [accounts, campaigns, breakdown, currencyNote] = await Promise.all([
+  const [accounts, anyCampaign, breakdown, currencyNote] = await Promise.all([
     getAdAccounts(company.id),
-    getCampaigns(company.id),
+    hasCampaigns(company.id),
     getAdBreakdown(company.id, range.from, range.to),
     getCurrencyNote(company.id, currency),
   ]);
@@ -93,7 +93,7 @@ export default async function AdsPage({
   /** Расход строки в той же валюте, что и заголовок колонки. */
   const adMoney = (row: { spend: number; spendSource: number | null }) => view.spendOf(row);
 
-  if (accounts.length === 0 && campaigns.length === 0) {
+  if (accounts.length === 0 && !anyCampaign) {
     return (
       <>
         <PageHeader title="Реклама" description="Meta Ads и TikTok Ads в одном окне." />

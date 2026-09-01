@@ -21,7 +21,12 @@ export function PageHeader({
           </p>
         ) : null}
       </div>
-      {action ? <div className="shrink-0">{action}</div> : null}
+      {/*
+        Кнопки прижаты к правому краю всегда, а не только когда помещаются в
+        одну строку с заголовком: при переносе на свою строку блок оставался
+        слева, и в «Лидах» ряд с экспортом уезжал к началу страницы.
+      */}
+      {action ? <div className="ml-auto shrink-0">{action}</div> : null}
     </div>
   );
 }

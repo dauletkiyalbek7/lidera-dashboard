@@ -131,7 +131,7 @@ export default async function AdsPage({
             : 'Сколько потратили, сколько лидов получили и почём вышел один.'
         }
         action={
-          <div className="flex flex-wrap items-center justify-end gap-2.5">
+          <div className="flex flex-wrap items-center justify-end gap-4">
             <SyncMetaButton disabled={profile.role !== 'DIRECTOR'} />
             <DateRangePicker range={range} />
           </div>

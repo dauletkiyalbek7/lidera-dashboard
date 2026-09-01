@@ -139,7 +139,7 @@ export default async function LeadsPage({
               выбраны рядом. Держим их в одной рамке, разделив чертой, и чуть
               отступив от остальных кнопок: те про сами заявки, эти про период.
             */}
-            <div className="ml-1 flex items-center divide-x divide-line rounded-control border border-line bg-surface">
+            <div className="ml-4 flex items-center divide-x divide-line rounded-control border border-line bg-surface">
               <ExportLeadsButton total={stats.total} />
               <DateRangePicker range={range} bare />
             </div>

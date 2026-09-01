@@ -18,11 +18,14 @@ export function Pagination({
   total,
   perPage,
   perPageOptions,
+  defaultPerPage,
 }: {
   page: number;
   total: number;
   perPage: number;
   perPageOptions: number[];
+  /** Размер страницы, который раздел показывает без параметров в адресе. */
+  defaultPerPage: number;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -40,14 +43,17 @@ export function Pagination({
     if (next > 1) params.set('page', String(next));
     else params.delete('page');
 
-    if (size !== perPageOptions[1]) params.set('perPage', String(size));
+    if (size !== defaultPerPage) params.set('perPage', String(size));
     else params.delete('perPage');
 
     const query = params.toString();
     startTransition(() => router.push(query ? `${pathname}?${query}` : pathname));
   };
 
-  if (total <= perPageOptions[0] && pages === 1) return null;
+  // Прячем только когда листать нечего: одна страница и она же самая мелкая
+  // из возможных. В остальных случаях кнопки нужны — даже на последней
+  // странице, чтобы можно было вернуться назад.
+  if (pages === 1 && total <= Math.min(...perPageOptions)) return null;
 
   const from = (current - 1) * perPage + 1;
   const to = Math.min(current * perPage, total);

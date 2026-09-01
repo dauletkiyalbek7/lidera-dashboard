@@ -54,7 +54,7 @@ export default async function SalesPage({
     getSales(company.id, range.from, range.to),
     // Список для выбора при записи продажи: берём столько же, сколько даёт
     // самая большая страница списка заявок.
-    getLeads(company.id, range.from, range.to, company.timezone, null, 1, 200),
+    getLeads(company.id, range.from, range.to, company.timezone, null, 1, 100),
   ]);
 
   // Подпись лида в выпадающем списке: по имени и телефону его легко узнать.

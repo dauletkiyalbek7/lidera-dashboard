@@ -304,6 +304,7 @@ export default async function LeadsPage({
                 total={leadPage.total}
                 perPage={perPage}
                 perPageOptions={LEADS_PER_PAGE_OPTIONS}
+                defaultPerPage={LEADS_PER_PAGE}
               />
             </Card>
           </>

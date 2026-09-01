@@ -1137,7 +1137,7 @@ export async function getLeadStats(
 
 /** Сколько заявок на странице по умолчанию и какие варианты предлагаем. */
 export const LEADS_PER_PAGE = 100;
-export const LEADS_PER_PAGE_OPTIONS = [50, 100, 200, 500];
+export const LEADS_PER_PAGE_OPTIONS = [50, 100, 200];
 
 export type LeadPage = {
   items: LeadListItem[];

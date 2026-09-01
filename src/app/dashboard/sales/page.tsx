@@ -52,9 +52,9 @@ export default async function SalesPage({
 
   const [sales, leadPage] = await Promise.all([
     getSales(company.id, range.from, range.to),
-    // Список для выбора при записи продажи: берём заметно больше страницы,
-    // иначе нужного человека в нём может не оказаться.
-    getLeads(company.id, range.from, range.to, company.timezone, null, 1, 500),
+    // Список для выбора при записи продажи: берём столько же, сколько даёт
+    // самая большая страница списка заявок.
+    getLeads(company.id, range.from, range.to, company.timezone, null, 1, 200),
   ]);
 
   // Подпись лида в выпадающем списке: по имени и телефону его легко узнать.

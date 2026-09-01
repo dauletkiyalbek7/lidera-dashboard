@@ -97,15 +97,18 @@ async function withoutSkippedCampaigns<T extends { campaign_id?: string | null }
 ): Promise<T[]> {
   if (rows.length === 0) return rows;
 
-  const { data } = await supabase
-    .from('campaigns')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('counted', false);
+  const excluded = await selectAll((start, end) =>
+    supabase
+      .from('campaigns')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('counted', false)
+      .range(start, end),
+  );
 
-  if (!data || data.length === 0) return rows;
+  if (excluded.length === 0) return rows;
 
-  const skipped = new Set(data.map((row) => row.id));
+  const skipped = new Set(excluded.map((row) => row.id));
   return rows.filter((row) => !row.campaign_id || !skipped.has(row.campaign_id));
 }
 
@@ -201,50 +204,55 @@ export async function getDashboardData(
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
 
-  const [metricsResult, creativesResult, trialsResult, salesResult, leadsResult] =
-    await Promise.all([
+  const [metricsRows, creativesResult, trialsResult, salesResult, leadRows] = await Promise.all([
+    selectAll((start, end) =>
       supabase
         .from('ad_metrics')
         .select('creative_id, campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
         .eq('company_id', companyId)
         .gte('date', from)
-        .lte('date', to),
-      supabase
-        .from('creatives')
-        .select('id, name, label, platform, format, created_at')
-        .eq('company_id', companyId)
-        // Порядок важен: номер в подписи «Видео 7» — это место в списке.
-        .order('created_at'),
-      supabase
-        .from('trials')
-        .select('id, date, status, lead_id')
-        .eq('company_id', companyId)
-        .gte('date', from)
-        .lte('date', to),
-      supabase
-        .from('sales')
-        .select('id, sale_date, amount, status, lead_id')
-        .eq('company_id', companyId)
-        .eq('status', 'paid')
-        .gte('sale_date', from)
-        .lte('sale_date', to),
+        .lte('date', to)
+        .range(start, end),
+    ),
+    supabase
+      .from('creatives')
+      .select('id, name, label, platform, format, created_at')
+      .eq('company_id', companyId)
+      // Порядок важен: номер в подписи «Видео 7» — это место в списке.
+      .order('created_at'),
+    supabase
+      .from('trials')
+      .select('id, date, status, lead_id')
+      .eq('company_id', companyId)
+      .gte('date', from)
+      .lte('date', to),
+    supabase
+      .from('sales')
+      .select('id, sale_date, amount, status, lead_id')
+      .eq('company_id', companyId)
+      .eq('status', 'paid')
+      .gte('sale_date', from)
+      .lte('sale_date', to),
+    selectAll((start, end) =>
       supabase
         .from('leads')
         .select('id, creative_id, status')
         .eq('company_id', companyId)
         .gte('created_at', day.startsAt)
-        .lt('created_at', day.endsBefore),
-    ]);
+        .lt('created_at', day.endsBefore)
+        .range(start, end),
+    ),
+  ]);
 
   const metrics = await withoutSkippedCampaigns(
     supabase,
     companyId,
-    await toCompanyCurrency(supabase, companyId, metricsResult.data ?? []),
+    await toCompanyCurrency(supabase, companyId, metricsRows),
   );
   const creatives = creativesResult.data ?? [];
   const trials = trialsResult.data ?? [];
   const sales = salesResult.data ?? [];
-  const leads = leadsResult.data ?? [];
+  const leads = leadRows;
 
   // Лид → креатив: связь, ради которой существует вся платформа.
   const leadToCreative = new Map(leads.map((lead) => [lead.id, lead.creative_id]));
@@ -467,8 +475,8 @@ export async function getCreativeCards(
 
   const [
     { data: creatives },
-    { data: metrics },
-    { data: leads },
+    metricRows,
+    leadRows,
     { data: sales },
     { data: trials },
   ] =
@@ -480,22 +488,28 @@ export async function getCreativeCards(
         )
         .eq('company_id', companyId)
         .order('created_at'),
-      supabase
-        .from('ad_metrics')
-        .select(
-          'creative_id, campaign_id, date, spend, impressions, clicks, leads, conversations, currency, video_plays, video_completions, video_avg_seconds',
-        )
-        .eq('company_id', companyId)
-        .not('creative_id', 'is', null)
-        .gte('date', from)
-        .lte('date', to),
-      supabase
-        .from('leads')
-        .select('id, creative_id')
-        .eq('company_id', companyId)
-        .not('creative_id', 'is', null)
-        .gte('created_at', day.startsAt)
-        .lt('created_at', day.endsBefore),
+      selectAll((start, end) =>
+        supabase
+          .from('ad_metrics')
+          .select(
+            'creative_id, campaign_id, date, spend, impressions, clicks, leads, conversations, currency, video_plays, video_completions, video_avg_seconds',
+          )
+          .eq('company_id', companyId)
+          .not('creative_id', 'is', null)
+          .gte('date', from)
+          .lte('date', to)
+          .range(start, end),
+      ),
+      selectAll((start, end) =>
+        supabase
+          .from('leads')
+          .select('id, creative_id')
+          .eq('company_id', companyId)
+          .not('creative_id', 'is', null)
+          .gte('created_at', day.startsAt)
+          .lt('created_at', day.endsBefore)
+          .range(start, end),
+      ),
       supabase
         .from('sales')
         .select('amount, lead_id')
@@ -511,7 +525,7 @@ export async function getCreativeCards(
         .lte('date', to),
     ]);
 
-  const creativeOfLead = new Map((leads ?? []).map((lead) => [lead.id, lead.creative_id]));
+  const creativeOfLead = new Map(leadRows.map((lead) => [lead.id, lead.creative_id]));
 
   const { data: campaignRows } = await supabase
     .from('campaigns')
@@ -526,7 +540,7 @@ export async function getCreativeCards(
   const spendRows = await withoutSkippedCampaigns(
     supabase,
     companyId,
-    await toCompanyCurrency(supabase, companyId, metrics ?? []),
+    await toCompanyCurrency(supabase, companyId, metricRows),
   );
 
   const stats = new Map<
@@ -596,7 +610,7 @@ export async function getCreativeCards(
     }
   }
 
-  for (const lead of leads ?? []) {
+  for (const lead of leadRows) {
     if (lead.creative_id) bucket(lead.creative_id).crmLeads += 1;
   }
 
@@ -731,6 +745,33 @@ async function getDepartmentNames(
   return data ?? [];
 }
 
+/** Сколько строк отдаёт PostgREST за один запрос. */
+const PAGE_SIZE = 1000;
+
+/**
+ * Полная выборка, а не первая тысяча строк.
+ *
+ * PostgREST обрезает ответ на тысяче и ничем об этом не сообщает: у проекта с
+ * двумя с половиной тысячами заявок отчёты честно показывали тысячу и
+ * выглядели правдоподобно. Поэтому всё, что растёт вместе с проектом —
+ * заявки, дневная статистика, журнал приёма — читаем страницами.
+ *
+ * Признак конца — неполная страница: значит дальше ничего нет.
+ */
+async function selectAll<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null }>,
+): Promise<T[]> {
+  const rows: T[] = [];
+
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data } = await page(from, from + PAGE_SIZE - 1);
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) break;
+  }
+
+  return rows;
+}
+
 /** Сколько кампаний спрашиваем за один запрос: длина адреса не безгранична. */
 const CAMPAIGN_LOOKUP_CHUNK = 200;
 
@@ -771,12 +812,15 @@ export async function getAdBreakdown(
 ): Promise<AdBreakdown> {
   const supabase = await createServerSupabase();
 
-  const { data: metrics } = await supabase
-    .from('ad_metrics')
-    .select('campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
-    .eq('company_id', companyId)
-    .gte('date', from)
-    .lte('date', to);
+  const metrics = await selectAll((start, end) =>
+    supabase
+      .from('ad_metrics')
+      .select('campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
+      .eq('company_id', companyId)
+      .gte('date', from)
+      .lte('date', to)
+      .range(start, end),
+  );
 
   // Кампании берём только те, что встретились в цифрах.
   //
@@ -789,7 +833,7 @@ export async function getAdBreakdown(
     companyId,
     Array.from(
       new Set(
-        (metrics ?? [])
+        metrics
           .map((row) => row.campaign_id)
           .filter((id): id is string => Boolean(id)),
       ),
@@ -800,12 +844,15 @@ export async function getAdBreakdown(
 
   // Выручка приходит из CRM: продажа привязана к заявке, заявка знает свою
   // кампанию. Без продаж колонка честно пустует, а не показывает ноль-обман.
-  const [{ data: leadRows }, { data: saleRows }] = await Promise.all([
-    supabase
-      .from('leads')
-      .select('id, campaign_id')
-      .eq('company_id', companyId)
-      .not('campaign_id', 'is', null),
+  const [leadRows, { data: saleRows }] = await Promise.all([
+    selectAll((start, end) =>
+      supabase
+        .from('leads')
+        .select('id, campaign_id')
+        .eq('company_id', companyId)
+        .not('campaign_id', 'is', null)
+        .range(start, end),
+    ),
     supabase
       .from('sales')
       .select('amount, lead_id')
@@ -816,7 +863,7 @@ export async function getAdBreakdown(
   ]);
 
   const campaignOfLead = new Map(
-    (leadRows ?? []).map((row) => [row.id, row.campaign_id as string]),
+    leadRows.map((row) => [row.id, row.campaign_id as string]),
   );
   const salesByCampaign = new Map<string, { sales: number; revenue: number }>();
 
@@ -1042,18 +1089,17 @@ export async function getLeadStats(
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
 
-  let query = supabase
-    .from('leads')
-    .select('status, created_at, creative_id')
-    .eq('company_id', companyId)
-    .gte('created_at', day.startsAt)
-    .lt('created_at', day.endsBefore);
+  const leads = await selectAll((start, end) => {
+    const query = supabase
+      .from('leads')
+      .select('status, created_at, creative_id')
+      .eq('company_id', companyId)
+      .gte('created_at', day.startsAt)
+      .lt('created_at', day.endsBefore)
+      .range(start, end);
 
-  if (departmentId) query = query.eq('department_id', departmentId);
-
-  const { data } = await query;
-
-  const leads = data ?? [];
+    return departmentId ? query.eq('department_id', departmentId) : query;
+  });
   const counts: Record<string, number> = {};
   for (const lead of leads) counts[lead.status] = (counts[lead.status] ?? 0) + 1;
 
@@ -1427,7 +1473,7 @@ export async function getTeam(
     late_grace_minutes: 10,
   };
 
-  const [{ data: employees }, { data: leads }, { data: sales }, { data: openShifts }] =
+  const [{ data: employees }, leadRows, { data: sales }, { data: openShifts }] =
     await Promise.all([
     supabase
       .from('employees')
@@ -1435,13 +1481,16 @@ export async function getTeam(
       .eq('company_id', companyId)
       .order('status')
       .order('full_name'),
-    supabase
-      .from('leads')
-      .select('id, status, assigned_to')
-      .eq('company_id', companyId)
-      .not('assigned_to', 'is', null)
-      .gte('created_at', day.startsAt)
-      .lt('created_at', day.endsBefore),
+    selectAll((start, end) =>
+      supabase
+        .from('leads')
+        .select('id, status, assigned_to')
+        .eq('company_id', companyId)
+        .not('assigned_to', 'is', null)
+        .gte('created_at', day.startsAt)
+        .lt('created_at', day.endsBefore)
+        .range(start, end),
+    ),
     supabase
       .from('sales')
       .select('amount, lead_id')
@@ -1462,7 +1511,7 @@ export async function getTeam(
 
   // Продажа привязана к лиду, а лид — к сотруднику: выручка идёт тому,
   // кто вёл клиента, даже если продажу занесли позже.
-  const leadOwner = new Map((leads ?? []).map((lead) => [lead.id, lead.assigned_to]));
+  const leadOwner = new Map(leadRows.map((lead) => [lead.id, lead.assigned_to]));
 
   const stats = new Map<string, TeamStats>();
   const bucket = (id: string) => {
@@ -1474,7 +1523,7 @@ export async function getTeam(
     return value;
   };
 
-  for (const lead of leads ?? []) {
+  for (const lead of leadRows) {
     if (!lead.assigned_to) continue;
     const target = bucket(lead.assigned_to);
     target.leads += 1;
@@ -1737,13 +1786,23 @@ async function fetchLeadContacts(
   if (ids.length === 0) return new Map();
 
   const supabase = await createServerSupabase();
-  const { data } = await supabase
-    .from('leads')
-    .select('id, name, phone')
-    .eq('company_id', companyId)
-    .in('id', ids);
+  const contacts = new Map<string, { name: string; phone: string | null }>();
 
-  return new Map((data ?? []).map((lead) => [lead.id, { name: lead.name, phone: lead.phone }]));
+  // Пачками: и длина адреса запроса не безгранична, и ответ обрезается на
+  // тысяче строк — список продаж за большой период легко переваливает за неё.
+  for (let start = 0; start < ids.length; start += CAMPAIGN_LOOKUP_CHUNK) {
+    const { data } = await supabase
+      .from('leads')
+      .select('id, name, phone')
+      .eq('company_id', companyId)
+      .in('id', ids.slice(start, start + CAMPAIGN_LOOKUP_CHUNK));
+
+    for (const lead of data ?? []) {
+      contacts.set(lead.id, { name: lead.name, phone: lead.phone });
+    }
+  }
+
+  return contacts;
 }
 
 export async function getReceipts(companyId: string) {

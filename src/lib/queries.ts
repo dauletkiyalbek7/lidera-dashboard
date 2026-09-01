@@ -1113,30 +1113,47 @@ export async function getLeadStats(
   };
 }
 
+/** Сколько заявок на странице по умолчанию и какие варианты предлагаем. */
+export const LEADS_PER_PAGE = 100;
+export const LEADS_PER_PAGE_OPTIONS = [50, 100, 200, 500];
+
+export type LeadPage = {
+  items: LeadListItem[];
+  /** Сколько заявок в периоде всего — по нему считаются страницы. */
+  total: number;
+};
+
 export async function getLeads(
   companyId: string,
   from: string,
   to: string,
   timeZone: string,
   departmentId?: string | null,
-): Promise<LeadListItem[]> {
+  page = 1,
+  perPage = LEADS_PER_PAGE,
+): Promise<LeadPage> {
   const supabase = await createServerSupabase();
   const day = zonedDayWindow(from, to, timeZone);
+
+  // Страницу считаем от единицы: она приходит из адреса, и «?page=0» там
+  // выглядел бы опечаткой, а не первой страницей.
+  const start = Math.max(0, (page - 1) * perPage);
 
   let leadQuery = supabase
     .from('leads')
     .select(
       'id, name, phone, source, platform, status, created_at, creative_id, assigned_to, department_id',
+      { count: 'exact' },
     )
     .eq('company_id', companyId)
     .gte('created_at', day.startsAt)
     .lt('created_at', day.endsBefore)
     .order('created_at', { ascending: false })
-    .limit(LIST_LIMIT);
+    .range(start, start + perPage - 1);
 
   if (departmentId) leadQuery = leadQuery.eq('department_id', departmentId);
 
-  const [{ data: leads }, { data: creatives }, { data: employees }, { data: departments }] =
+  const [{ data: leads, count }, { data: creatives }, { data: employees }, { data: departments }] =
     await Promise.all([
       leadQuery,
       supabase
@@ -1173,7 +1190,7 @@ export async function getLeads(
     saleByLead.set(sale.lead_id, (saleByLead.get(sale.lead_id) ?? 0) + Number(sale.amount));
   }
 
-  return (leads ?? []).map((lead) => ({
+  const items = (leads ?? []).map((lead) => ({
     id: lead.id,
     name: lead.name,
     phone: lead.phone,
@@ -1188,6 +1205,8 @@ export async function getLeads(
     departmentName: lead.department_id ? (departmentNames.get(lead.department_id) ?? null) : null,
     saleAmount: saleByLead.get(lead.id) ?? null,
   }));
+
+  return { items, total: count ?? items.length };
 }
 
 /**

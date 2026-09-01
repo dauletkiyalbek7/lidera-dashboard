@@ -17,6 +17,8 @@ import type { FunnelType } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
 import { ClientSearchForm, ClientSearchResults } from './client-search';
 import {
+  LEADS_PER_PAGE,
+  LEADS_PER_PAGE_OPTIONS,
   countUnassignedLeads,
   getAssignableEmployees,
   getCreativeOptions,
@@ -32,7 +34,9 @@ import {
   LeadRowActions,
   LeadStatusSelect,
 } from './lead-controls';
+import { Pagination } from '@/components/app/pagination';
 import { DepartmentFilter } from './department-filter';
+import { ExportLeadsButton } from './export-button';
 import { StatusBreakdown } from './status-breakdown';
 
 /** Лид без первого касания дольше суток — уже потерянные деньги. */
@@ -69,6 +73,8 @@ export default async function LeadsPage({
     to?: string;
     q?: string;
     department?: string;
+    page?: string;
+    perPage?: string;
   }>;
 }) {
   const { company, employee } = await requireCompanySession();
@@ -86,8 +92,15 @@ export default async function LeadsPage({
   // переживал смену периода и его можно было отправить руководителю.
   const departmentId = params.department ?? null;
 
-  const [leads, stats, creatives, employees, queued, matches, departments] = await Promise.all([
-    getLeads(company.id, range.from, range.to, company.timezone, departmentId),
+  // Страница и её размер — из адреса: ссылку на нужную страницу можно
+  // отправить, и кнопка «назад» в браузере работает сама.
+  const page = Math.max(1, Number(params.page) || 1);
+  const perPage = LEADS_PER_PAGE_OPTIONS.includes(Number(params.perPage))
+    ? Number(params.perPage)
+    : LEADS_PER_PAGE;
+
+  const [leadPage, stats, creatives, employees, queued, matches, departments] = await Promise.all([
+    getLeads(company.id, range.from, range.to, company.timezone, departmentId, page, perPage),
     getLeadStats(company.id, range.from, range.to, company.timezone, departmentId),
     getCreativeOptions(company.id),
     getAssignableEmployees(company.id),
@@ -97,6 +110,7 @@ export default async function LeadsPage({
   ]);
 
   const activeDepartments = departments.filter((row) => row.status === 'active');
+  const leads = leadPage.items;
 
   // Лиды раздаются менеджерам: РОП руководит, продажник подключается на пробном.
   const owners = employees
@@ -113,6 +127,7 @@ export default async function LeadsPage({
         action={
           <div className="flex flex-wrap items-center justify-end gap-2.5">
             <ClientSearchForm query={query} />
+            <ExportLeadsButton total={leadPage.total} />
             {isStaff ? null : <DistributeButton queued={queued} />}
             <AddLeadButton
               creatives={creatives}
@@ -284,6 +299,12 @@ export default async function LeadsPage({
                   ))}
                 </TableShell>
               )}
+              <Pagination
+                page={page}
+                total={leadPage.total}
+                perPage={perPage}
+                perPageOptions={LEADS_PER_PAGE_OPTIONS}
+              />
             </Card>
           </>
         )}

@@ -50,13 +50,15 @@ export default async function SalesPage({
   const currency = company.sales_currency;
   const range = await currentRange(await searchParams, company.timezone);
 
-  const [sales, leads] = await Promise.all([
+  const [sales, leadPage] = await Promise.all([
     getSales(company.id, range.from, range.to),
-    getLeads(company.id, range.from, range.to, company.timezone),
+    // Список для выбора при записи продажи: берём заметно больше страницы,
+    // иначе нужного человека в нём может не оказаться.
+    getLeads(company.id, range.from, range.to, company.timezone, null, 1, 500),
   ]);
 
   // Подпись лида в выпадающем списке: по имени и телефону его легко узнать.
-  const leadOptions = leads.map((lead) => ({
+  const leadOptions = leadPage.items.map((lead) => ({
     id: lead.id,
     label: [lead.name || 'Без имени', lead.phone].filter(Boolean).join(' · '),
   }));

@@ -37,13 +37,12 @@ export async function listCompanies(): Promise<CompanySummary[]> {
     (subscriptions ?? []).map((item) => [item.company_id, item.plan] as const),
   );
 
-  const [{ data: leads }, { data: sales }] = await Promise.all([
-    supabase.from('leads').select('company_id'),
-    supabase.from('sales').select('company_id'),
-  ]);
+  const ids = (companies ?? []).map((company) => company.id);
 
-  const leadCount = countBy(leads ?? []);
-  const saleCount = countBy(sales ?? []);
+  const [leadCount, saleCount] = await Promise.all([
+    countPerCompany(supabase, 'leads', ids),
+    countPerCompany(supabase, 'sales', ids),
+  ]);
 
   return (companies ?? []).map((company) => ({
     ...company,
@@ -76,18 +75,13 @@ export async function getCompany(companyId: string) {
   if (!company) return null;
 
   const [{ count: leads }, { count: sales }, { count: creatives }] = await Promise.all([
-    supabase
-      .from('leads')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId),
-    supabase
-      .from('sales')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId),
+    supabase.from('leads').select('id', { count: 'exact' }).eq('company_id', companyId).limit(1),
+    supabase.from('sales').select('id', { count: 'exact' }).eq('company_id', companyId).limit(1),
     supabase
       .from('creatives')
-      .select('id', { count: 'exact', head: true })
-      .eq('company_id', companyId),
+      .select('id', { count: 'exact' })
+      .eq('company_id', companyId)
+      .limit(1),
   ]);
 
   return {
@@ -163,10 +157,34 @@ export async function listAuditLogs(limit = 100) {
   }));
 }
 
-function countBy(rows: { company_id: string }[]): Map<string, number> {
-  const result = new Map<string, number>();
-  for (const row of rows) {
-    result.set(row.company_id, (result.get(row.company_id) ?? 0) + 1);
-  }
-  return result;
+/**
+ * Сколько строк у каждой компании.
+ *
+ * Считает база, а не мы: раньше список тянулся целиком и складывался в
+ * памяти, но база отдаёт максимум тысячу строк за запрос и об обрезке молчит.
+ * У платформы заявок уже восемь тысяч — в админке компании показывали
+ * случайные доли своих цифр, и первая же проверка расходилась с разделом
+ * «Лиды».
+ *
+ * Считаем обычным запросом на одну строку: число приезжает в заголовке
+ * ответа, а сами данные не грузятся.
+ */
+async function countPerCompany(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  table: 'leads' | 'sales',
+  companyIds: string[],
+): Promise<Map<string, number>> {
+  const counts = await Promise.all(
+    companyIds.map(async (companyId) => {
+      const { count } = await supabase
+        .from(table)
+        .select('id', { count: 'exact' })
+        .eq('company_id', companyId)
+        .limit(1);
+
+      return [companyId, count ?? 0] as const;
+    }),
+  );
+
+  return new Map(counts);
 }

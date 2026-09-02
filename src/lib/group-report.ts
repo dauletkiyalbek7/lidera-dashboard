@@ -243,10 +243,10 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
         .lte('sale_date', to)
         .range(start, end),
     ),
-    readAll<{ id: string; department_id: string | null; counted: boolean }>((start, end) =>
+    readAll<{ id: string; external_id: string | null; department_id: string | null; counted: boolean }>((start, end) =>
       supabase
         .from('campaigns')
-        .select('id, department_id, counted')
+        .select('id, external_id, department_id, counted')
         .eq('company_id', input.companyId)
         .range(start, end),
     ),
@@ -353,27 +353,28 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   }
 
   if (has('breakdown')) {
-    const rows = await Promise.all(
-      (departments.data ?? []).map(async (department) => {
+    const rows = (departments.data ?? []).map((department) => {
         const own = counted.filter(
           (row) => row.campaign_id && departmentOfCampaign.get(row.campaign_id) === department.id,
         );
         const ownLeads = leads.filter((row) => row.department_id === department.id).length;
 
-        // Свой расход остаётся запасным вариантом: если Meta не ответила по
-        // отделу, лучше показать цифру по нашим суткам, чем прочерк.
-        const cabinet =
-          totals && department.id && (departments.data ?? []).length > 1
-            ? await adAccountTotals(input.companyId, from, to, { departmentId: department.id })
-            : null;
+        // Отдел — это набор кампаний, а кабинет отдал цифры по каждой. Своё
+        // остаётся запасным вариантом: не ответила Meta — лучше цифра по нашим
+        // суткам, чем прочерк.
+        const mine = new Set(
+          campaigns
+            .filter((row) => row.department_id === department.id && row.external_id)
+            .map((row) => row.external_id as string),
+        );
+        const cabinet = (totals?.campaigns ?? []).filter((row) => mine.has(row.externalId));
 
         return {
           name: department.name,
-          spend: cabinet?.spend ?? sum(own, (row) => Number(row.spend)),
-          leads: cabinet?.leads ?? ownLeads,
+          spend: cabinet.length ? sum(cabinet, (row) => row.spend) : sum(own, (row) => Number(row.spend)),
+          leads: cabinet.length ? sum(cabinet, (row) => row.leads) : ownLeads,
         };
-      }),
-    );
+    });
 
     // Показываем все отделы, даже пустые: ноль заявок у отдела — это тоже
     // новость, и лучше увидеть её утром в чате, чем через неделю в отчёте.

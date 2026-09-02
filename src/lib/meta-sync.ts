@@ -481,9 +481,30 @@ export type AdTotals = {
   cpc: number;
   cpm: number;
   spend: number;
-  /** Результаты по счёту кабинета: заявки из форм и начатые переписки. */
+  /** Результаты по счёту кабинета. */
   leads: number;
+  /** То же по кампаниям: из них складываются отделы. */
+  campaigns: { externalId: string; spend: number; leads: number }[];
 };
+
+/**
+ * Результат кампании так, как его считает кабинет.
+ *
+ * Meta присылает одно и то же событие под несколькими именами и вдобавок их
+ * сумму: заявка из моментальной формы приходит как lead_grouped, заявка с
+ * сайта — как fb_pixel_lead, а поле lead — это они вместе. Сложить их значит
+ * посчитать людей дважды, взять наибольшее — приписать форме чужие заявки.
+ * Поэтому берём один вид события, тот, ради которого кампания и запущена.
+ */
+function campaignResult(actions: { action_type: string; value: string }[] | undefined): number {
+  const forms = actionValue(actions, ['onsite_conversion.lead_grouped', 'leadgen.other']);
+  if (forms) return forms;
+
+  const site = actionValue(actions, ['offsite_conversion.fb_pixel_lead', 'onsite_web_lead']);
+  if (site) return site;
+
+  return firstActionValue(actions, CONVERSATION_ACTIONS);
+}
 
 /**
  * Показы, охват и частота за период — спросив у самой Meta.
@@ -501,7 +522,6 @@ export async function adAccountTotals(
   companyId: string,
   since: string,
   until: string,
-  options?: { departmentId?: string },
 ): Promise<AdTotals | null> {
   const token = process.env.META_ACCESS_TOKEN;
   if (!token) return null;
@@ -523,26 +543,21 @@ export async function adAccountTotals(
     clicks: 0,
     spend: 0,
     leads: 0,
+    campaigns: [] as { externalId: string; spend: number; leads: number }[],
   };
 
   let answered = false;
+  const window = encodeURIComponent(JSON.stringify({ since, until }));
 
   for (const account of accounts) {
     // Кампании найма исключаем так же, как в отчёте: иначе показы вакансии
     // попадут в стоимость заявки на курс.
-    let query = supabase
+    const { data: campaigns } = await supabase
       .from('campaigns')
       .select('external_id')
       .eq('company_id', companyId)
       .eq('ad_account_id', account.id)
       .eq('counted', true);
-
-    // Отдел — это набор кампаний. Спрашивать его расход у Meta, а не складывать
-    // свой, нужно по той же причине: иначе сумма отделов не сойдётся с общей
-    // строкой отчёта, и первый же взгляд на неё родит вопрос.
-    if (options?.departmentId) query = query.eq('department_id', options.departmentId);
-
-    const { data: campaigns } = await query;
 
     const ids = (campaigns ?? [])
       .map((row) => row.external_id)
@@ -555,30 +570,46 @@ export async function adAccountTotals(
       : `act_${account.account_id}`;
 
     try {
-      const rows = await graph<{
-        impressions?: string;
-        reach?: string;
-        clicks?: string;
-        spend?: string;
-        actions?: { action_type: string; value: string }[];
-      }>(
-        `${GRAPH}/${actId}/insights?level=account` +
-          `&fields=impressions,reach,clicks,spend,actions` +
-          `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
-          campaignScope(ids) +
-          `&limit=100&access_token=${token}`,
-      );
+      // Два запроса, и это не дублирование. Кампании нужны порознь: результат
+      // считается по каждой отдельно, и из них же складываются отделы. Охват
+      // порознь не сложить — это число людей, и одного человека, увидевшего
+      // две кампании, кабинет посчитает один раз только на уровне аккаунта.
+      const [byCampaign, whole] = await Promise.all([
+        graph<{
+          campaign_id?: string;
+          spend?: string;
+          actions?: { action_type: string; value: string }[];
+        }>(
+          `${GRAPH}/${actId}/insights?level=campaign` +
+            `&fields=campaign_id,spend,actions` +
+            `&time_range=${window}` +
+            campaignScope(ids) +
+            `&limit=200&access_token=${token}`,
+        ),
+        graph<{ impressions?: string; reach?: string; clicks?: string; spend?: string }>(
+          `${GRAPH}/${actId}/insights?level=account` +
+            `&fields=impressions,reach,clicks,spend` +
+            `&time_range=${window}` +
+            campaignScope(ids) +
+            `&limit=100&access_token=${token}`,
+        ),
+      ]);
 
-      for (const row of rows) {
+      for (const row of byCampaign) {
+        const spend = Number(row.spend ?? 0);
+        const leads = campaignResult(row.actions);
+
+        total.leads += leads;
+        if (row.campaign_id) {
+          total.campaigns.push({ externalId: row.campaign_id, spend, leads });
+        }
+      }
+
+      for (const row of whole) {
         total.impressions += Number(row.impressions ?? 0);
         total.reach += Number(row.reach ?? 0);
         total.clicks += Number(row.clicks ?? 0);
         total.spend += Number(row.spend ?? 0);
-        // Считаем результат так же, как при синхронизации: у рекламы на
-        // переписки результат — начатый диалог, у формы — отправленная заявка.
-        total.leads +=
-          firstActionValue(row.actions, CONVERSATION_ACTIONS) +
-          actionValue(row.actions, LEAD_ACTIONS);
       }
 
       answered = true;

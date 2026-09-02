@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { creativeLabel } from '@/lib/creative-label';
 import { currencySymbol } from '@/lib/format';
+import { refreshCompanyAds } from '@/lib/meta-sync';
 import { zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
@@ -45,6 +46,15 @@ export const PERIOD_LABELS: Record<ReportPeriod, string> = {
   month: 'за месяц',
 };
 
+/**
+ * Сколько времени готовы потратить на обновление цифр перед отправкой.
+ *
+ * Планировщик ходит раз в минуту и делает не только отчёты, поэтому запас
+ * оставляем на всё остальное: ходить в Meta дольше — значит рисковать тем, что
+ * функцию оборвут посреди отправки.
+ */
+const REFRESH_BUDGET_MS = 25_000;
+
 /** Сколько роликов показываем в разборе: длинный список в чате не читают. */
 const TOP_CREATIVES = 5;
 
@@ -57,6 +67,7 @@ export type ReportResult = { sent: number };
  */
 export async function runGroupReports(): Promise<ReportResult> {
   const supabase = createAdminSupabase();
+  const startedAt = Date.now();
 
   const { data: schedules } = await supabase
     .from('report_schedules')
@@ -77,6 +88,10 @@ export async function runGroupReports(): Promise<ReportResult> {
   const companyById = new Map((companies ?? []).map((row) => [row.id, row]));
 
   let sent = 0;
+
+  // Один кабинет на минуту, а не на каждое расписание: в одну минуту могут
+  // совпасть два времени, и второму синхронизация уже не нужна.
+  const refreshed = new Map<string, 'fresh' | 'stale' | 'none'>();
 
   for (const schedule of schedules) {
     const company = companyById.get(schedule.company_id);
@@ -105,6 +120,18 @@ export async function runGroupReports(): Promise<ReportResult> {
     if (error) continue;
     if (late) continue;
 
+    // Расход берём не тот, что лежит с прошлой синхронизации, а спрашиваем
+    // кабинет заново: отчёт отправляют по часам и сверяют с Ads Manager, и
+    // расхождение в пару часов читается как ошибка платформы.
+    // Если минуты уже почти не осталось, отчёт уходит с тем, что есть:
+    // непришедший отчёт хуже отчёта с цифрами двухчасовой давности.
+    const freshness =
+      refreshed.get(company.id) ??
+      (Date.now() - startedAt > REFRESH_BUDGET_MS
+        ? 'stale'
+        : await refreshCompanyAds(company.id));
+    refreshed.set(company.id, freshness);
+
     const text = await buildReport(supabase, {
       companyId: company.id,
       companyName: company.name,
@@ -113,6 +140,7 @@ export async function runGroupReports(): Promise<ReportResult> {
       salesCurrency: company.sales_currency ?? 'KZT',
       period: schedule.period as ReportPeriod,
       sections: schedule.sections as ReportSection[],
+      adsFreshness: freshness,
     });
 
     await sendMessage(chat.chat_id, text);
@@ -145,6 +173,9 @@ export async function sendReportNow(scheduleId: string): Promise<boolean> {
 
   if (!chat || !company) return false;
 
+  // Кнопкой проверяют именно точность цифр — значит и здесь сначала кабинет.
+  const freshness = await refreshCompanyAds(company.id);
+
   const text = await buildReport(supabase, {
     companyId: company.id,
     companyName: company.name,
@@ -153,6 +184,7 @@ export async function sendReportNow(scheduleId: string): Promise<boolean> {
     salesCurrency: company.sales_currency ?? 'KZT',
     period: schedule.period as ReportPeriod,
     sections: schedule.sections as ReportSection[],
+    adsFreshness: freshness,
   });
 
   await sendMessage(chat.chat_id, text);
@@ -169,6 +201,8 @@ type ReportInput = {
   salesCurrency: string;
   period: ReportPeriod;
   sections: ReportSection[];
+  /** Удалось ли обновить расход перед отправкой: об этом пишем в отчёте. */
+  adsFreshness?: 'fresh' | 'stale' | 'none';
 };
 
 /** Собрать текст отчёта. Отдельно от отправки — чтобы можно было проверить. */
@@ -338,7 +372,27 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
     }
   }
 
+  // Подпись о свежести — только там, где есть деньги: в отчёте без расхода
+  // она ни о чём не говорит.
+  if (has('ads')) {
+    if (input.adsFreshness === 'fresh') {
+      lines.push('', `<i>Расход из кабинета на ${clock(input.timezone)}</i>`);
+    } else if (input.adsFreshness === 'stale') {
+      lines.push('', '<i>Расход с прошлой синхронизации: обновить сейчас не вышло</i>');
+    }
+  }
+
   return lines.join('\n').trim();
+}
+
+/** Время по часам компании: «23:41». */
+function clock(timeZone: string): string {
+  return new Intl.DateTimeFormat('ru-RU', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(new Date());
 }
 
 /** Статусы, при которых с человеком реально поговорили. */

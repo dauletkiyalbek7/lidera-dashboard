@@ -21,6 +21,9 @@ import { runTouchReminders } from '@/lib/touch-runner';
  */
 
 export const dynamic = 'force-dynamic';
+// Перед отчётом в группу платформа успевает сходить в Meta за свежим расходом:
+// минуты по умолчанию на это не хватает.
+export const maxDuration = 60;
 
 export async function POST(request: Request) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

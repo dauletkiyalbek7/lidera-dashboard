@@ -24,6 +24,16 @@ const GRAPH = `https://graph.facebook.com/${API_VERSION}`;
 /** Сколько дней перезабираем при каждом запуске. */
 const WINDOW_DAYS = 30;
 
+/**
+ * Сколько дней хватает, когда цифры нужны прямо сейчас.
+ *
+ * Отчёт в группу спрашивает про сегодня, а сутки кабинета сдвинуты
+ * относительно наших: трёх дней достаточно, чтобы накрыть и вчерашний край, и
+ * уточнения, которые Meta дописывает задним числом. Тянуть ради одной строки
+ * тридцать дней — верный способ упереться в лимит обращений.
+ */
+const QUICK_WINDOW_DAYS = 3;
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -348,7 +358,10 @@ export async function backfillAdAttribution(
 /** Сколько номеров объявлений спрашиваем за один запрос. */
 const BACKFILL_BATCH = 200;
 
-export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncResult> {
+export async function syncMetaAccount(
+  adAccountRowId: string,
+  options?: { windowDays?: number },
+): Promise<MetaSyncResult> {
   const supabase = createAdminSupabase();
 
   const { data: account } = await supabase
@@ -364,7 +377,7 @@ export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncR
   await syncExchangeRates(supabase).catch(() => null);
 
   try {
-    const result = await pullFromMeta(account);
+    const result = await pullFromMeta(account, options?.windowDays);
     await noteSync(account.company_id, account.account_id, { ok: true, result });
     return result;
   } catch (error) {
@@ -382,6 +395,49 @@ export async function syncMetaAccount(adAccountRowId: string): Promise<MetaSyncR
     await noteSync(account.company_id, account.account_id, { ok: false, message, transient });
     throw error;
   }
+}
+
+/**
+ * Обновить цифры одной компании прямо сейчас.
+ *
+ * Отчёт в группу приходит по часам, а синхронизация ходит своим ходом, раз в
+ * два часа: без этого вечерняя сводка показывала бы расход двухчасовой
+ * давности — и человек, который сверит её с Ads Manager, решит, что платформа
+ * врёт. Поэтому перед отправкой забираем последние дни заново.
+ *
+ * Meta может и отказать — лимит обращений здесь обычное дело. Тогда отчёт всё
+ * равно уходит, но с оговоркой: лучше цифры постарше с честной подписью, чем
+ * молчание.
+ */
+export async function refreshCompanyAds(
+  companyId: string,
+): Promise<'fresh' | 'stale' | 'none'> {
+  if (!isMetaConfigured()) return 'none';
+
+  const supabase = createAdminSupabase();
+
+  const { data: accounts } = await supabase
+    .from('ad_accounts')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('platform', 'meta')
+    .not('account_id', 'is', null);
+
+  if (!accounts || accounts.length === 0) return 'none';
+
+  let ok = true;
+
+  // По очереди: Meta считает частоту обращений по токену, и веер запросов от
+  // нескольких кабинетов сразу — самый быстрый способ получить отказ.
+  for (const account of accounts) {
+    try {
+      await syncMetaAccount(account.id, { windowDays: QUICK_WINDOW_DAYS });
+    } catch {
+      ok = false;
+    }
+  }
+
+  return ok ? 'fresh' : 'stale';
 }
 
 /** Ограничение частоты и подобные «попробуйте позже» проходят сами. */
@@ -414,7 +470,10 @@ type AdAccount = {
   campaign_filter: string | null;
 };
 
-async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
+async function pullFromMeta(
+  account: AdAccount,
+  windowDays = WINDOW_DAYS,
+): Promise<MetaSyncResult> {
   const token = process.env.META_ACCESS_TOKEN;
   if (!token) throw new Error('не задан META_ACCESS_TOKEN');
 
@@ -431,7 +490,7 @@ async function pullFromMeta(account: AdAccount): Promise<MetaSyncResult> {
   // завтра, и «сегодня» в запрос не попадало вовсе. Именно так первый день
   // новой кампании не показывался до утра. Будущих дней Meta не отдаёт, так
   // что лишним день не будет.
-  const since = isoDate(new Date(Date.now() - WINDOW_DAYS * DAY_MS));
+  const since = isoDate(new Date(Date.now() - windowDays * DAY_MS));
   const until = isoDate(new Date(Date.now() + DAY_MS));
 
   // --- 0. Валюта и часовой пояс кабинета ----------------------------------

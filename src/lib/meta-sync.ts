@@ -481,6 +481,8 @@ export type AdTotals = {
   cpc: number;
   cpm: number;
   spend: number;
+  /** Результаты по счёту кабинета: заявки из форм и начатые переписки. */
+  leads: number;
 };
 
 /**
@@ -520,6 +522,7 @@ export async function adAccountTotals(
     reach: 0,
     clicks: 0,
     spend: 0,
+    leads: 0,
   };
 
   let answered = false;
@@ -557,9 +560,10 @@ export async function adAccountTotals(
         reach?: string;
         clicks?: string;
         spend?: string;
+        actions?: { action_type: string; value: string }[];
       }>(
         `${GRAPH}/${actId}/insights?level=account` +
-          `&fields=impressions,reach,clicks,spend` +
+          `&fields=impressions,reach,clicks,spend,actions` +
           `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
           campaignScope(ids) +
           `&limit=100&access_token=${token}`,
@@ -570,6 +574,11 @@ export async function adAccountTotals(
         total.reach += Number(row.reach ?? 0);
         total.clicks += Number(row.clicks ?? 0);
         total.spend += Number(row.spend ?? 0);
+        // Считаем результат так же, как при синхронизации: у рекламы на
+        // переписки результат — начатый диалог, у формы — отправленная заявка.
+        total.leads +=
+          firstActionValue(row.actions, CONVERSATION_ACTIONS) +
+          actionValue(row.actions, LEAD_ACTIONS);
       }
 
       answered = true;

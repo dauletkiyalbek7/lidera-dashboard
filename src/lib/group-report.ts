@@ -286,6 +286,12 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   // цифры этот отчёт и сверяет глазами, поэтому здесь важнее совпасть с ним,
   // чем с Главной, где расход разложен по нашим суткам ради цены заявки.
   const shownSpend = totals?.spend ?? spend;
+
+  // Заявки — оттуда же, откуда деньги. Иначе в одной строке встретятся два
+  // счёта: расход по кабинету и заявки по нашей базе, а цена заявки окажется
+  // не той, что в Ads Manager. Свои цифры остаются в блоке «Заявки и статусы»,
+  // где речь уже о работе отдела, а не о рекламе.
+  const shownLeads = totals?.leads ?? leads.length;
   const sign = currencySymbol(input.currency);
   const salesSign = currencySymbol(input.salesCurrency);
 
@@ -298,11 +304,11 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   if (has('ads')) {
     lines.push(`Расход: <b>${money(shownSpend, 2)} ${sign}</b>`);
     lines.push(
-      `Заявок в кабинете: <b>${count(leads.length)}</b>` +
+      `Заявок: <b>${count(shownLeads)}</b>` +
         // Цену заявки показываем, только когда есть из чего её считать:
         // «цена заявки 0 $» при нулевом расходе — это не ноль, а «неизвестно».
-        (leads.length && shownSpend
-          ? ` · цена заявки: <b>${money(shownSpend / leads.length, 2)} ${sign}</b>`
+        (shownLeads && shownSpend
+          ? ` · цена заявки: <b>${money(shownSpend / shownLeads, 2)} ${sign}</b>`
           : ''),
     );
     // Свой счёт Meta в отчёт не выносим: разрыв между её счётчиком и нашими
@@ -329,8 +335,11 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
     const won = leads.filter((row) => row.status === 'sale').length;
     const untouched = leads.filter((row) => row.status === 'new').length;
 
+    // Здесь счёт уже наш, а не кабинета: блок про работу отдела, и цифра
+    // законно меньше — доехавших заявок всегда меньше, чем отправленных форм.
     lines.push(
-      `Дозвонились: <b>${count(reached)}</b> · купили: <b>${count(won)}</b> · ждут первого касания: <b>${count(untouched)}</b>`,
+      `Заявок в платформе: <b>${count(leads.length)}</b> · дозвонились: <b>${count(reached)}</b>` +
+        ` · купили: <b>${count(won)}</b> · ждут первого касания: <b>${count(untouched)}</b>`,
     );
     lines.push('');
   }
@@ -361,7 +370,7 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
         return {
           name: department.name,
           spend: cabinet?.spend ?? sum(own, (row) => Number(row.spend)),
-          leads: ownLeads,
+          leads: cabinet?.leads ?? ownLeads,
         };
       }),
     );

@@ -499,6 +499,7 @@ export async function adAccountTotals(
   companyId: string,
   since: string,
   until: string,
+  options?: { departmentId?: string },
 ): Promise<AdTotals | null> {
   const token = process.env.META_ACCESS_TOKEN;
   if (!token) return null;
@@ -526,12 +527,19 @@ export async function adAccountTotals(
   for (const account of accounts) {
     // Кампании найма исключаем так же, как в отчёте: иначе показы вакансии
     // попадут в стоимость заявки на курс.
-    const { data: campaigns } = await supabase
+    let query = supabase
       .from('campaigns')
       .select('external_id')
       .eq('company_id', companyId)
       .eq('ad_account_id', account.id)
       .eq('counted', true);
+
+    // Отдел — это набор кампаний. Спрашивать его расход у Meta, а не складывать
+    // свой, нужно по той же причине: иначе сумма отделов не сойдётся с общей
+    // строкой отчёта, и первый же взгляд на неё родит вопрос.
+    if (options?.departmentId) query = query.eq('department_id', options.departmentId);
+
+    const { data: campaigns } = await query;
 
     const ids = (campaigns ?? [])
       .map((row) => row.external_id)

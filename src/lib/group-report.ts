@@ -280,6 +280,12 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   // Показы и охват берём у самой Meta: охват — число людей, и складывать его
   // из дневных строк нельзя (см. adAccountTotals).
   const totals = has('ads') ? await adAccountTotals(input.companyId, from, to) : null;
+
+  // Расход в отчёте — тот, что видно в Ads Manager. У кабинета свои сутки: он
+  // живёт восточнее и закрывает день на час раньше нас. Кабинет показывает
+  // цифры этот отчёт и сверяет глазами, поэтому здесь важнее совпасть с ним,
+  // чем с Главной, где расход разложен по нашим суткам ради цены заявки.
+  const shownSpend = totals?.spend ?? spend;
   const sign = currencySymbol(input.currency);
   const salesSign = currencySymbol(input.salesCurrency);
 
@@ -290,13 +296,13 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   ];
 
   if (has('ads')) {
-    lines.push(`Расход: <b>${money(spend, 2)} ${sign}</b>`);
+    lines.push(`Расход: <b>${money(shownSpend, 2)} ${sign}</b>`);
     lines.push(
       `Заявок в кабинете: <b>${count(leads.length)}</b>` +
         // Цену заявки показываем, только когда есть из чего её считать:
         // «цена заявки 0 $» при нулевом расходе — это не ноль, а «неизвестно».
-        (leads.length && spend
-          ? ` · цена заявки: <b>${money(spend / leads.length, 2)} ${sign}</b>`
+        (leads.length && shownSpend
+          ? ` · цена заявки: <b>${money(shownSpend / leads.length, 2)} ${sign}</b>`
           : ''),
     );
     // Свой счёт Meta в отчёт не выносим: разрыв между её счётчиком и нашими
@@ -338,15 +344,27 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   }
 
   if (has('breakdown')) {
-    const rows = (departments.data ?? []).map((department) => {
-      const own = counted.filter(
-        (row) => row.campaign_id && departmentOfCampaign.get(row.campaign_id) === department.id,
-      );
-      const ownLeads = leads.filter((row) => row.department_id === department.id).length;
-      const ownSpend = sum(own, (row) => Number(row.spend));
+    const rows = await Promise.all(
+      (departments.data ?? []).map(async (department) => {
+        const own = counted.filter(
+          (row) => row.campaign_id && departmentOfCampaign.get(row.campaign_id) === department.id,
+        );
+        const ownLeads = leads.filter((row) => row.department_id === department.id).length;
 
-      return { name: department.name, spend: ownSpend, leads: ownLeads };
-    });
+        // Свой расход остаётся запасным вариантом: если Meta не ответила по
+        // отделу, лучше показать цифру по нашим суткам, чем прочерк.
+        const cabinet =
+          totals && department.id && (departments.data ?? []).length > 1
+            ? await adAccountTotals(input.companyId, from, to, { departmentId: department.id })
+            : null;
+
+        return {
+          name: department.name,
+          spend: cabinet?.spend ?? sum(own, (row) => Number(row.spend)),
+          leads: ownLeads,
+        };
+      }),
+    );
 
     // Показываем все отделы, даже пустые: ноль заявок у отдела — это тоже
     // новость, и лучше увидеть её утром в чате, чем через неделю в отчёте.
@@ -504,7 +522,12 @@ function sum<T>(rows: T[], pick: (row: T) => number): number {
 }
 
 function money(value: number, digits = 0): string {
-  return new Intl.NumberFormat('ru-RU', { maximumFractionDigits: digits }).format(value);
+  return new Intl.NumberFormat('ru-RU', {
+    // Копейки либо есть у всех цифр в строке, либо их нет ни у одной: «459,4 $»
+    // рядом с «221,93 $» выглядит обрезанным.
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(value);
 }
 
 function count(value: number): string {

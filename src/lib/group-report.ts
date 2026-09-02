@@ -276,7 +276,6 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   );
 
   const spend = sum(counted, (row) => Number(row.spend));
-  const adLeads = sum(counted, (row) => Number(row.leads) + Number(row.conversations ?? 0));
   const revenue = sum(sales, (row) => Number(row.amount));
   // Показы и охват берём у самой Meta: охват — число людей, и складывать его
   // из дневных строк нельзя (см. adAccountTotals).
@@ -300,16 +299,10 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
           ? ` · цена заявки: <b>${money(spend / leads.length, 2)} ${sign}</b>`
           : ''),
     );
-    // Кабинет и платформа считают одно и то же, но с разных сторон: Meta —
-    // сколько раз человек нажал «отправить», платформа — сколько заявок к нам
-    // доехало. Разрыв означает потерянные заявки, и говорить о нём надо прямо,
-    // а не строкой «насчитала 95», которую ещё надо разгадать.
-    if (adLeads > leads.length) {
-      lines.push(
-        `<i>Meta засчитала обращений: ${count(adLeads)} — до платформы не дошло ${count(adLeads - leads.length)}</i>`,
-      );
-    }
-
+    // Свой счёт Meta в отчёт не выносим: разрыв между её счётчиком и нашими
+    // заявками объясняется настройкой выгрузки, а не работой отдела, и в
+    // ежедневной сводке только сбивает. Разбираться с ним — отдельный разговор
+    // и раздел «Реклама».
     if (totals) {
       lines.push(
         `Показы: <b>${count(totals.impressions)}</b> · охват: <b>${count(totals.reach)}</b>` +

@@ -471,6 +471,117 @@ export async function refreshCompanyAds(companyId: string): Promise<AdsFreshness
     : { state: 'stale', syncedAt: lastSync };
 }
 
+/** Общие показатели кабинета за период — те же, что видны в Ads Manager. */
+export type AdTotals = {
+  impressions: number;
+  reach: number;
+  frequency: number;
+  clicks: number;
+  ctr: number;
+  cpc: number;
+  cpm: number;
+  spend: number;
+};
+
+/**
+ * Показы, охват и частота за период — спросив у самой Meta.
+ *
+ * Складывать охват из дневных строк нельзя: это число людей, а не сумма. Один
+ * человек видит рекламу и в понедельник, и во вторник, и в двух объявлениях
+ * сразу — сложение дало бы цифру заметно больше правды, а с ней и неверную
+ * частоту. Meta умеет считать уникальных по всему периоду, и один запрос
+ * дешевле, чем неверная цифра в отчёте, который сверяют с кабинетом.
+ *
+ * Кампании чужого проекта в счёт не идут: у двух проектов бывает один кабинет,
+ * и делятся они фильтром кампаний.
+ */
+export async function adAccountTotals(
+  companyId: string,
+  since: string,
+  until: string,
+): Promise<AdTotals | null> {
+  const token = process.env.META_ACCESS_TOKEN;
+  if (!token) return null;
+
+  const supabase = createAdminSupabase();
+
+  const { data: accounts } = await supabase
+    .from('ad_accounts')
+    .select('id, account_id')
+    .eq('company_id', companyId)
+    .eq('platform', 'meta')
+    .not('account_id', 'is', null);
+
+  if (!accounts || accounts.length === 0) return null;
+
+  const total = {
+    impressions: 0,
+    reach: 0,
+    clicks: 0,
+    spend: 0,
+  };
+
+  let answered = false;
+
+  for (const account of accounts) {
+    // Кампании найма исключаем так же, как в отчёте: иначе показы вакансии
+    // попадут в стоимость заявки на курс.
+    const { data: campaigns } = await supabase
+      .from('campaigns')
+      .select('external_id')
+      .eq('company_id', companyId)
+      .eq('ad_account_id', account.id)
+      .eq('counted', true);
+
+    const ids = (campaigns ?? [])
+      .map((row) => row.external_id)
+      .filter((id): id is string => Boolean(id));
+
+    if (ids.length === 0) continue;
+
+    const actId = account.account_id!.startsWith('act_')
+      ? account.account_id!
+      : `act_${account.account_id}`;
+
+    try {
+      const rows = await graph<{
+        impressions?: string;
+        reach?: string;
+        clicks?: string;
+        spend?: string;
+      }>(
+        `${GRAPH}/${actId}/insights?level=account` +
+          `&fields=impressions,reach,clicks,spend` +
+          `&time_range=${encodeURIComponent(JSON.stringify({ since, until }))}` +
+          campaignScope(ids) +
+          `&limit=100&access_token=${token}`,
+      );
+
+      for (const row of rows) {
+        total.impressions += Number(row.impressions ?? 0);
+        total.reach += Number(row.reach ?? 0);
+        total.clicks += Number(row.clicks ?? 0);
+        total.spend += Number(row.spend ?? 0);
+      }
+
+      answered = true;
+    } catch {
+      // Молча: показатели — дополнение к отчёту, а не он сам.
+    }
+  }
+
+  if (!answered || total.impressions === 0) return null;
+
+  return {
+    ...total,
+    // Производные считаем сами, из сложенного: усреднять проценты нельзя.
+    frequency: total.reach ? total.impressions / total.reach : 0,
+    ctr: (total.clicks / total.impressions) * 100,
+    cpc: total.clicks ? total.spend / total.clicks : 0,
+    cpm: (total.spend / total.impressions) * 1000,
+  };
+}
+
 /** Ограничение частоты и подобные «попробуйте позже» проходят сами. */
 function isTransient(message: string): boolean {
   return /код (1|2|4|17|32|613)\)|limit reached|reduce the amount of data|temporarily/i.test(

@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { creativeLabel } from '@/lib/creative-label';
 import { currencySymbol } from '@/lib/format';
-import { refreshCompanyAds, type AdsFreshness } from '@/lib/meta-sync';
+import { adAccountTotals, refreshCompanyAds, type AdsFreshness } from '@/lib/meta-sync';
 import { zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
@@ -29,14 +29,15 @@ type Admin = SupabaseClient<Database>;
 export type ReportPeriod = 'today' | 'yesterday' | 'week' | 'month';
 
 /** Блоки отчёта: набор выбирается на каждое расписание отдельно. */
-export const REPORT_SECTIONS = ['leads', 'ads', 'sales', 'breakdown'] as const;
+export const REPORT_SECTIONS = ['leads', 'ads', 'sales', 'breakdown', 'creatives'] as const;
 export type ReportSection = (typeof REPORT_SECTIONS)[number];
 
 export const SECTION_LABELS: Record<ReportSection, string> = {
   leads: 'Заявки и статусы',
-  ads: 'Расход и цена заявки',
+  ads: 'Расход и показатели рекламы',
   sales: 'Продажи и выручка',
-  breakdown: 'Отделы и ролики',
+  breakdown: 'Отделы',
+  creatives: 'Ролики',
 };
 
 export const PERIOD_LABELS: Record<ReportPeriod, string> = {
@@ -277,6 +278,9 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   const spend = sum(counted, (row) => Number(row.spend));
   const adLeads = sum(counted, (row) => Number(row.leads) + Number(row.conversations ?? 0));
   const revenue = sum(sales, (row) => Number(row.amount));
+  // Показы и охват берём у самой Meta: охват — число людей, и складывать его
+  // из дневных строк нельзя (см. adAccountTotals).
+  const totals = has('ads') ? await adAccountTotals(input.companyId, from, to) : null;
   const sign = currencySymbol(input.currency);
   const salesSign = currencySymbol(input.salesCurrency);
 
@@ -296,7 +300,28 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
           ? ` · цена заявки: <b>${money(spend / leads.length, 2)} ${sign}</b>`
           : ''),
     );
-    if (adLeads) lines.push(`<i>Meta насчитала за это время: ${count(adLeads)}</i>`);
+    // Кабинет и платформа считают одно и то же, но с разных сторон: Meta —
+    // сколько раз человек нажал «отправить», платформа — сколько заявок к нам
+    // доехало. Разрыв означает потерянные заявки, и говорить о нём надо прямо,
+    // а не строкой «насчитала 95», которую ещё надо разгадать.
+    if (adLeads > leads.length) {
+      lines.push(
+        `<i>Meta засчитала обращений: ${count(adLeads)} — до платформы не дошло ${count(adLeads - leads.length)}</i>`,
+      );
+    }
+
+    if (totals) {
+      lines.push(
+        `Показы: <b>${count(totals.impressions)}</b> · охват: <b>${count(totals.reach)}</b>` +
+          ` · частота: <b>${totals.frequency.toFixed(2).replace('.', ',')}</b>`,
+      );
+      lines.push(
+        // CTR в кабинете показан с двумя знаками — пусть сходится глазами.
+        `CTR: <b>${totals.ctr.toFixed(2).replace('.', ',')}%</b> · CPC: <b>${money(totals.cpc, 2)} ${sign}</b>` +
+          ` · CPM: <b>${money(totals.cpm, 2)} ${sign}</b>`,
+      );
+    }
+
     lines.push('');
   }
 
@@ -343,6 +368,9 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
       lines.push('');
     }
 
+  }
+
+  if (has('creatives')) {
     const perCreative = new Map<string, { spend: number; leads: number }>();
     for (const row of counted) {
       if (!row.creative_id) continue;
@@ -375,6 +403,10 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
 
   // Подпись о свежести — только там, где есть деньги: в отчёте без расхода
   // она ни о чём не говорит.
+  // Хвостовые пустые строки убираем: блоки отделяют себя сами, и после
+  // последнего остаётся зазор, который в чате виден как обрыв.
+  while (lines.at(-1) === '') lines.pop();
+
   if (has('ads') && input.adsFreshness && input.adsFreshness.state !== 'none') {
     const at = input.adsFreshness.syncedAt;
     const stamp = at ? clock(at, input.timezone) : null;

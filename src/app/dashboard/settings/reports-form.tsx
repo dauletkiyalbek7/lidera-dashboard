@@ -21,10 +21,11 @@ const PERIODS = [
   { value: 'month', label: 'за месяц' },
 ];
 
-/** Блоки отчёта. По умолчанию включены расход и разбор — их и просили. */
+/** Блоки отчёта. По умолчанию — деньги и отделы: разбор по роликам смотрят в кабинете. */
 const SECTIONS = [
-  { value: 'ads', label: 'Расход и цена заявки', checked: true },
-  { value: 'breakdown', label: 'Отделы и ролики', checked: true },
+  { value: 'ads', label: 'Расход и показатели рекламы', checked: true },
+  { value: 'breakdown', label: 'Отделы', checked: true },
+  { value: 'creatives', label: 'Ролики', checked: false },
   { value: 'leads', label: 'Заявки и статусы', checked: false },
   { value: 'sales', label: 'Продажи и выручка', checked: false },
 ];

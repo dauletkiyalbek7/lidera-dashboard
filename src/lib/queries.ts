@@ -1879,6 +1879,86 @@ export async function getTrials(
   }));
 }
 
+/** Покупатель, пришедший с одного ролика. */
+export type CreativeBuyer = {
+  saleId: string;
+  leadId: string | null;
+  name: string;
+  phone: string | null;
+  amount: number;
+  saleDate: string;
+  /** Когда человек оставил заявку — видно, сколько думал до покупки. */
+  leadDate: string | null;
+};
+
+/**
+ * Кто купил с этого ролика за период.
+ *
+ * Правило то же, по которому в карточке ролика считаются продажи и выручка:
+ * заявка пришла в этом периоде и с этого ролика, оплата прошла в этом же
+ * периоде. Иначе список и цифра над ним расходились бы, а объяснить это
+ * человеку невозможно.
+ */
+export async function getCreativeBuyers(
+  companyId: string,
+  creativeId: string,
+  from: string,
+  to: string,
+  timeZone: string,
+): Promise<CreativeBuyer[]> {
+  const supabase = await createServerSupabase();
+  const day = zonedDayWindow(from, to, timeZone);
+
+  const leads = await selectAll<{
+    id: string;
+    name: string;
+    phone: string | null;
+    created_at: string;
+  }>((start, end) =>
+    supabase
+      .from('leads')
+      .select('id, name, phone, created_at')
+      .eq('company_id', companyId)
+      .eq('creative_id', creativeId)
+      .gte('created_at', day.startsAt)
+      .lt('created_at', day.endsBefore)
+      .range(start, end),
+  );
+
+  if (leads.length === 0) return [];
+
+  const leadById = new Map(leads.map((lead) => [lead.id, lead]));
+
+  const sales = await inChunks(
+    leads.map((lead) => lead.id),
+    (chunk) =>
+      supabase
+        .from('sales')
+        .select('id, lead_id, amount, sale_date')
+        .eq('company_id', companyId)
+        .eq('status', 'paid')
+        .gte('sale_date', from)
+        .lte('sale_date', to)
+        .in('lead_id', chunk),
+  );
+
+  return sales
+    .map((sale) => {
+      const lead = sale.lead_id ? leadById.get(sale.lead_id) : undefined;
+
+      return {
+        saleId: sale.id,
+        leadId: sale.lead_id,
+        name: lead?.name || 'Без имени',
+        phone: lead?.phone ?? null,
+        amount: Number(sale.amount),
+        saleDate: sale.sale_date,
+        leadDate: lead?.created_at ?? null,
+      };
+    })
+    .sort((a, b) => b.saleDate.localeCompare(a.saleDate) || b.amount - a.amount);
+}
+
 export type SaleListItem = {
   id: string;
   sale_date: string;

@@ -8,16 +8,26 @@ import { CreativePlayer } from '@/components/app/creative-player';
 import { CreativeRenameForm } from './rename-form';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
+import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { StatTile } from '@/components/ui/stat-tile';
 import { requireAdsAccess } from '@/lib/auth';
-import { formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
+import { formatDate, formatMoney, formatNumber, formatPercent, formatRatio } from '@/lib/format';
 import { moneyView, per } from '@/lib/money-view';
 import { currentRange } from '@/lib/period-preference';
-import { getAdSpendCurrency, getCreativeCards } from '@/lib/queries';
+import { getAdSpendCurrency, getCreativeBuyers, getCreativeCards } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креатив' };
+
+/** Кто купил с ролика: имя и сумма — главное, остальное по мере ширины. */
+const buyerColumns = (currency: string): TableColumn[] => [
+  { key: 'name', label: 'Клиент' },
+  { key: 'phone', label: 'Телефон', showFrom: 'md' },
+  { key: 'lead', label: 'Оставил заявку', showFrom: 'lg' },
+  { key: 'date', label: 'Купил', showFrom: 'md' },
+  { key: 'amount', label: `Сумма, ${currency}`, align: 'right' as const },
+];
 
 export default async function CreativePage({
   params,
@@ -33,10 +43,13 @@ export default async function CreativePage({
   const { id } = await params;
   const range = await currentRange(await searchParams, company.timezone);
 
-  const [cards, accountCurrency] = await Promise.all([
+  const [cards, accountCurrency, buyers] = await Promise.all([
     getCreativeCards(company.id, range.from, range.to, company.timezone),
     getAdSpendCurrency(company.id),
+    getCreativeBuyers(company.id, id, range.from, range.to, company.timezone),
   ]);
+
+  const bought = buyers.reduce((total, buyer) => total + buyer.amount, 0);
   const creative = cards.find((card) => card.id === id);
 
   if (!creative) notFound();
@@ -259,6 +272,61 @@ export default async function CreativePage({
             </Card>
           </div>
         </div>
+
+        {/*
+          Ради этой таблицы всё и затевалось: не «ролик принёс 16 продаж», а
+          вот эти люди, с именами и суммами. Период — тот же, что наверху.
+        */}
+        <Card className="mt-4">
+          <CardHeader
+            title="Кто купил с этого ролика"
+            subtitle={
+              buyers.length
+                ? `${formatNumber(buyers.length)} на ${formatMoney(bought, { currency })} за ${range.label}`
+                : `За ${range.label} покупок с этого ролика нет`
+            }
+          />
+          {buyers.length > 0 ? (
+            <TableShell
+              columns={buyerColumns(currency)}
+              minWidth={{ base: 340, md: 720, lg: 860 }}
+            >
+              {buyers.map((buyer) => (
+                <tr key={buyer.saleId} className="transition-colors hover:bg-surface-2/60">
+                  <Td first truncate="md" title={buyer.name} className="font-medium text-ink">
+                    {buyer.phone ? (
+                      <Link
+                        href={`/dashboard/leads?q=${encodeURIComponent(buyer.phone)}`}
+                        className="text-lime transition-colors hover:text-lime-strong"
+                      >
+                        {buyer.name}
+                      </Link>
+                    ) : (
+                      buyer.name
+                    )}
+                  </Td>
+                  <Td showFrom="md" className="tabular text-ink-soft">
+                    {buyer.phone ?? '—'}
+                  </Td>
+                  <Td showFrom="lg" className="tabular text-muted">
+                    {buyer.leadDate ? formatDate(buyer.leadDate) : '—'}
+                  </Td>
+                  <Td showFrom="md" className="tabular text-ink-soft">
+                    {formatDate(buyer.saleDate)}
+                  </Td>
+                  <Td last align="right" className="tabular font-medium text-ink">
+                    {formatMoney(buyer.amount, { currency })}
+                  </Td>
+                </tr>
+              ))}
+            </TableShell>
+          ) : (
+            <p className="px-5 py-8 text-center text-sm text-muted sm:px-6">
+              Заявки с ролика есть, а оплат пока нет. Как только продажу отметят в
+              кабинете, она появится здесь.
+            </p>
+          )}
+        </Card>
       </PageBody>
     </>
   );

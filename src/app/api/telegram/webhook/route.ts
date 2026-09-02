@@ -115,6 +115,92 @@ export async function POST(request: Request) {
 }
 
 // -----------------------------------------------------------------------------
+// Группы: отчёты по расписанию
+// -----------------------------------------------------------------------------
+
+/** Команда без имени бота: в группе Telegram дописывает «@lidera_bot». */
+function commandOf(text: string): { name: string; argument: string } {
+  const [head, ...rest] = text.split(/\s+/);
+  return { name: head.split('@')[0].toLowerCase(), argument: rest.join(' ').trim() };
+}
+
+const BIND_COMMANDS = ['/отчёт', '/отчет', '/report'];
+const UNBIND_COMMANDS = ['/отвязать', '/unbind'];
+
+/**
+ * Привязка группы к проекту.
+ *
+ * Бот видит все группы одинаково, поэтому проект называет человек — кодом из
+ * настроек. Код короткий: его набирают руками в чате, а не копируют ссылкой.
+ */
+async function handleGroupCommand(message: TelegramMessage, text: string) {
+  const chatId = message.chat.id;
+  const { name, argument } = commandOf(text);
+
+  if (UNBIND_COMMANDS.includes(name)) {
+    const supabase = createAdminSupabase();
+    await supabase.from('report_chats').delete().eq('chat_id', chatId);
+    return sendMessage(
+      chatId,
+      'Отчёты в эту группу больше не приходят. Чтобы вернуть — снова отправьте команду с кодом проекта.',
+    );
+  }
+
+  if (!BIND_COMMANDS.includes(name)) return;
+
+  if (!argument) {
+    return sendMessage(
+      chatId,
+      'Нужен код проекта: <code>/отчёт КОД</code>. Код лежит в кабинете, в «Настройках» проекта.',
+    );
+  }
+
+  const supabase = createAdminSupabase();
+  const code = argument.split(/\s+/)[0].toLowerCase();
+
+  const { data: company } = await supabase
+    .from('companies')
+    .select('id, name')
+    .eq('report_code', code)
+    .maybeSingle();
+
+  if (!company) {
+    return sendMessage(
+      chatId,
+      'Такого кода нет. Проверьте его в кабинете: «Настройки» → «Отчёты в Telegram».',
+    );
+  }
+
+  const who = message.from?.username
+    ? `@${message.from.username}`
+    : (message.from?.first_name ?? null);
+
+  // Одна группа — один проект: повторная команда с другим кодом переносит
+  // группу, а не заводит вторую привязку.
+  const { error } = await supabase.from('report_chats').upsert(
+    {
+      company_id: company.id,
+      chat_id: chatId,
+      title: message.chat.title ?? null,
+      linked_by: who,
+    },
+    { onConflict: 'chat_id' },
+  );
+
+  if (error) {
+    console.error('telegram bind chat', error);
+    return sendMessage(chatId, 'Не получилось привязать группу. Попробуйте ещё раз.');
+  }
+
+  return sendMessage(
+    chatId,
+    `Готово: группа привязана к проекту <b>${escapeHtml(company.name)}</b>.\n\n` +
+      'Отчёты будут приходить сюда по расписанию из кабинета. ' +
+      'Чтобы отключить — отправьте <code>/отвязать</code>.',
+  );
+}
+
+// -----------------------------------------------------------------------------
 // Сообщения
 // -----------------------------------------------------------------------------
 
@@ -122,6 +208,14 @@ async function handleMessage(message: TelegramMessage) {
   const chatId = message.chat.id;
   const userId = message.from?.id;
   const text = (message.text ?? '').trim();
+
+  // Группа — это не личный чат сотрудника: там бот только принимает команду
+  // привязки и молчит на всё остальное. Иначе он отвечал бы «вы не
+  // подключены» на каждое сообщение в рабочем чате.
+  if (message.chat.type === 'group' || message.chat.type === 'supergroup') {
+    return handleGroupCommand(message, text);
+  }
+
   if (!userId) return;
 
   if (message.location) {
@@ -1343,8 +1437,8 @@ type TelegramUpdate = {
 };
 
 type TelegramMessage = {
-  chat: { id: number };
-  from?: { id: number; username?: string };
+  chat: { id: number; type?: string; title?: string };
+  from?: { id: number; username?: string; first_name?: string };
   text?: string;
   location?: { latitude: number; longitude: number };
 };

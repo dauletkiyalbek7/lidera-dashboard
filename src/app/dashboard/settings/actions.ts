@@ -11,6 +11,7 @@ import {
 } from '@/lib/attendance';
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { isValidPoint } from '@/lib/geo';
+import { REPORT_SECTIONS, sendReportNow } from '@/lib/group-report';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { TRIAL_TERM_ORDER } from '@/lib/trial-term';
 
@@ -201,4 +202,117 @@ export async function updateShiftSettings(
 
   revalidatePath('/dashboard', 'layout');
   return { success: 'Настройки смены сохранены.' };
+}
+
+// -----------------------------------------------------------------------------
+// Отчёты в группы Telegram
+// -----------------------------------------------------------------------------
+
+const scheduleSchema = z.object({
+  chatId: z.string().uuid('Выберите группу'),
+  sendAt: z
+    .string()
+    .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Время в формате 09:30'),
+  period: z.enum(['today', 'yesterday', 'week', 'month']),
+  sections: z.array(z.enum(REPORT_SECTIONS)).min(1, 'Выберите хотя бы один блок'),
+});
+
+/** Добавить время отправки отчёта в группу. */
+export async function addReportSchedule(
+  _prevState: SettingsState,
+  formData: FormData,
+): Promise<SettingsState> {
+  const { company, readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+
+  const parsed = scheduleSchema.safeParse({
+    chatId: formData.get('chatId'),
+    sendAt: formData.get('sendAt'),
+    period: formData.get('period') ?? 'today',
+    sections: formData.getAll('sections'),
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from('report_schedules').insert({
+    company_id: company.id,
+    chat_id: parsed.data.chatId,
+    send_at: `${parsed.data.sendAt}:00`,
+    period: parsed.data.period,
+    sections: parsed.data.sections,
+  });
+
+  if (error) return { error: 'Не удалось сохранить расписание.' };
+
+  revalidatePath('/dashboard/settings');
+  return { success: 'Расписание добавлено.' };
+}
+
+/** Убрать время отправки. */
+export async function removeReportSchedule(
+  _prevState: SettingsState,
+  formData: FormData,
+): Promise<SettingsState> {
+  const { readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+
+  const id = String(formData.get('id') ?? '');
+  if (!id) return { error: 'Не указано расписание.' };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from('report_schedules').delete().eq('id', id);
+
+  if (error) return { error: 'Не удалось удалить расписание.' };
+
+  revalidatePath('/dashboard/settings');
+  return { success: 'Расписание удалено.' };
+}
+
+/**
+ * Отправить отчёт в группу прямо сейчас.
+ *
+ * Нужна не для красоты: расписание проверяют один раз, при настройке, и
+ * ждать до девяти утра, чтобы увидеть опечатку в наборе блоков, глупо.
+ */
+export async function sendReportNowAction(
+  _prevState: SettingsState,
+  formData: FormData,
+): Promise<SettingsState> {
+  const { readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+
+  const id = String(formData.get('id') ?? '');
+  if (!id) return { error: 'Не указано расписание.' };
+
+  // Проверяем принадлежность расписания компании под RLS, а отправляем уже
+  // серверным клиентом: у планировщика нет пользовательской сессии.
+  const supabase = await createServerSupabase();
+  const { data } = await supabase.from('report_schedules').select('id').eq('id', id).maybeSingle();
+  if (!data) return { error: 'Расписание не найдено.' };
+
+  const ok = await sendReportNow(id);
+  if (!ok) return { error: 'Не удалось отправить отчёт.' };
+
+  return { success: 'Отчёт отправлен в группу.' };
+}
+
+/** Отвязать группу: заодно уходят и все её расписания. */
+export async function removeReportChat(
+  _prevState: SettingsState,
+  formData: FormData,
+): Promise<SettingsState> {
+  const { readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+
+  const id = String(formData.get('id') ?? '');
+  if (!id) return { error: 'Не указана группа.' };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from('report_chats').delete().eq('id', id);
+
+  if (error) return { error: 'Не удалось отвязать группу.' };
+
+  revalidatePath('/dashboard/settings');
+  return { success: 'Группа отвязана.' };
 }

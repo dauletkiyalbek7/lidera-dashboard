@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 
 import { runDistributionForAll } from '@/lib/lead-distribution';
 import { runDayReports } from '@/lib/day-report';
+import { runGroupReports } from '@/lib/group-report';
 import { runTouchReminders } from '@/lib/touch-runner';
 
 /**
@@ -44,5 +45,15 @@ export async function POST(request: Request) {
   // за минуту, уже записано, и цифры в нём сходятся с кабинетом.
   const day = await runDayReports();
 
-  return NextResponse.json({ ok: true, ...distribution, ...touches, ...day });
+  // Отчёты в группы — по своему расписанию, а не по концу рабочего дня:
+  // руководителю нужна и утренняя сводка за вчера, и вечерняя за сегодня.
+  const group = await runGroupReports();
+
+  return NextResponse.json({
+    ok: true,
+    ...distribution,
+    ...touches,
+    ...day,
+    groupReports: group.sent,
+  });
 }

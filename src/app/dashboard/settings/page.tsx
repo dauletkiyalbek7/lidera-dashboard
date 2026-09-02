@@ -7,16 +7,20 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { requireFullAccess } from '@/lib/auth';
 import { formatDate } from '@/lib/format';
 import { COMPANY_STATUS, PLAN_LABELS, ROLE_LABELS, statusOf } from '@/lib/labels';
-import { getSubscription } from '@/lib/queries';
+import { getReportSettings, getSubscription } from '@/lib/queries';
 import { CompanyForm } from './company-form';
 import { DistributionForm } from './distribution-form';
+import { ReportsForm } from './reports-form';
 import { ShiftForm } from './shift-form';
 
 export const metadata: Metadata = { title: 'Настройки' };
 
 export default async function SettingsPage() {
   const { company, profile, email } = await requireFullAccess();
-  const subscription = await getSubscription(company.id);
+  const [subscription, reports] = await Promise.all([
+    getSubscription(company.id),
+    getReportSettings(company.id, company.timezone),
+  ]);
   const status = statusOf(COMPANY_STATUS, company.status);
 
   return (
@@ -79,6 +83,20 @@ export default async function SettingsPage() {
               />
               <DistributionForm
                 defaults={{ auto_assign: company.auto_assign }}
+                disabled={profile.role !== 'DIRECTOR'}
+              />
+            </Card>
+
+            <Card>
+              <CardHeader
+                title="Отчёты в Telegram"
+                subtitle="Бот сам присылает цифры проекта в рабочую группу"
+              />
+              <ReportsForm
+                code={company.report_code}
+                chats={reports.chats}
+                schedules={reports.schedules}
+                botName={process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? null}
                 disabled={profile.role !== 'DIRECTOR'}
               />
             </Card>

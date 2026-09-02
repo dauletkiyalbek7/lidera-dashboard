@@ -49,6 +49,8 @@ export type CompanyRow = Timestamps & {
   sales_currency: string;
   /** Ключ адреса приёма заявок с сайта: /api/forms/<key>. */
   lead_webhook_key: string | null;
+  /** Код для команды /отчёт в группе Telegram. */
+  report_code: string | null;
   /** Настройки авто-раздачи лидов. */
   auto_assign: boolean;
   /** Режим смены и геолокация офиса. */
@@ -579,6 +581,39 @@ export type DayReportRow = {
   sent_at: string;
 }
 
+/** Группа Telegram, в которую платформа шлёт отчёты по расписанию. */
+export type ReportChatRow = {
+  id: string;
+  company_id: string;
+  chat_id: number;
+  title: string | null;
+  /** Кто привязал группу — для разбора, если чат окажется не тем. */
+  linked_by: string | null;
+  created_at: string;
+};
+
+/** Одна строка расписания: во сколько, куда и за какой период. */
+export type ReportScheduleRow = {
+  id: string;
+  company_id: string;
+  chat_id: string;
+  /** Время по часовому поясу компании, «HH:MM:SS». */
+  send_at: string;
+  period: 'today' | 'yesterday' | 'week' | 'month';
+  /** Какие блоки показывать: 'leads' | 'ads' | 'sales' | 'breakdown'. */
+  sections: string[];
+  status: 'active' | 'paused';
+  created_at: string;
+};
+
+/** Отметка об отправке: защита от повторов при ежеминутном планировщике. */
+export type ReportDeliveryRow = {
+  id: string;
+  schedule_id: string;
+  date: string;
+  sent_at: string;
+};
+
 type TableDef<Row, Required extends keyof Row> = {
   Row: Row;
   Insert: Partial<Row> & Pick<Row, Required>;
@@ -635,6 +670,9 @@ export type Database = {
       integrations: TableDef<IntegrationRow, 'company_id' | 'platform'>;
       form_submissions: TableDef<FormSubmissionRow, 'status'>;
       audit_logs: TableDef<AuditLogRow, 'action'>;
+      report_chats: TableDef<ReportChatRow, 'company_id' | 'chat_id'>;
+      report_schedules: TableDef<ReportScheduleRow, 'company_id' | 'chat_id' | 'send_at'>;
+      report_deliveries: TableDef<ReportDeliveryRow, 'schedule_id' | 'date'>;
     };
     Views: Record<never, never>;
     // Служебные функции RLS живут в схеме private и наружу не выставлены.

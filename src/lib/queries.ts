@@ -6,7 +6,7 @@ import { creativeLabel } from '@/lib/creative-label';
 import { createRateLookup } from '@/lib/currency';
 import { countUntouched, isReached, leadStage } from '@/lib/lead-status';
 import { wasHeld } from '@/lib/trial-status';
-import { eachDay, zonedDayWindow } from '@/lib/period';
+import { eachDay, zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import {
   emptyPerformance,
   summarize,
@@ -2170,6 +2170,75 @@ export async function getIntegrations(companyId: string) {
 }
 
 /** Отдел продаж компании. */
+/** Группа Telegram и её расписание отчётов — для настроек проекта. */
+export type ReportSettings = {
+  chats: { id: string; title: string | null; chatId: number }[];
+  schedules: {
+    id: string;
+    chatId: string;
+    chatTitle: string;
+    sendAt: string;
+    period: string;
+    sections: string[];
+    sentToday: boolean;
+  }[];
+};
+
+export async function getReportSettings(
+  companyId: string,
+  timeZone: string,
+): Promise<ReportSettings> {
+  const supabase = await createServerSupabase();
+
+  const [{ data: chats }, { data: schedules }] = await Promise.all([
+    supabase
+      .from('report_chats')
+      .select('id, title, chat_id')
+      .eq('company_id', companyId)
+      .order('created_at'),
+    supabase
+      .from('report_schedules')
+      .select('id, chat_id, send_at, period, sections')
+      .eq('company_id', companyId)
+      .order('send_at'),
+  ]);
+
+  // Отметка «сегодня уже отправлен» — чтобы было видно, что расписание живое,
+  // а не просто записано.
+  const today = zonedIsoDate(new Date(), timeZone);
+  const ids = (schedules ?? []).map((row) => row.id);
+
+  const { data: deliveries } = ids.length
+    ? await supabase
+        .from('report_deliveries')
+        .select('schedule_id')
+        .eq('date', today)
+        .in('schedule_id', ids)
+    : { data: [] };
+
+  const sent = new Set((deliveries ?? []).map((row) => row.schedule_id));
+  const titles = new Map(
+    (chats ?? []).map((row) => [row.id, row.title || `Группа ${row.chat_id}`]),
+  );
+
+  return {
+    chats: (chats ?? []).map((row) => ({
+      id: row.id,
+      title: row.title,
+      chatId: row.chat_id,
+    })),
+    schedules: (schedules ?? []).map((row) => ({
+      id: row.id,
+      chatId: row.chat_id,
+      chatTitle: titles.get(row.chat_id) ?? 'Группа',
+      sendAt: row.send_at,
+      period: row.period,
+      sections: row.sections,
+      sentToday: sent.has(row.id),
+    })),
+  };
+}
+
 export type DepartmentItem = {
   id: string;
   name: string;

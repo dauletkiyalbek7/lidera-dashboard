@@ -4,7 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { creativeLabel } from '@/lib/creative-label';
 import { currencySymbol } from '@/lib/format';
-import { refreshCompanyAds } from '@/lib/meta-sync';
+import { refreshCompanyAds, type AdsFreshness } from '@/lib/meta-sync';
 import { zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
@@ -91,7 +91,7 @@ export async function runGroupReports(): Promise<ReportResult> {
 
   // Один кабинет на минуту, а не на каждое расписание: в одну минуту могут
   // совпасть два времени, и второму синхронизация уже не нужна.
-  const refreshed = new Map<string, 'fresh' | 'stale' | 'none'>();
+  const refreshed = new Map<string, AdsFreshness>();
 
   for (const schedule of schedules) {
     const company = companyById.get(schedule.company_id);
@@ -128,7 +128,7 @@ export async function runGroupReports(): Promise<ReportResult> {
     const freshness =
       refreshed.get(company.id) ??
       (Date.now() - startedAt > REFRESH_BUDGET_MS
-        ? 'stale'
+        ? ({ state: 'stale', syncedAt: null } as AdsFreshness)
         : await refreshCompanyAds(company.id));
     refreshed.set(company.id, freshness);
 
@@ -201,8 +201,8 @@ type ReportInput = {
   salesCurrency: string;
   period: ReportPeriod;
   sections: ReportSection[];
-  /** Удалось ли обновить расход перед отправкой: об этом пишем в отчёте. */
-  adsFreshness?: 'fresh' | 'stale' | 'none';
+  /** Когда обновлялся расход: об этом пишем в отчёте. */
+  adsFreshness?: AdsFreshness;
 };
 
 /** Собрать текст отчёта. Отдельно от отправки — чтобы можно было проверить. */
@@ -259,7 +259,8 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
       .from('creatives')
       .select('id, name, label, format, created_at')
       .eq('company_id', input.companyId)
-      .order('created_at'),
+      .order('created_at')
+      .order('id'),
   ]);
 
   // Кампании найма из отчёта убираем — они портят цену заявки.
@@ -374,25 +375,31 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
 
   // Подпись о свежести — только там, где есть деньги: в отчёте без расхода
   // она ни о чём не говорит.
-  if (has('ads')) {
-    if (input.adsFreshness === 'fresh') {
-      lines.push('', `<i>Расход из кабинета на ${clock(input.timezone)}</i>`);
-    } else if (input.adsFreshness === 'stale') {
-      lines.push('', '<i>Расход с прошлой синхронизации: обновить сейчас не вышло</i>');
-    }
+  if (has('ads') && input.adsFreshness && input.adsFreshness.state !== 'none') {
+    const at = input.adsFreshness.syncedAt;
+    const stamp = at ? clock(at, input.timezone) : null;
+
+    lines.push(
+      '',
+      input.adsFreshness.state === 'fresh'
+        ? `<i>Расход из кабинета на ${stamp}</i>`
+        : stamp
+          ? `<i>Расход на ${stamp}: обновить сейчас не вышло</i>`
+          : '<i>Расход с прошлой синхронизации: обновить сейчас не вышло</i>',
+    );
   }
 
   return lines.join('\n').trim();
 }
 
 /** Время по часам компании: «23:41». */
-function clock(timeZone: string): string {
+function clock(moment: Date, timeZone: string): string {
   return new Intl.DateTimeFormat('ru-RU', {
     timeZone,
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
-  }).format(new Date());
+  }).format(moment);
 }
 
 /** Статусы, при которых с человеком реально поговорили. */

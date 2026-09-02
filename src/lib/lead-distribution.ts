@@ -313,7 +313,8 @@ async function creativeLabels(
     .from('creatives')
     .select('id, label, format, created_at')
     .eq('company_id', companyId)
-    .order('created_at');
+    .order('created_at')
+    .order('id');
 
   const labels = new Map<string, string>();
   (data ?? []).forEach((row, index) => {

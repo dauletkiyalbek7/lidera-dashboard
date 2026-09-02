@@ -90,7 +90,8 @@ export async function shortCreativeLabel(
     .from('creatives')
     .select('id, label, format, created_at')
     .eq('company_id', companyId)
-    .order('created_at');
+    .order('created_at')
+    .order('id');
 
   const index = (data ?? []).findIndex((row) => row.id === creativeId);
   if (index < 0) return null;

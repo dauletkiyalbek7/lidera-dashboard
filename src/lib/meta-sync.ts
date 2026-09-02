@@ -34,6 +34,20 @@ const WINDOW_DAYS = 30;
  */
 const QUICK_WINDOW_DAYS = 3;
 
+/**
+ * Насколько недавняя синхронизация считается достаточно свежей.
+ *
+ * Плановая ходит раз в два часа; если отчёт пришёлся вскоре после неё, второй
+ * заход ничего не изменит, а лимит обращений израсходует.
+ */
+const FRESH_ENOUGH_MS = 20 * 60 * 1000;
+
+/** Когда в последний раз обновлялись цифры кабинета и получилось ли сейчас. */
+export type AdsFreshness = {
+  state: 'fresh' | 'stale' | 'none';
+  syncedAt: Date | null;
+};
+
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -150,7 +164,7 @@ export function isMetaConfigured(): boolean {
  * не хватило, следующий запуск начнёт с тех, кого отложили, и ни один кабинет
  * не останется без синхронизации навсегда.
  */
-export async function syncAllMetaAccounts(): Promise<{
+export async function syncAllMetaAccounts(options?: { windowDays?: number }): Promise<{
   accounts: MetaSyncResult[];
   errors: { account: string; message: string }[];
   skipped: string[];
@@ -216,7 +230,7 @@ export async function syncAllMetaAccounts(): Promise<{
     }
 
     const settled = await Promise.allSettled(
-      batch.map((account) => syncMetaAccount(account.id)),
+      batch.map((account) => syncMetaAccount(account.id, { windowDays: options?.windowDays })),
     );
 
     settled.forEach((outcome, index) => {
@@ -409,21 +423,36 @@ export async function syncMetaAccount(
  * равно уходит, но с оговоркой: лучше цифры постарше с честной подписью, чем
  * молчание.
  */
-export async function refreshCompanyAds(
-  companyId: string,
-): Promise<'fresh' | 'stale' | 'none'> {
-  if (!isMetaConfigured()) return 'none';
+export async function refreshCompanyAds(companyId: string): Promise<AdsFreshness> {
+  if (!isMetaConfigured()) return { state: 'none', syncedAt: null };
 
   const supabase = createAdminSupabase();
 
-  const { data: accounts } = await supabase
-    .from('ad_accounts')
-    .select('id')
-    .eq('company_id', companyId)
-    .eq('platform', 'meta')
-    .not('account_id', 'is', null);
+  const [{ data: accounts }, { data: note }] = await Promise.all([
+    supabase
+      .from('ad_accounts')
+      .select('id')
+      .eq('company_id', companyId)
+      .eq('platform', 'meta')
+      .not('account_id', 'is', null),
+    supabase
+      .from('integrations')
+      .select('last_sync_at')
+      .eq('company_id', companyId)
+      .eq('platform', 'meta')
+      .maybeSingle(),
+  ]);
 
-  if (!accounts || accounts.length === 0) return 'none';
+  if (!accounts || accounts.length === 0) return { state: 'none', syncedAt: null };
+
+  // Плановая синхронизация ходит своим чередом, и отчёт может прийтись сразу
+  // за ней. Ходить в Meta второй раз за десять минут незачем: цифры те же, а
+  // лимит обращений общий на все проекты — его лучше поберечь.
+  const lastSync = note?.last_sync_at ? new Date(note.last_sync_at) : null;
+
+  if (lastSync && Date.now() - lastSync.getTime() < FRESH_ENOUGH_MS) {
+    return { state: 'fresh', syncedAt: lastSync };
+  }
 
   let ok = true;
 
@@ -437,7 +466,9 @@ export async function refreshCompanyAds(
     }
   }
 
-  return ok ? 'fresh' : 'stale';
+  return ok
+    ? { state: 'fresh', syncedAt: new Date() }
+    : { state: 'stale', syncedAt: lastSync };
 }
 
 /** Ограничение частоты и подобные «попробуйте позже» проходят сами. */

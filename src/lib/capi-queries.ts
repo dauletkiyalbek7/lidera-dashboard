@@ -91,7 +91,8 @@ export async function getCapiOverview(
       .from('creatives')
       .select('id, name, label, format, created_at')
       .eq('company_id', companyId)
-      .order('created_at'),
+      .order('created_at')
+      .order('id'),
   ]);
 
   const creativeNames = new Map(

@@ -46,7 +46,8 @@ export async function GET(request: Request) {
       .from('creatives')
       .select('id, name, label, format, created_at')
       .eq('company_id', company.id)
-      .order('created_at'),
+      .order('created_at')
+      .order('id'),
     supabase.from('departments').select('id, name').eq('company_id', company.id),
     supabase.from('employees').select('id, full_name').eq('company_id', company.id),
   ]);

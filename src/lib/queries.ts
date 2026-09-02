@@ -269,7 +269,8 @@ export async function getDashboardData(
       .select('id, name, label, platform, format, created_at')
       .eq('company_id', companyId)
       // Порядок важен: номер в подписи «Видео 7» — это место в списке.
-      .order('created_at'),
+      .order('created_at')
+      .order('id'),
     supabase
       .from('trials')
       .select('id, date, status, lead_id')
@@ -594,7 +595,8 @@ export async function getCreativeCards(
           'id, name, label, title, body, status, format, platform, thumbnail_url, video_id, created_at',
         )
         .eq('company_id', companyId)
-        .order('created_at'),
+        .order('created_at')
+        .order('id'),
       selectAll((start, end) =>
         supabase
           .from('ad_metrics')
@@ -1355,7 +1357,8 @@ export async function getLeads(
         .from('creatives')
         .select('id, name, label, format, created_at')
         .eq('company_id', companyId)
-        .order('created_at'),
+        .order('created_at')
+        .order('id'),
       supabase.from('employees').select('id, full_name').eq('company_id', companyId),
       supabase.from('departments').select('id, name').eq('company_id', companyId),
     ]);
@@ -1507,7 +1510,8 @@ export async function searchClients(
         .from('creatives')
         .select('id, name, label, format, created_at')
         .eq('company_id', companyId)
-        .order('created_at'),
+        .order('created_at')
+        .order('id'),
       supabase.from('employees').select('id, full_name').eq('company_id', companyId),
       supabase.from('departments').select('id, name').eq('company_id', companyId),
       supabase
@@ -1998,7 +2002,8 @@ export async function getSales(
       .from('creatives')
       .select('id, name, label, format, created_at')
       .eq('company_id', companyId)
-      .order('created_at'),
+      .order('created_at')
+      .order('id'),
     supabase.from('departments').select('id, name').eq('company_id', companyId),
   ]);
 

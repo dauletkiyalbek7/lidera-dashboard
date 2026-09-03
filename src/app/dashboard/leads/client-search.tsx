@@ -43,11 +43,14 @@ export function ClientSearchResults({
   matches,
   trialTerm,
   currency,
+  timeZone,
 }: {
   query: string;
   matches: ClientMatch[];
   trialTerm: string;
   currency: string;
+  /** Пояс проекта: время заявки должно совпадать с часами на телефоне. */
+  timeZone: string;
 }) {
   const words = trialWords(trialTerm);
 
@@ -114,7 +117,7 @@ export function ClientSearchResults({
               </div>
 
               <dl className="mt-4 grid gap-x-6 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-3">
-                <Fact label="Пришёл" value={formatDateTime(match.createdAt)} />
+                <Fact label="Пришёл" value={formatDateTime(match.createdAt, timeZone)} />
                 <Fact
                   label="Источник"
                   value={[match.platform, match.source].filter(Boolean).join(' · ') || null}
@@ -139,19 +142,19 @@ export function ClientSearchResults({
                     match.touchCount
                       ? `${match.touchCount}${
                           match.lastTouchAt
-                            ? `, последнее ${formatDate(match.lastTouchAt)}`
+                            ? `, последнее ${formatDate(match.lastTouchAt, timeZone)}`
                             : ''
                         }`
                       : null
                   }
                 />
                 {match.nextTouchAt ? (
-                  <Fact label="Обещал перезвонить" value={formatDateTime(match.nextTouchAt)} />
+                  <Fact label="Обещал перезвонить" value={formatDateTime(match.nextTouchAt, timeZone)} />
                 ) : null}
               </dl>
 
               {match.messages.length > 0 ? (
-                <Conversation messages={match.messages} />
+                <Conversation messages={match.messages} timeZone={timeZone} />
               ) : null}
 
               {match.visits.length > 0 ? (
@@ -212,8 +215,10 @@ export function ClientSearchResults({
  */
 function Conversation({
   messages,
+  timeZone,
 }: {
   messages: ClientMatch['messages'];
+  timeZone: string;
 }) {
   return (
     <div className="mt-4 rounded-panel border border-line bg-surface-2 px-4 py-3">
@@ -241,7 +246,7 @@ function Conversation({
                 </p>
                 <p className="tabular mt-1 text-[11px] text-faint">
                   {outgoing ? 'Автоответ · ' : ''}
-                  {formatTime(message.sentAt)}
+                  {formatTime(message.sentAt, timeZone)}
                   {message.status === 'failed' ? ' · не доставлено' : ''}
                 </p>
               </div>

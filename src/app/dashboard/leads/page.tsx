@@ -154,6 +154,7 @@ export default async function LeadsPage({
             matches={matches}
             trialTerm={company.trial_term}
             currency={company.sales_currency}
+            timeZone={company.timezone}
           />
         ) : (
           <>
@@ -278,7 +279,7 @@ export default async function LeadsPage({
                         )}
                       </Td>
                       <Td showFrom="md" className="tabular text-muted">
-                        {formatDateTime(lead.created_at)}
+                        {formatDateTime(lead.created_at, company.timezone)}
                       </Td>
                       <Td>
                         <LeadStatusSelect

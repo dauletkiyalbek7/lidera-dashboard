@@ -91,7 +91,7 @@ export default async function WhatsappPage() {
                           <span>Отдел: {number.departmentName}</span>
                         ) : null}
                         {number.lastMessageAt ? (
-                          <span>Последнее сообщение: {formatDateTime(number.lastMessageAt)}</span>
+                          <span>Последнее сообщение: {formatDateTime(number.lastMessageAt, company.timezone)}</span>
                         ) : (
                           <span>Сообщений пока не было</span>
                         )}

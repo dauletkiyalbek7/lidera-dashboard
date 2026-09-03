@@ -90,7 +90,7 @@ export default async function CapiPage({
           />
           <StatTile
             label="Последняя отправка"
-            value={settings?.lastEventAt ? formatDateTime(settings.lastEventAt) : '—'}
+            value={settings?.lastEventAt ? formatDateTime(settings.lastEventAt, company.timezone) : '—'}
             hint={
               settings?.enabled === false
                 ? 'Отправка выключена в настройках'
@@ -173,7 +173,7 @@ export default async function CapiPage({
                 {overview.events.map((event) => (
                   <tr key={event.id} className="transition-colors hover:bg-surface-2/60">
                     <Td first className="tabular text-muted">
-                      {formatDateTime(event.createdAt)}
+                      {formatDateTime(event.createdAt, company.timezone)}
                     </Td>
                     <Td className="font-medium text-ink">
                       {event.test ? (

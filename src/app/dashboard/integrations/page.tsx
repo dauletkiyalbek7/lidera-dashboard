@@ -107,7 +107,7 @@ export default async function IntegrationsPage() {
                   <div className="flex flex-wrap items-center justify-between gap-3">
                     <p className="text-[12px] text-faint">
                       {record?.last_sync_at
-                        ? `Обновлено: ${formatDateTime(record.last_sync_at)}`
+                        ? `Обновлено: ${formatDateTime(record.last_sync_at, company.timezone)}`
                         : 'Синхронизаций ещё не было'}
                     </p>
                     {item.platform === 'meta' ? (
@@ -206,7 +206,7 @@ export default async function IntegrationsPage() {
                 <li key={item.id} className="py-3.5">
                   <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
                     <span className="tabular text-[12.5px] text-muted">
-                      {formatDateTime(item.createdAt)}
+                      {formatDateTime(item.createdAt, company.timezone)}
                     </span>
                     <span className="text-[13px] font-medium text-ink">
                       {item.reason ?? 'причина не записана'}

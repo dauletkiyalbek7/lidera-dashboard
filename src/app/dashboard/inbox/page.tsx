@@ -61,12 +61,17 @@ export default async function InboxPage({
             <div className="grid lg:grid-cols-[320px_1fr]">
               <aside className="border-b border-line lg:border-b-0 lg:border-r">
                 <SearchForm defaultValue={q ?? ''} />
-                <List conversations={conversations} activeId={thread?.leadId ?? null} query={q} />
+                <List
+                  conversations={conversations}
+                  activeId={thread?.leadId ?? null}
+                  query={q}
+                  timeZone={company.timezone}
+                />
               </aside>
 
               <section className="min-w-0">
                 {thread ? (
-                  <ThreadView thread={thread} />
+                  <ThreadView thread={thread} timeZone={company.timezone} />
                 ) : (
                   <div className="p-6">
                     <EmptyState
@@ -108,10 +113,12 @@ function List({
   conversations,
   activeId,
   query,
+  timeZone,
 }: {
   conversations: Conversation[];
   activeId: string | null;
   query?: string;
+  timeZone: string;
 }) {
   if (conversations.length === 0) {
     return <p className="px-4 py-6 text-[13px] text-faint">Никого не нашлось.</p>;
@@ -132,7 +139,7 @@ function List({
               <div className="flex items-baseline justify-between gap-2">
                 <span className="truncate text-[14px] font-medium text-ink">{item.name}</span>
                 <span className="tabular shrink-0 text-[11.5px] text-faint">
-                  {item.lastAt ? formatTime(item.lastAt) : ''}
+                  {item.lastAt ? formatTime(item.lastAt, timeZone) : ''}
                 </span>
               </div>
 
@@ -153,7 +160,7 @@ function List({
   );
 }
 
-function ThreadView({ thread }: { thread: Thread }) {
+function ThreadView({ thread, timeZone }: { thread: Thread; timeZone: string }) {
   const status = leadStatusFor(thread.status, undefined);
 
   return (
@@ -172,7 +179,9 @@ function ThreadView({ thread }: { thread: Thread }) {
         {thread.messages.length === 0 ? (
           <p className="text-[13px] text-faint">Сообщений пока нет.</p>
         ) : (
-          thread.messages.map((message) => <Bubble key={message.id} message={message} />)
+          thread.messages.map((message) => (
+            <Bubble key={message.id} message={message} timeZone={timeZone} />
+          ))
         )}
       </div>
 
@@ -200,8 +209,10 @@ function ThreadView({ thread }: { thread: Thread }) {
  */
 function Bubble({
   message,
+  timeZone,
 }: {
   message: Thread['messages'][number];
+  timeZone: string;
 }) {
   const own = message.direction === 'out';
 
@@ -217,7 +228,7 @@ function Bubble({
         </p>
 
         <p className="tabular mt-1 text-[11px] text-faint">
-          {formatDateTime(message.sentAt)}
+          {formatDateTime(message.sentAt, timeZone)}
           {own ? ` · ${deliveryLabel(message.status)}` : ''}
         </p>
 

@@ -106,7 +106,7 @@ export default async function TrialsPage({
                   </Td>
                   <Td showFrom="md" className="tabular text-ink-soft">
                     {trial.startsAt ? (
-                      formatDateTime(trial.startsAt)
+                      formatDateTime(trial.startsAt, company.timezone)
                     ) : (
                       <span className="text-faint">
                         {formatDate(trial.date)} · время не назначено

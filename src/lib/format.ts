@@ -7,6 +7,17 @@
 
 const RU = 'ru-RU';
 
+/**
+ * Пояс, в котором печатаются дата и время.
+ *
+ * Сервер живёт по Гринвичу, а заявка приходит по местному времени: без явного
+ * пояса вечерняя заявка в 17:13 показывалась как 12:13, и менеджер не мог
+ * сверить её со своим телефоном. У компании пояс свой (`companies.timezone`);
+ * там, где компания под рукой, он и передаётся, а этот — на случай, когда
+ * пояс неизвестен: почти все проекты в Алматы.
+ */
+export const DEFAULT_TIME_ZONE = 'Asia/Almaty';
+
 export const CURRENCIES = {
   KZT: { symbol: '₸', label: 'Тенге ₸' },
   USD: { symbol: '$', label: 'Доллар $' },
@@ -57,35 +68,37 @@ export function formatRatio(value: number): string {
   return formatNumber(value, value >= 10 ? 1 : 2);
 }
 
-export function formatDate(value: string | Date): string {
+export function formatDate(value: string | Date, timeZone = DEFAULT_TIME_ZONE): string {
   const date = typeof value === 'string' ? new Date(value) : value;
   return new Intl.DateTimeFormat(RU, {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
+    timeZone,
   }).format(date);
 }
 
-export function formatDateShort(value: string | Date): string {
+export function formatDateShort(value: string | Date, timeZone = DEFAULT_TIME_ZONE): string {
   const date = typeof value === 'string' ? new Date(value) : value;
-  return new Intl.DateTimeFormat(RU, { day: '2-digit', month: 'short' }).format(date);
+  return new Intl.DateTimeFormat(RU, { day: '2-digit', month: 'short', timeZone }).format(date);
 }
 
 /**
  * Дата и время в переписке: день без года, потому что разговор всегда
  * недавний, а лишние цифры мешают читать его как чат.
  */
-export function formatTime(value: string | Date): string {
+export function formatTime(value: string | Date, timeZone = DEFAULT_TIME_ZONE): string {
   const date = typeof value === 'string' ? new Date(value) : value;
   return new Intl.DateTimeFormat(RU, {
     day: '2-digit',
     month: 'short',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone,
   }).format(date);
 }
 
-export function formatDateTime(value: string | Date): string {
+export function formatDateTime(value: string | Date, timeZone = DEFAULT_TIME_ZONE): string {
   const date = typeof value === 'string' ? new Date(value) : value;
   return new Intl.DateTimeFormat(RU, {
     day: '2-digit',
@@ -93,6 +106,7 @@ export function formatDateTime(value: string | Date): string {
     year: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
+    timeZone,
   }).format(date);
 }
 

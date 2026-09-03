@@ -120,7 +120,7 @@ export default async function ReturnsPage({
                     {formatDate(row.saleDate)}
                   </Td>
                   <Td showFrom="md" className="tabular text-ink-soft">
-                    {formatDateTime(row.createdAt)}
+                    {formatDateTime(row.createdAt, company.timezone)}
                   </Td>
                   <Td
                     showFrom="md"

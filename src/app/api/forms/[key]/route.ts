@@ -190,54 +190,15 @@ export async function POST(
     );
   }
 
-  const fbclid = pick(payload, ['fbclid']);
-  const fbc =
-    pick(payload, ['fbc', '_fbc']) ??
-    (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
-
-  const utmContent = pick(payload, ['utm_content']) ?? null;
-
-  // Выгрузка моментальной формы приносит номер объявления прямым полем, а
-  // лендинг — подстановкой {{ad.id}} в utm_content. Источник разный, смысл
-  // один, поэтому берём первое, что нашлось.
-  const adExternalId = idValue(pick(payload, AD_KEYS));
-
-  // Объявление знает и свой креатив, и свою кампанию — заявка попадёт в оба
-  // отчёта сразу.
-  const placement = await adPlacement(supabase, company.id, adExternalId);
-  const arrived = arrivedAt(pick(payload, ['created_time']));
-
-  const { data: created, error } = await supabase.from('leads').insert({
-    company_id: company.id,
-    campaign_id: placement.campaignId,
-    name: name || 'Заявка с сайта',
+  const row = await leadFromPayload(supabase, company.id, source, payload, {
+    name,
     phone,
     email,
-    // Поток знает, откуда пришла заявка, и это надёжнее догадки по меткам.
-    source: source?.platform ?? 'site',
-    platform: adPlatform(source?.platform) ?? (fbc ? 'meta' : null),
-    department_id: source?.department_id ?? null,
-    lead_source_id: source?.id ?? null,
-    leadgen_id: idValue(pick(payload, LEADGEN_KEYS)),
-    // Объявление подставляем, если знаем его. Не нашли — лид всё равно
-    // сохраняем: номер объявления останется в utm_content, и креатив
-    // доставится после ближайшей синхронизации.
-    creative_id: placement.creativeId,
-    utm_source: pick(payload, ['utm_source']) ?? null,
-    utm_medium: pick(payload, ['utm_medium']) ?? null,
-    utm_campaign: pick(payload, ['utm_campaign']) ?? null,
-    // Номер объявления кладём сюда же, когда своей метки нет: смысл поля тот
-    // же — какое объявление привело человека. Без этого номер теряется
-    // навсегда, и заявку, пришедшую раньше синхронизации, привязать уже нечем.
-    utm_content: utmContent ?? adExternalId,
-    utm_term: pick(payload, ['utm_term']) ?? null,
-    fbc,
-    fbp: pick(payload, ['fbp', '_fbp']) ?? null,
-    external_id: pick(payload, ['tranid', 'transaction_id', 'external_id']) ?? null,
-    status: 'new',
-    // Выгрузку заливают и задним числом — дата из неё честнее даты загрузки.
-    ...(arrived ? { created_at: arrived } : {}),
-  })
+  });
+
+  const { data: created, error } = await supabase
+    .from('leads')
+    .insert(row)
     .select('id')
     .maybeSingle();
 
@@ -267,6 +228,78 @@ export async function POST(
  * Старые ключи компаний перенесены в потоки миграцией, поэтому отдельной
  * ветки под них здесь нет: один механизм, одна выборка.
  */
+/** Поток заявок: откуда пришла форма и какому отделу она принадлежит. */
+export type LeadSource = {
+  id: string;
+  department_id: string | null;
+  platform: string;
+};
+
+/**
+ * Собрать строку заявки из полей формы.
+ *
+ * Отдельно от вставки, потому что тем же разбором восстанавливаются заявки из
+ * журнала `form_submissions`: платформа хранит всё, что прислал вебхук, и
+ * пересобирать их вторым, похожим кодом — верный способ получить две разные
+ * правды об одной заявке.
+ */
+export async function leadFromPayload(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  companyId: string,
+  source: LeadSource | null,
+  payload: Record<string, string>,
+  contact: { name: string; phone: string | null; email: string | null },
+) {
+  const fbclid = pick(payload, ['fbclid']);
+  const fbc =
+    pick(payload, ['fbc', '_fbc']) ??
+    (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
+
+  const utmContent = pick(payload, ['utm_content']) ?? null;
+
+  // Выгрузка моментальной формы приносит номер объявления прямым полем, а
+  // лендинг — подстановкой {{ad.id}} в utm_content. Источник разный, смысл
+  // один, поэтому берём первое, что нашлось.
+  const adExternalId = idValue(pick(payload, AD_KEYS));
+
+  // Объявление знает и свой креатив, и свою кампанию — заявка попадёт в оба
+  // отчёта сразу.
+  const placement = await adPlacement(supabase, companyId, adExternalId);
+  const arrived = arrivedAt(pick(payload, ['created_time']));
+
+  return {
+    company_id: companyId,
+    campaign_id: placement.campaignId,
+    name: contact.name || 'Заявка с сайта',
+    phone: contact.phone,
+    email: contact.email,
+    // Поток знает, откуда пришла заявка, и это надёжнее догадки по меткам.
+    source: source?.platform ?? 'site',
+    platform: adPlatform(source?.platform) ?? (fbc ? 'meta' : null),
+    department_id: source?.department_id ?? null,
+    lead_source_id: source?.id ?? null,
+    leadgen_id: idValue(pick(payload, LEADGEN_KEYS)),
+    // Объявление подставляем, если знаем его. Не нашли — лид всё равно
+    // сохраняем: номер объявления останется в utm_content, и креатив
+    // доставится после ближайшей синхронизации.
+    creative_id: placement.creativeId,
+    utm_source: pick(payload, ['utm_source']) ?? null,
+    utm_medium: pick(payload, ['utm_medium']) ?? null,
+    utm_campaign: pick(payload, ['utm_campaign']) ?? null,
+    // Номер объявления кладём сюда же, когда своей метки нет: смысл поля тот
+    // же — какое объявление привело человека. Без этого номер теряется
+    // навсегда, и заявку, пришедшую раньше синхронизации, привязать уже нечем.
+    utm_content: utmContent ?? adExternalId,
+    utm_term: pick(payload, ['utm_term']) ?? null,
+    fbc,
+    fbp: pick(payload, ['fbp', '_fbp']) ?? null,
+    external_id: pick(payload, ['tranid', 'transaction_id', 'external_id']) ?? null,
+    status: 'new' as const,
+    // Выгрузку заливают и задним числом — дата из неё честнее даты загрузки.
+    ...(arrived ? { created_at: arrived } : {}),
+  };
+}
+
 async function sourceByKey(
   supabase: ReturnType<typeof createAdminSupabase>,
   key: string,

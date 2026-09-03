@@ -983,52 +983,21 @@ async function pullFromMeta(
   // иначе строки подерутся за уникальный ключ «креатив + день».
   const merged = new Map<string, MetricRow>();
 
-  // Семейство решаем один раз на объявление и день, по дневной строке. В
-  // отдельном часе переписок может не быть вовсе, зато найдётся случайная
-  // заявка со стороны — и час за часом набежала бы цифра, которой в кабинете
-  // нет.
-  const familyByAdDay = new Map<string, 'chats' | 'leads'>();
+  /** Строка «креатив + кампания + день»: заводим при первом обращении. */
+  const rowFor = (
+    key: string,
+    seed: { campaignId: string; creativeId: string | null; date: string },
+  ): MetricRow => {
+    const existing = merged.get(key);
+    if (existing) return existing;
 
-  for (const row of dailyInsights) {
-    if (row.ad_id) familyByAdDay.set(`${row.ad_id}|${row.date_start}`, adFamily(row.actions));
-  }
-
-  for (const row of insights) {
-    const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
-    if (!campaignId) continue;
-
-    const spend = Number(row.spend ?? 0);
-    // Заявка и переписка — разные события и разные люди, поэтому и колонки
-    // разные. Складывать их в одно число нельзя: заявка доходит до CRM, а
-    // написавший в WhatsApp остаётся в мессенджере, и смешанная цифра не
-    // сходится ни с кабинетом, ни с разделом «Лиды».
-    const family =
-      (row.ad_id ? familyByAdDay.get(`${row.ad_id}|${row.date_start}`) : null) ??
-      adFamily(row.actions);
-    const conversations = family === 'chats' ? firstActionValue(row.actions, CONVERSATION_ACTIONS) : 0;
-    const leads = family === 'chats' ? 0 : adLeadValue(row.actions);
-
-    // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
-    // разбивку) остаётся на своём дне — это лучше, чем потерять её.
-    const date = companyDate(row, accountTimeZone, companyTimeZone);
-    // Крайние дни собрались бы из одного часа: остальные их часы лежат за
-    // границей запрошенного окна. Такой огрызок в отчёт не пускаем — заодно
-    // это держит записанные дни внутри окна, которое ниже перезаписывается.
-    if (date < since || date > until) continue;
-
-    const creativeId = row.ad_id ? (creativeIdByAd.get(row.ad_id) ?? null) : null;
-    const key = `${creativeId ?? 'нет'}|${campaignId}|${date}`;
-
-    const plays = actionValue(row.video_play_actions, ['video_view']);
-    const completions = actionValue(row.video_p100_watched_actions, ['video_view']);
-
-    const current = merged.get(key) ?? {
+    const fresh: MetricRow = {
       company_id: account.company_id,
       currency: accountCurrency,
-      campaign_id: campaignId,
-      creative_id: creativeId,
-      platform: 'meta' as const,
-      date,
+      campaign_id: seed.campaignId,
+      creative_id: seed.creativeId,
+      platform: 'meta',
+      date: seed.date,
       spend: 0,
       impressions: 0,
       reach: 0,
@@ -1044,27 +1013,69 @@ async function pullFromMeta(
       video_avg_seconds: 0,
     };
 
+    merged.set(key, fresh);
+    return fresh;
+  };
+
+  for (const row of insights) {
+    const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
+    if (!campaignId) continue;
+
+    const spend = Number(row.spend ?? 0);
+
+    // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
+    // разбивку) остаётся на своём дне — это лучше, чем потерять её.
+    const date = companyDate(row, accountTimeZone, companyTimeZone);
+    // Крайние дни собрались бы из одного часа: остальные их часы лежат за
+    // границей запрошенного окна. Такой огрызок в отчёт не пускаем — заодно
+    // это держит записанные дни внутри окна, которое ниже перезаписывается.
+    if (date < since || date > until) continue;
+
+    const creativeId = row.ad_id ? (creativeIdByAd.get(row.ad_id) ?? null) : null;
+    const key = `${creativeId ?? 'нет'}|${campaignId}|${date}`;
+
+    const plays = actionValue(row.video_play_actions, ['video_view']);
+    const completions = actionValue(row.video_p100_watched_actions, ['video_view']);
+
+    const current = rowFor(key, { campaignId, creativeId, date });
+
     current.spend += spend;
     current.impressions += Number(row.impressions ?? 0);
     current.clicks += Number(row.clicks ?? 0);
-    current.leads += leads;
-    current.conversations += conversations;
     current.video_plays += plays;
     current.video_completions += completions;
-
-    merged.set(key, current);
   }
 
-  // Охват и среднее время просмотра — из дневного запроса. По часам их не
-  // разложить, поэтому день кабинета кладём на одноимённый наш день: из его
-  // 24 часов 23 приходятся именно на него.
+  // Охват, заявки и среднее время просмотра — из дневного запроса. По часам
+  // их не разложить, поэтому день кабинета кладём на одноимённый наш день: из
+  // его 24 часов 23 приходятся именно на него.
+  //
+  // Заявки складывать по часам нельзя, даже когда часы есть. Meta считает
+  // окно атрибуции для каждого часа отдельно, и сумма 24 часов выходит больше
+  // дневной строки: у «ҰБТ 2 man» за 2 сентября по часам набегало 85 заявок
+  // против 71 в кабинете. Мы обещали цифру кабинета — берём её строку.
   for (const row of dailyInsights) {
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
 
     const creativeId = row.ad_id ? (creativeIdByAd.get(row.ad_id) ?? null) : null;
-    const current = merged.get(`${creativeId ?? 'нет'}|${campaignId}|${row.date_start}`);
-    if (!current) continue;
+    // Часов может не быть вовсе: объявление остановили вчера, а заявка по нему
+    // засчиталась сегодня. Заводим строку, иначе цифра кабинета пропадёт.
+    const current = rowFor(`${creativeId ?? 'нет'}|${campaignId}|${row.date_start}`, {
+      campaignId,
+      creativeId,
+      date: row.date_start,
+    });
+
+    // Заявка и переписка — разные события и разные люди, поэтому и колонки
+    // разные. Складывать их в одно число нельзя: заявка доходит до CRM, а
+    // написавший в WhatsApp остаётся в мессенджере, и смешанная цифра не
+    // сходится ни с кабинетом, ни с разделом «Лиды».
+    if (adFamily(row.actions) === 'chats') {
+      current.conversations += firstActionValue(row.actions, CONVERSATION_ACTIONS);
+    } else {
+      current.leads += adLeadValue(row.actions);
+    }
 
     current.reach += Number(row.reach ?? 0);
     // Секунды уже усреднены Meta: наибольшее из объявлений, а не сумма.
@@ -1144,6 +1155,8 @@ async function pullFromMeta(
 
 type MetricRow = {
   company_id: string;
+  /** Валюта кабинета: расход хранится как есть, пересчёт — при чтении. */
+  currency: string | null;
   campaign_id: string;
   creative_id: string | null;
   platform: 'meta';

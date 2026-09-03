@@ -83,14 +83,38 @@ const CONVERSATION_ACTIONS = [
   'onsite_conversion.total_messaging_connection',
 ];
 
-/** Заявки с сайта и из форм — тоже несколько имён одного события. */
-const LEAD_ACTIONS = [
-  'lead',
-  'offsite_conversion.fb_pixel_lead',
-  'onsite_web_lead',
-  'leadgen.other',
-  'onsite_conversion.lead_grouped',
-];
+/**
+ * Заявки из моментальной формы и заявки с сайта — два разных семейства.
+ *
+ * Внутри семейства имена — синонимы, а вот между семействами складывать
+ * нельзя: Meta присылает ещё и поле `lead`, которое само есть их сумма, и
+ * взятие наибольшего из общего списка приписывало форме чужие заявки. Поле
+ * `lead` поэтому не используем вовсе.
+ */
+const FORM_ACTIONS = ['onsite_conversion.lead_grouped', 'leadgen.other'];
+const SITE_ACTIONS = ['offsite_conversion.fb_pixel_lead', 'onsite_web_lead'];
+
+/**
+ * Чем кампания отчитывается: перепиской или заявкой.
+ *
+ * Кабинет показывает одно число — результат, ради которого кампания запущена.
+ * У рекламы на WhatsApp это начатая переписка, у формы — заполненная анкета.
+ * Складывать их нельзя: в кампании на переписки случается одна-две заявки со
+ * стороны (события шлёт CRM), и сумма превращала 21 переписку в 22 заявки, а
+ * дальше — в расхождение с кабинетом на половину.
+ */
+function adFamily(actions: { action_type: string; value: string }[] | undefined): 'chats' | 'leads' {
+  const chats = firstActionValue(actions, CONVERSATION_ACTIONS);
+  const forms = firstActionValue(actions, FORM_ACTIONS);
+  const site = firstActionValue(actions, SITE_ACTIONS);
+
+  return chats >= Math.max(forms, site) ? 'chats' : 'leads';
+}
+
+/** Заявки объявления: сколько их в выбранном семействе. */
+function adLeadValue(actions: { action_type: string; value: string }[] | undefined): number {
+  return Math.max(firstActionValue(actions, FORM_ACTIONS), firstActionValue(actions, SITE_ACTIONS));
+}
 
 /**
  * Кампания найма, а не продажи.
@@ -503,13 +527,9 @@ export type AdTotals = {
  * Поэтому берём один вид события, тот, ради которого кампания и запущена.
  */
 function campaignResult(actions: { action_type: string; value: string }[] | undefined): number {
-  const forms = actionValue(actions, ['onsite_conversion.lead_grouped', 'leadgen.other']);
-  if (forms) return forms;
-
-  const site = actionValue(actions, ['offsite_conversion.fb_pixel_lead', 'onsite_web_lead']);
-  if (site) return site;
-
-  return firstActionValue(actions, CONVERSATION_ACTIONS);
+  return adFamily(actions) === 'chats'
+    ? firstActionValue(actions, CONVERSATION_ACTIONS)
+    : adLeadValue(actions);
 }
 
 /**
@@ -963,6 +983,16 @@ async function pullFromMeta(
   // иначе строки подерутся за уникальный ключ «креатив + день».
   const merged = new Map<string, MetricRow>();
 
+  // Семейство решаем один раз на объявление и день, по дневной строке. В
+  // отдельном часе переписок может не быть вовсе, зато найдётся случайная
+  // заявка со стороны — и час за часом набежала бы цифра, которой в кабинете
+  // нет.
+  const familyByAdDay = new Map<string, 'chats' | 'leads'>();
+
+  for (const row of dailyInsights) {
+    if (row.ad_id) familyByAdDay.set(`${row.ad_id}|${row.date_start}`, adFamily(row.actions));
+  }
+
   for (const row of insights) {
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
@@ -972,8 +1002,11 @@ async function pullFromMeta(
     // разные. Складывать их в одно число нельзя: заявка доходит до CRM, а
     // написавший в WhatsApp остаётся в мессенджере, и смешанная цифра не
     // сходится ни с кабинетом, ни с разделом «Лиды».
-    const conversations = firstActionValue(row.actions, CONVERSATION_ACTIONS);
-    const leads = actionValue(row.actions, LEAD_ACTIONS);
+    const family =
+      (row.ad_id ? familyByAdDay.get(`${row.ad_id}|${row.date_start}`) : null) ??
+      adFamily(row.actions);
+    const conversations = family === 'chats' ? firstActionValue(row.actions, CONVERSATION_ACTIONS) : 0;
+    const leads = family === 'chats' ? 0 : adLeadValue(row.actions);
 
     // Час кабинета переносим в наши сутки. Строка без часа (Meta не отдала
     // разбивку) остаётся на своём дне — это лучше, чем потерять её.

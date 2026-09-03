@@ -100,11 +100,10 @@ export async function numberByWebhookKey(
 }
 
 /**
- * Номер, которому адресовано событие.
+ * Номер, которому адресовано событие, — в пределах компании ключа из адреса.
  *
- * Ищем в пределах той же компании, что и ключ из адреса: несколько номеров
- * одного приложения Meta шлют события на общий URL, и разбирать их надо по
- * phone_number_id, но выходить за компанию при этом нельзя.
+ * Несколько номеров одной компании живут на общем URL, и разбирать их события
+ * надо по phone_number_id.
  */
 async function numberByPhoneNumberId(
   supabase: Supabase,
@@ -121,6 +120,42 @@ async function numberByPhoneNumberId(
     .maybeSingle();
 
   return data ? toRecord(data) : null;
+}
+
+/**
+ * Номер другого проекта, живущий в том же приложении Meta.
+ *
+ * Адрес вебхука в приложении один, а номера в нём могут принадлежать разным
+ * проектам: у клиента и школа, и оптика заведены в одном приложении. Meta шлёт
+ * их события на общий URL, и без этого разбора события второго проекта молча
+ * терялись бы.
+ *
+ * Выход за пределы компании открываем только под подпись самого номера. Иначе
+ * это была бы дыра: достаточно завести у себя чужой phone_number_id со своим
+ * секретом — и чужие заявки посыпались бы к тебе. Секрет приложения знает
+ * только его владелец, и подделать подпись он не даёт.
+ */
+async function foreignNumber(
+  supabase: Supabase,
+  phoneNumberId: string,
+  proof: SignatureProof | null,
+): Promise<NumberRecord | null> {
+  if (!proof?.signature) return null;
+
+  const { data } = await supabase
+    .from('whatsapp_numbers')
+    .select(
+      'id, company_id, department_id, phone_number_id, verify_token, status, app_secret_encrypted, token_encrypted, auto_reply_enabled, auto_reply_day, auto_reply_night, work_start_time, work_end_time, timezone',
+    )
+    .eq('phone_number_id', phoneNumberId)
+    .maybeSingle();
+
+  if (!data) return null;
+
+  const record = toRecord(data);
+  if (!record.appSecret) return null;
+
+  return signatureValid(proof.rawBody, proof.signature, record.appSecret) ? record : null;
 }
 
 /** Номер по идентификатору — для отправки из раздела «Переписки». */
@@ -227,6 +262,9 @@ export type WebhookBody = {
 
 export type ProcessResult = { messages: number; statuses: number; skipped: number };
 
+/** Тело и подпись события: нужны, чтобы пустить его в другой проект. */
+export type SignatureProof = { rawBody: string; signature: string | null };
+
 /**
  * Разбор события вебхука.
  *
@@ -238,6 +276,7 @@ export async function processWebhook(
   supabase: Supabase,
   keyNumber: NumberRecord,
   body: WebhookBody,
+  proof: SignatureProof | null = null,
 ): Promise<ProcessResult> {
   const result: ProcessResult = { messages: 0, statuses: 0, skipped: 0 };
 
@@ -249,7 +288,8 @@ export async function processWebhook(
 
       const phoneNumberId = value.metadata?.phone_number_id;
       const target = phoneNumberId
-        ? await numberByPhoneNumberId(supabase, keyNumber.companyId, phoneNumberId)
+        ? ((await numberByPhoneNumberId(supabase, keyNumber.companyId, phoneNumberId)) ??
+          (await foreignNumber(supabase, phoneNumberId, proof)))
         : null;
 
       // Событие чужого номера. Молча выбрасывать нельзя — это чаще всего

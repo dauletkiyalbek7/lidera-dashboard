@@ -103,8 +103,14 @@ const LEAD_ACTIONS = [
  * слова «вакансия». Сокращения вроде «vaaaac» им не поймать, поэтому главным
  * способом остаётся тумблер «В отчёте» в таблице кампаний — он же и переживает
  * синхронизацию.
+ *
+ * Отдельным словом идёт «vac»: так набор сотрудников помечают в кабинете
+ * bilimdibol. Слово целиком, а не куском — иначе под правило попадут «vacation»
+ * и всё, где эти три буквы встретились случайно. Название вида «vac angl
+ * mugalim» остаётся в своём проекте, но в деньги курса не идёт: набор учителей
+ * не должен портить цену заявки.
  */
-const HIRING_NAME = /вакан|vakan|vacan|hiring|recruit/i;
+const HIRING_NAME = /вакан|vakan|vacan|hiring|recruit|\bvac\b/i;
 
 function isHiringCampaign(name: string): boolean {
   return HIRING_NAME.test(name);

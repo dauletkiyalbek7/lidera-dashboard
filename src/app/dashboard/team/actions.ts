@@ -75,6 +75,15 @@ const employeeSchema = z.object({
     .max(40)
     .optional()
     .transform((value) => (value ? value : null)),
+  departmentId: z
+    .string()
+    .trim()
+    .optional()
+    .transform((value) => (value ? value : null))
+    .refine(
+      (value) => value === null || z.string().uuid().safeParse(value).success,
+      'Некорректный отдел.',
+    ),
 });
 
 export async function createEmployee(
@@ -88,6 +97,7 @@ export async function createEmployee(
     fullName: formData.get('fullName'),
     role: formData.get('role'),
     phone: formData.get('phone'),
+    departmentId: formData.get('departmentId'),
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
@@ -103,18 +113,155 @@ export async function createEmployee(
     return { error: 'Эта роль доступна только компаниям с пробными занятиями.' };
   }
 
+  // Отдел выбирает директор. РОП набирает в свой — выбирать ему не из чего, и
+  // права на чужой отдел база всё равно не даст.
+  const departmentId = await departmentFor(actor, parsed.data.departmentId);
+  if (isDepartmentError(departmentId)) return departmentId;
+
   const supabase = await createServerSupabase();
   const { error } = await supabase.from('employees').insert({
     company_id: company.id,
     full_name: parsed.data.fullName,
     role: parsed.data.role,
     phone: parsed.data.phone,
+    department_id: departmentId,
   });
 
   if (error) return { error: 'Не удалось добавить сотрудника.' };
 
   revalidateTeam();
   return { success: 'Сотрудник добавлен.' };
+}
+
+/**
+ * Отдел для новой карточки.
+ *
+ * У РОПа выбора нет: он ведёт свой отдел, и человек попадает туда же. Директор
+ * выбирает сам, но отдел обязан принадлежать его компании — идентификатор
+ * приходит из формы, а форму можно подменить.
+ */
+async function departmentFor(
+  actor: TeamActor,
+  requested: string | null,
+): Promise<string | null | { error: string }> {
+  if (actor.actorRole === 'rop') {
+    const { employee } = await requireCompanySession();
+    return employee?.departmentId ?? null;
+  }
+
+  if (!requested) return null;
+
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from('departments')
+    .select('id')
+    .eq('id', requested)
+    .eq('company_id', actor.company.id)
+    .maybeSingle();
+
+  return data ? data.id : { error: 'Отдел не найден.' };
+}
+
+function isDepartmentError(
+  value: string | null | { error: string },
+): value is { error: string } {
+  return value !== null && typeof value === 'object';
+}
+
+/** Отделы заводит и правит директор: РОП руководит своим, а не создаёт новые. */
+async function directorOnly(): Promise<{ error: string } | TeamActor> {
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
+  if (actor.actorRole !== null) {
+    return { error: 'Отделы продаж создаёт директор.' };
+  }
+  return actor;
+}
+
+const departmentSchema = z.object({
+  name: z.string().trim().min(2, 'Укажите название отдела').max(60),
+});
+
+export async function createDepartment(
+  _prevState: TeamState,
+  formData: FormData,
+): Promise<TeamState> {
+  const actor = await directorOnly();
+  if (isDenied(actor)) return actor;
+
+  const parsed = departmentSchema.safeParse({ name: formData.get('name') });
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from('departments').insert({
+    company_id: actor.company.id,
+    name: parsed.data.name,
+  });
+
+  if (error) return { error: 'Не удалось создать отдел.' };
+
+  revalidateTeam();
+  return { success: `Отдел «${parsed.data.name}» создан.` };
+}
+
+/**
+ * Отдел закрывают, а не удаляют: заявки и продажи прошлых месяцев считались по
+ * нему, и в отчёте за август он обязан остаться.
+ */
+export async function setDepartmentStatus(
+  departmentId: string,
+  status: 'active' | 'archived',
+): Promise<TeamState> {
+  const actor = await directorOnly();
+  if (isDenied(actor)) return actor;
+
+  const parsed = z.string().uuid().safeParse(departmentId);
+  if (!parsed.success) return { error: 'Некорректный отдел.' };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase
+    .from('departments')
+    .update({ status })
+    .eq('id', parsed.data)
+    .eq('company_id', actor.company.id);
+
+  if (error) return { error: 'Не удалось изменить отдел.' };
+
+  revalidateTeam();
+  return { success: status === 'active' ? 'Отдел снова работает.' : 'Отдел закрыт.' };
+}
+
+/**
+ * Перевод сотрудника в другой отдел.
+ *
+ * Делает только директор: РОП, который сам двигает людей между отделами, —
+ * это и есть отсутствие отделов. Заодно так переводят самого РОПа: назначить
+ * его на новый отдел значит просто перевести туда его карточку.
+ */
+export async function moveToDepartment(
+  employeeId: string,
+  departmentId: string | null,
+): Promise<TeamState> {
+  const actor = await directorOnly();
+  if (isDenied(actor)) return actor;
+
+  const target = await targetEmployee(actor, employeeId);
+  if ('error' in target) return target;
+
+  const resolved = await departmentFor(actor, departmentId);
+  if (isDepartmentError(resolved)) return resolved;
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase
+    .from('employees')
+    .update({ department_id: resolved })
+    .eq('id', target.id)
+    .eq('company_id', actor.company.id);
+
+  if (error) return { error: 'Не удалось перевести сотрудника.' };
+
+  revalidateTeam();
+  return { success: 'Сотрудник переведён.' };
 }
 
 /**

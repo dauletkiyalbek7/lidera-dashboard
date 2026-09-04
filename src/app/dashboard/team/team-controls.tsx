@@ -3,12 +3,15 @@
 import { useActionState, useState, useTransition } from 'react';
 
 import {
+  createDepartment,
   createEmployee,
   createEmployeeLogin,
   createInvite,
   fireEmployee,
+  moveToDepartment,
   rehireEmployee,
   revokeEmployeeLogin,
+  setDepartmentStatus,
   updateEmployeeSchedule,
   type InviteState,
   type LoginState,
@@ -35,10 +38,13 @@ import type { FunnelType } from '@/lib/metrics';
 export function AddEmployeeButton({
   roles: allowed,
   funnelType,
+  departments = [],
 }: {
   /** Роли, доступные тому, кто заводит: РОП заводит только своих. */
   roles: EmployeeRole[];
   funnelType: FunnelType;
+  /** Отделы на выбор. У РОПа их нет: он набирает в свой. */
+  departments?: { id: string; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createEmployee, {} as TeamState);
@@ -77,6 +83,18 @@ export function AddEmployeeButton({
                   : 'Менеджер ведёт лид от заявки до оплаты'
               }
             />
+            {departments.length > 0 ? (
+              <Select
+                label="Отдел продаж"
+                name="departmentId"
+                defaultValue=""
+                options={[
+                  { value: '', label: 'Без отдела' },
+                  ...departments.map((row) => ({ value: row.id, label: row.name })),
+                ]}
+                hint="Руководитель отдела дальше набирает людей туда же сам"
+              />
+            ) : null}
             <Field label="Телефон" name="phone" type="tel" placeholder="+7 700 000 00 00" />
             <FormMessage error={state.error} />
             <SubmitButton label="Добавить" pendingLabel="Сохраняем…" />
@@ -538,5 +556,167 @@ export function LoginButton({
         </Modal>
       ) : null}
     </>
+  );
+}
+
+/**
+ * Отделы продаж: список, создание и закрытие.
+ *
+ * Порядок работы простой: директор создаёт отдел, заводит в него руководителя,
+ * дальше тот набирает свою команду сам. Поэтому рядом с каждым отделом видно,
+ * кто им руководит и сколько в нём людей — без этого «второй отдел» остаётся
+ * строчкой в справочнике.
+ */
+export function DepartmentsCard({
+  departments,
+}: {
+  departments: {
+    id: string;
+    name: string;
+    status: string;
+    headName: string | null;
+    people: number;
+  }[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [state, formAction] = useActionState(createDepartment, {} as TeamState);
+
+  return (
+    <>
+      <div className="flex flex-col gap-3">
+        {departments.length === 0 ? (
+          <p className="text-[13.5px] text-ink-soft">
+            Отдел продаж пока один — общий. Создайте отдел, когда команд станет две:
+            у каждой будет свой руководитель и свои люди.
+          </p>
+        ) : (
+          <ul className="grid gap-2">
+            {departments.map((row) => (
+              <DepartmentRow key={row.id} department={row} />
+            ))}
+          </ul>
+        )}
+
+        <div>
+          <Button type="button" variant="secondary" size="sm" onClick={() => setOpen(true)}>
+            <IconPlus className="size-4" />
+            Отдел продаж
+          </Button>
+        </div>
+      </div>
+
+      <Modal
+        open={open}
+        onClose={() => setOpen(false)}
+        title="Новый отдел продаж"
+        description="Дальше заведите в него руководителя — он наберёт команду сам."
+      >
+        {state.success ? (
+          <Done message={state.success} onClose={() => setOpen(false)} />
+        ) : (
+          <form action={formAction} className="space-y-4 px-5 py-5 sm:px-6">
+            <Field
+              label="Название отдела"
+              name="name"
+              required
+              placeholder="Английский язык"
+            />
+            <FormMessage error={state.error} />
+            <SubmitButton label="Создать" pendingLabel="Создаём…" />
+          </form>
+        )}
+      </Modal>
+    </>
+  );
+}
+
+function DepartmentRow({
+  department,
+}: {
+  department: {
+    id: string;
+    name: string;
+    status: string;
+    headName: string | null;
+    people: number;
+  };
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+  const closed = department.status !== 'active';
+
+  const toggle = () => {
+    setError(null);
+    startTransition(async () => {
+      const result = await setDepartmentStatus(
+        department.id,
+        closed ? 'active' : 'archived',
+      );
+      if (result.error) setError(result.error);
+    });
+  };
+
+  return (
+    <li
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-xl border border-line bg-surface-2/40 px-4 py-3 ${
+        closed ? 'opacity-60' : ''
+      }`}
+    >
+      <div>
+        <div className="text-[14.5px] font-medium text-ink">{department.name}</div>
+        <div className="mt-0.5 text-[12.5px] text-faint">
+          {department.headName ? `Руководитель: ${department.headName}` : 'Руководителя нет'}
+          {' · '}
+          {department.people} в отделе
+          {closed ? ' · закрыт' : ''}
+        </div>
+      </div>
+      <div className="flex items-center gap-2">
+        {error ? <span className="text-[11px] text-negative">{error}</span> : null}
+        <Button type="button" variant="ghost" size="sm" disabled={pending} onClick={toggle}>
+          {closed ? 'Открыть' : 'Закрыть'}
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+/** Перевод сотрудника в другой отдел — прямо в строке списка. */
+export function DepartmentSelect({
+  employeeId,
+  departmentId,
+  departments,
+}: {
+  employeeId: string;
+  departmentId: string | null;
+  departments: { id: string; name: string }[];
+}) {
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <div className="flex flex-col gap-1">
+      <select
+        className="w-full rounded-lg border border-line bg-surface px-2 py-1 text-[12.5px] text-ink-soft outline-none focus:border-lime disabled:opacity-60"
+        value={departmentId ?? ''}
+        disabled={pending}
+        onChange={(event) => {
+          const next = event.target.value || null;
+          setError(null);
+          startTransition(async () => {
+            const result = await moveToDepartment(employeeId, next);
+            if (result.error) setError(result.error);
+          });
+        }}
+      >
+        <option value="">Без отдела</option>
+        {departments.map((row) => (
+          <option key={row.id} value={row.id}>
+            {row.name}
+          </option>
+        ))}
+      </select>
+      {error ? <span className="text-[11px] text-negative">{error}</span> : null}
+    </div>
   );
 }

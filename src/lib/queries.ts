@@ -1669,6 +1669,9 @@ export type TeamMember = {
   id: string;
   fullName: string;
   role: string;
+  /** Отдел продаж. null — сотрудник в общем отделе. */
+  departmentId: string | null;
+  departmentName: string | null;
   phone: string | null;
   status: string;
   hiredAt: string;
@@ -1723,6 +1726,13 @@ export async function getTeam(
     work_days: [1, 2, 3, 4, 5],
     late_grace_minutes: 10,
   };
+
+  const { data: departmentRows } = await supabase
+    .from('departments')
+    .select('id, name')
+    .eq('company_id', companyId);
+
+  const departmentNames = new Map((departmentRows ?? []).map((row) => [row.id, row.name]));
 
   const [{ data: employees }, leadRows, { data: sales }, { data: openShifts }] =
     await Promise.all([
@@ -1805,6 +1815,10 @@ export async function getTeam(
       id: employee.id,
       fullName: employee.full_name,
       role: employee.role,
+      departmentId: employee.department_id ?? null,
+      departmentName: employee.department_id
+        ? (departmentNames.get(employee.department_id) ?? null)
+        : null,
       phone: employee.phone,
       status: employee.status,
       hiredAt: employee.hired_at,

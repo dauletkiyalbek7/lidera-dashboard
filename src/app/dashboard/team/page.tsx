@@ -20,9 +20,11 @@ import { employeeRoleLabel, managesRole, rolesManagedBy } from '@/lib/employee-r
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import type { FunnelType } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
-import { getTeam } from '@/lib/queries';
+import { getDepartments, getTeam } from '@/lib/queries';
 import {
   AddEmployeeButton,
+  DepartmentSelect,
+  DepartmentsCard,
   EmployeeRowActions,
   InviteButton,
   LoginButton,
@@ -36,9 +38,13 @@ export const metadata: Metadata = { title: 'Команда' };
  * то, ради чего сюда заходят с телефона: кто это, кем работает и кнопки —
  * выдать вход, пригласить в бота, изменить график.
  */
-const COLUMNS: TableColumn[] = [
+function columnsFor(showDepartment: boolean): TableColumn[] {
+  return [
   { key: 'name', label: 'Сотрудник' },
   { key: 'role', label: 'Роль' },
+  ...(showDepartment
+    ? [{ key: 'department', label: 'Отдел', showFrom: 'lg' as const }]
+    : []),
   { key: 'telegram', label: 'Telegram', showFrom: 'lg' },
   { key: 'shift', label: 'Смена', showFrom: 'md' },
   { key: 'mode', label: 'Режим', showFrom: 'xl' },
@@ -49,7 +55,8 @@ const COLUMNS: TableColumn[] = [
   { key: 'won', label: 'Продажи', align: 'right' as const, showFrom: 'md' },
   { key: 'revenue', label: 'Выручка', align: 'right' as const, showFrom: 'lg' },
   { key: 'actions', label: '', align: 'right' as const },
-];
+  ];
+}
 
 /** Ширина таблицы для каждого набора видимых колонок. */
 const TABLE_MIN_WIDTH = { base: 420, md: 760, lg: 1100, xl: 1560 };
@@ -69,8 +76,45 @@ export default async function TeamPage({
   const range = await currentRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
-  const team = await getTeam(company.id, range.from, range.to, company.timezone);
+  const [everyone, departments] = await Promise.all([
+    getTeam(company.id, range.from, range.to, company.timezone),
+    getDepartments(company.id),
+  ]);
+
+  // Отделы ведёт директор: он их создаёт, назначает руководителя и переводит
+  // людей. РОП руководит своим — ему список отделов ни к чему.
+  const isDirector = employee === null;
+  const openDepartments = departments
+    .filter((row) => row.status === 'active')
+    .map((row) => ({ id: row.id, name: row.name }));
+
+  // РОП видит своих: с чужими он всё равно ничего сделать не может, а список
+  // из трёх отделов читается как «мои люди потерялись среди чужих».
+  const team = isDirector
+    ? everyone
+    : everyone.filter(
+        (member) => member.departmentId === (employee?.departmentId ?? null),
+      );
+
+  const departmentCards = departments.map((row) => ({
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    headName:
+      everyone.find(
+        (member) =>
+          member.role === 'rop' &&
+          member.status === 'active' &&
+          member.departmentId === row.id,
+      )?.fullName ?? null,
+    people: everyone.filter(
+      (member) => member.status === 'active' && member.departmentId === row.id,
+    ).length,
+  }));
   const companyMode = company.shift_mode as ShiftMode;
+
+  // Колонка отдела появляется вместе с отделами: пока он один, она пустая.
+  const showDepartment = isDirector && openDepartments.length > 0;
   const active = team.filter((member) => member.status === 'active');
   const linked = active.filter((member) => member.telegramLinked).length;
   const revenue = team.reduce((total, member) => total + member.revenue, 0);
@@ -82,7 +126,11 @@ export default async function TeamPage({
         description="Кто работает в компании и что каждый сделал за выбранный период."
         action={
           <div className="flex flex-wrap items-center justify-end gap-4">
-            <AddEmployeeButton roles={rolesManagedBy(actorRole, funnelType)} funnelType={funnelType} />
+            <AddEmployeeButton
+              roles={rolesManagedBy(actorRole, funnelType)}
+              funnelType={funnelType}
+              departments={isDirector ? openDepartments : []}
+            />
             <DateRangePicker range={range} />
           </div>
         }
@@ -122,6 +170,18 @@ export default async function TeamPage({
           />
         </div>
 
+        {isDirector ? (
+          <Card className="mt-4">
+            <CardHeader
+              title="Отделы продаж"
+              subtitle="Создайте отдел, назначьте руководителя — команду он наберёт сам"
+            />
+            <div className="px-5 pb-5 sm:px-6 sm:pb-6">
+              <DepartmentsCard departments={departmentCards} />
+            </div>
+          </Card>
+        ) : null}
+
         <Card className="mt-4">
           <CardHeader
             title="Сотрудники"
@@ -136,7 +196,10 @@ export default async function TeamPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
+            <TableShell
+              columns={columnsFor(showDepartment)}
+              minWidth={TABLE_MIN_WIDTH}
+            >
               {team.map((member) => (
                 <tr
                   key={member.id}
@@ -158,6 +221,19 @@ export default async function TeamPage({
                     ) : null}
                   </Td>
                   <Td className="text-ink-soft">{employeeRoleLabel(member.role)}</Td>
+                  {showDepartment ? (
+                    <Td showFrom="lg" className="text-ink-soft">
+                      {member.status === 'active' ? (
+                        <DepartmentSelect
+                          employeeId={member.id}
+                          departmentId={member.departmentId}
+                          departments={openDepartments}
+                        />
+                      ) : (
+                        (member.departmentName ?? <span className="text-faint">—</span>)
+                      )}
+                    </Td>
+                  ) : null}
                   <Td showFrom="lg" className="text-ink-soft">
                     {member.telegramUsername ? (
                       `@${member.telegramUsername}`

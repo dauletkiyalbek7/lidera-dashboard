@@ -30,7 +30,14 @@ export type SessionContext = {
    * Карточка сотрудника, если вход выдан менеджеру или продажнику.
    * У директора её нет — он видит компанию целиком.
    */
-  employee: { id: string; role: string; fullName: string; telegramLinked: boolean } | null;
+  employee: {
+    id: string;
+    role: string;
+    fullName: string;
+    telegramLinked: boolean;
+    /** Отдел продаж. null — отдел в проекте один, общий. */
+    departmentId: string | null;
+  } | null;
   /**
    * Проекты, доступные этому входу. У большинства он один; у Дарына бизнес
    * один, а проектов два, и переключаться между ними логином неудобно.
@@ -91,7 +98,7 @@ export async function getSessionContext(): Promise<SessionContext | null> {
   if (profile.company_id) {
     const { data } = await supabase
       .from('employees')
-      .select('id, role, full_name, telegram_user_id')
+      .select('id, role, full_name, telegram_user_id, department_id')
       .eq('profile_id', profile.id)
       .eq('status', 'active')
       .maybeSingle();
@@ -102,6 +109,7 @@ export async function getSessionContext(): Promise<SessionContext | null> {
           role: data.role,
           fullName: data.full_name,
           telegramLinked: data.telegram_user_id !== null,
+          departmentId: data.department_id ?? null,
         }
       : null;
   }

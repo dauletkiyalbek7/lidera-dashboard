@@ -2132,6 +2132,8 @@ export type SaleListItem = {
   creativeName: string | null;
   /** Отдел продаж, если у проекта их несколько. */
   departmentName: string | null;
+  /** Кто закрыл продажу. У старых чеков продавец не записан. */
+  sellerName: string | null;
 };
 
 export async function getSales(
@@ -2144,24 +2146,31 @@ export async function getSales(
 
   const { data: sales } = await supabase
     .from('sales')
-    .select('id, sale_date, product, amount, status, lead_id')
+    .select('id, sale_date, product, amount, status, lead_id, seller_id, seller_name')
     .eq('company_id', companyId)
     .gte('sale_date', from)
     .lte('sale_date', to)
     .order('sale_date', { ascending: false })
     .limit(LIST_LIMIT);
 
-  const [leads, { data: creatives }, { data: departments }] = await Promise.all([
-    fetchLeadContacts(companyId, sales ?? []),
-    // Порядок тот же, что везде: номер в подписи «Видео 7» — это место в списке.
-    supabase
-      .from('creatives')
-      .select('id, name, label, format, created_at')
-      .eq('company_id', companyId)
-      .order('created_at')
-      .order('id'),
-    supabase.from('departments').select('id, name').eq('company_id', companyId),
-  ]);
+  const [leads, { data: creatives }, { data: departments }, { data: employees }] =
+    await Promise.all([
+      fetchLeadContacts(companyId, sales ?? []),
+      // Порядок тот же, что везде: номер в подписи «Видео 7» — это место в списке.
+      supabase
+        .from('creatives')
+        .select('id, name, label, format, created_at')
+        .eq('company_id', companyId)
+        .order('created_at')
+        .order('id'),
+      supabase.from('departments').select('id, name').eq('company_id', companyId),
+      supabase.from('employees').select('id, full_name').eq('company_id', companyId),
+    ]);
+
+  // Имя продавца берём из карточки, а не из чека: человек мог сменить фамилию,
+  // и в старых чеках осталось прежнее написание. Имя в чеке — запасной путь для
+  // тех, кого в компании уже нет.
+  const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
 
   const creativeNames = new Map(
     (creatives ?? []).map((row, index) => [row.id, creativeLabel(row, index + 1)]),
@@ -2178,6 +2187,9 @@ export async function getSales(
     const lead = sale.lead_id ? leads.get(sale.lead_id) : undefined;
 
     return {
+      sellerName: sale.seller_id
+        ? (employeeNames.get(sale.seller_id) ?? sale.seller_name ?? null)
+        : (sale.seller_name ?? null),
       id: sale.id,
       sale_date: sale.sale_date,
       product: sale.product,

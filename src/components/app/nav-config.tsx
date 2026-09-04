@@ -32,8 +32,8 @@ export type NavItem = {
   staff?: true;
   /** Раздел нужен только сотруднику: у руководителя для этого есть настройки. */
   onlyStaff?: true;
-  /** Сотруднику раздел открыт только с этой ролью. Руководства не касается. */
-  onlyRole?: string;
+  /** Сотруднику раздел открыт только с этими ролями. Руководства не касается. */
+  onlyRole?: string | string[];
 };
 
 export type NavGroup = {
@@ -89,7 +89,15 @@ const COMPANY_NAV: NavGroup[] = [
         onlyFunnel: 'trial',
         staff: true,
       },
-      { href: '/dashboard/sales', label: 'Продажи', icon: IconSales },
+      // Продажи открыты и отделу: РОПу — весь отдел, продавцу — его чеки.
+      // Кто что видит, решает база: правило на самой таблице.
+      {
+        href: '/dashboard/sales',
+        label: 'Продажи',
+        icon: IconSales,
+        staff: true,
+        onlyRole: ['rop', 'salesperson', 'manager'],
+      },
       // Отчёт по отделу — рабочий стол РОПа: он ведёт менеджеров и
       // продажников, и без цифр по каждому руководить нечем. Настройки,
       // деньги компании и правка чужих чеков ему по-прежнему закрыты.
@@ -160,6 +168,11 @@ const NAV_BY_KEY: Record<NavKey, NavGroup[]> = {
   admin: ADMIN_NAV,
 };
 
+/** Роль сотрудника подходит разделу: у пункта бывает одна роль или список. */
+function allowsRole(allowed: string | string[], role: string | null): boolean {
+  return Array.isArray(allowed) ? allowed.includes(role ?? '') : allowed === role;
+}
+
 /**
  * Меню рабочего пространства с учётом воронки и роли.
  *
@@ -193,7 +206,7 @@ export function navFor(
           (staffOnly || !item.onlyStaff) &&
           // Реклама, креативы и CAPI — работа таргетолога. Менеджеру бюджет ни
           // к чему, да и база ему этих строк всё равно не отдаст.
-          !(staffOnly && item.onlyRole && item.onlyRole !== staffRole),
+          !(staffOnly && item.onlyRole && !allowsRole(item.onlyRole, staffRole)),
       ),
     }))
     .filter((group) => group.items.length > 0);

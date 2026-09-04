@@ -248,6 +248,24 @@ export async function requireTeamAccess(): Promise<
   return context;
 }
 
+/**
+ * Продажи: руководство и те, кто продаёт.
+ *
+ * Директор и РОП видят весь отдел — кто сколько закрыл. Продажник и менеджер
+ * тоже заходят сюда, но видят только своё: правило стоит в самой базе, а не в
+ * этом условии. Таргетологу деньги отдела ни к чему — он смотрит выручку в
+ * разрезе роликов.
+ */
+export async function requireSalesAccess(): Promise<
+  SessionContext & { company: CompanyRow }
+> {
+  const context = await requireCompanySession();
+  if (context.employee && context.employee.role === 'targetolog') {
+    redirect('/dashboard/ads');
+  }
+  return context;
+}
+
 export async function requireSuperAdmin(): Promise<SessionContext> {
   const context = await requireSession('/admin');
   if (context.profile.role !== 'SUPER_ADMIN') redirect('/dashboard');

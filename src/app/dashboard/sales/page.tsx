@@ -5,12 +5,14 @@ import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { DepartmentFilter } from '@/components/app/department-filter';
 import { Td, TableShell, type TableColumn } from '@/components/app/table';
+import { Badge } from '@/components/ui/badge';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconSales } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireFullAccess } from '@/lib/auth';
+import { requireSalesAccess } from '@/lib/auth';
 import { formatDate, formatMoney, formatNumber } from '@/lib/format';
+import { SALE_STATUS } from '@/lib/labels';
 import { averageCheck } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
 import { getDepartments, getLeads, getSales } from '@/lib/queries';
@@ -27,20 +29,31 @@ export const metadata: Metadata = { title: 'Продажи' };
  * Колонка с роликом — то, ради чего вся платформа и строилась: здесь видно не
  * «продали на столько-то», а «эта реклама принесла этого покупателя».
  */
-const COLUMNS: TableColumn[] = [
-  { key: 'lead', label: 'Клиент' },
-  { key: 'phone', label: 'Телефон', showFrom: 'lg' },
-  { key: 'creative', label: 'Пришёл с ролика', showFrom: 'lg' },
-  { key: 'department', label: 'Отдел', showFrom: 'xl' },
-  { key: 'product', label: 'Продукт', showFrom: 'md' },
-  { key: 'date', label: 'Дата', showFrom: 'md' },
-  { key: 'status', label: 'Статус' },
-  { key: 'amount', label: 'Сумма', align: 'right' as const },
-  { key: 'actions', label: '', align: 'right' as const },
-];
+function columnsFor(own: boolean, canEdit: boolean): TableColumn[] {
+  return [
+    { key: 'lead', label: 'Клиент' },
+    { key: 'phone', label: 'Телефон', showFrom: 'lg' },
+    { key: 'creative', label: 'Пришёл с ролика', showFrom: 'lg' },
+    { key: 'department', label: 'Отдел', showFrom: 'xl' },
+    // Кто закрыл — первый вопрос руководителя к списку продаж. Себе человек
+    // эту колонку не показывает: там всюду стояло бы его собственное имя.
+    ...(own ? [] : [{ key: 'seller', label: 'Продавец', showFrom: 'md' as const }]),
+    { key: 'product', label: 'Продукт', showFrom: 'md' },
+    { key: 'date', label: 'Дата', showFrom: 'md' },
+    { key: 'status', label: 'Статус' },
+    { key: 'amount', label: 'Сумма', align: 'right' as const },
+    ...(canEdit ? [{ key: 'actions', label: '', align: 'right' as const }] : []),
+  ];
+}
 
 /** Ширина таблицы для каждого набора видимых колонок. */
 const TABLE_MIN_WIDTH = { base: 420, md: 900, lg: 1240, xl: 1400 };
+
+/** Статус чека, который менять нельзя: у продавца это отметка, а не выбор. */
+function SaleStatusBadge({ status }: { status: string }) {
+  const meta = SALE_STATUS[status] ?? { label: status, tone: 'neutral' as const };
+  return <Badge tone={meta.tone}>{meta.label}</Badge>;
+}
 
 export default async function SalesPage({
   searchParams,
@@ -52,8 +65,16 @@ export default async function SalesPage({
     department?: string;
   }>;
 }) {
-  const { company } = await requireFullAccess();
+  const { company, employee } = await requireSalesAccess();
   const currency = company.sales_currency;
+
+  // Продавец и менеджер видят только свои чеки — так решает база, а не эта
+  // строка: она лишь убирает колонку «Продавец», где стояло бы одно и то же имя.
+  const own = employee !== null && employee.role !== 'rop';
+
+  // Деньги правит директор. У сотрудника — включая РОПа — профиль без права
+  // записи, и база откажет: показывать кнопку, которая не сработает, нельзя.
+  const canEdit = employee === null;
   const params = await searchParams;
   const range = await currentRange(params, company.timezone);
 
@@ -84,10 +105,14 @@ export default async function SalesPage({
     <>
       <PageHeader
         title="Продажи"
-        description="Закрытая часть цепочки: именно эти деньги превращают лиды в ROAS."
+        description={
+          own
+            ? 'Ваши продажи: что вы закрыли и на какую сумму.'
+            : 'Закрытая часть цепочки: именно эти деньги превращают лиды в ROAS.'
+        }
         action={
           <div className="flex flex-wrap items-center justify-end gap-4">
-            <AddSaleButton leads={leadOptions} />
+            {canEdit ? <AddSaleButton leads={leadOptions} /> : null}
             <DateRangePicker range={range} />
           </div>
         }
@@ -116,7 +141,7 @@ export default async function SalesPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
+            <TableShell columns={columnsFor(own, canEdit)} minWidth={TABLE_MIN_WIDTH}>
               {sales.map((sale) => (
                 <tr key={sale.id} className="transition-colors hover:bg-surface-2/60">
                   <Td
@@ -150,6 +175,11 @@ export default async function SalesPage({
                   <Td showFrom="xl" className="text-ink-soft">
                     {sale.departmentName ?? '—'}
                   </Td>
+                  {own ? null : (
+                    <Td showFrom="md" truncate="sm" className="text-ink-soft">
+                      {sale.sellerName ?? '—'}
+                    </Td>
+                  )}
                   <Td
                     showFrom="md"
                     truncate="sm"
@@ -162,21 +192,31 @@ export default async function SalesPage({
                     {formatDate(sale.sale_date)}
                   </Td>
                   <Td>
-                    <SaleStatusSelect saleId={sale.id} status={sale.status} />
+                    {canEdit ? (
+                      <SaleStatusSelect saleId={sale.id} status={sale.status} />
+                    ) : (
+                      <SaleStatusBadge status={sale.status} />
+                    )}
                   </Td>
-                  <Td align="right" className="tabular font-medium text-ink">
+                  <Td
+                    last={!canEdit}
+                    align="right"
+                    className="tabular font-medium text-ink"
+                  >
                     {formatMoney(sale.amount, { currency })}
                   </Td>
-                  <Td last align="right">
-                    {sale.status === 'paid' ? (
-                      <RefundButton
-                        saleId={sale.id}
-                        saleAmount={sale.amount}
-                        leadName={sale.leadName}
-                        currency={currency}
-                      />
-                    ) : null}
-                  </Td>
+                  {canEdit ? (
+                    <Td last align="right">
+                      {sale.status === 'paid' ? (
+                        <RefundButton
+                          saleId={sale.id}
+                          saleAmount={sale.amount}
+                          leadName={sale.leadName}
+                          currency={currency}
+                        />
+                      ) : null}
+                    </Td>
+                  ) : null}
                 </tr>
               ))}
             </TableShell>

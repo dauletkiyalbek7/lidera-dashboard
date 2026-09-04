@@ -14,7 +14,7 @@ import { requireCompanySession } from '@/lib/auth';
 import { formatDate, formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { safeDivide } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
-import { getTrials } from '@/lib/queries';
+import { getTrials, getUpcomingTrials } from '@/lib/queries';
 import { trialStatusMeta, wasHeld } from '@/lib/trial-status';
 import { trialWords } from '@/lib/trial-term';
 import { TrialStatusSelect } from './trial-controls';
@@ -58,6 +58,19 @@ function columnsFor(view: TrialsView): TableColumn[] {
   ];
 }
 
+/** Ближайшие занятия: только то, что нужно перед уроком. */
+function upcomingColumns(view: TrialsView): TableColumn[] {
+  return [
+    { key: 'lead', label: 'Клиент' },
+    { key: 'phone', label: 'Телефон', showFrom: 'lg' },
+    { key: 'when', label: 'Урок' },
+    { key: 'manager', label: 'Продал', showFrom: 'md' },
+    ...(view === 'seller'
+      ? []
+      : [{ key: 'seller', label: 'Ведёт', showFrom: 'md' as const }]),
+  ];
+}
+
 /** Ширина таблицы для каждого набора видимых колонок. */
 const TABLE_MIN_WIDTH = { base: 340, md: 820 };
 
@@ -85,12 +98,21 @@ export default async function TrialsPage({
   // Менеджер отбирает по дню продажи, остальные — по дню занятия. Он записал
   // сегодня девятнадцать человек на всю неделю вперёд; по дню занятия его
   // сегодняшняя работа показала бы три записи из девятнадцати.
-  const trials = await getTrials(company.id, range.from, range.to, {
-    timeZone: company.timezone,
-    basis: view === 'manager' ? 'sold' : 'lesson',
-    managerId: view === 'manager' ? (employee?.id ?? null) : null,
-    sellerId: view === 'seller' ? (employee?.id ?? null) : null,
-  });
+  const [trials, upcoming] = await Promise.all([
+    getTrials(company.id, range.from, range.to, {
+      timeZone: company.timezone,
+      basis: view === 'manager' ? 'sold' : 'lesson',
+      managerId: view === 'manager' ? (employee?.id ?? null) : null,
+      sellerId: view === 'seller' ? (employee?.id ?? null) : null,
+    }),
+    // Менеджеру отдельный список не нужен: его период считается по дню
+    // продажи, и завтрашние занятия и так на виду.
+    view === 'manager'
+      ? Promise.resolve([])
+      : getUpcomingTrials(company.id, {
+          sellerId: view === 'seller' ? (employee?.id ?? null) : null,
+        }),
+  ]);
 
   // Урок состоялся — это и «Проведён», и любой исход после него: клиент
   // купил или отказался уже после занятия.
@@ -143,6 +165,46 @@ export default async function TrialsPage({
             hint="Урок был назначен, клиент не подключился"
           />
         </div>
+
+        {upcoming.length > 0 && (
+          <Card className="mt-4">
+            <CardHeader
+              title="Ближайшие уроки"
+              subtitle={
+                view === 'seller'
+                  ? 'Ваши занятия впереди — независимо от выбранного периода'
+                  : 'Занятия, которые ещё впереди — независимо от выбранного периода'
+              }
+            />
+            <TableShell columns={upcomingColumns(view)} minWidth={TABLE_MIN_WIDTH}>
+              {upcoming.map((trial) => (
+                <tr key={trial.id} className="transition-colors hover:bg-surface-2/60">
+                  <Td first className="font-medium text-ink">
+                    {trial.leadName ?? 'Без имени'}
+                  </Td>
+                  <Td showFrom="lg" className="tabular text-ink-soft">
+                    <PhoneCell phone={trial.leadPhone} />
+                  </Td>
+                  <Td className="tabular text-ink-soft">
+                    {trial.startsAt
+                      ? formatDateTime(trial.startsAt, company.timezone)
+                      : formatDate(trial.date)}
+                  </Td>
+                  <Td showFrom="md" className="text-ink-soft">
+                    {trial.managerName ?? <span className="text-faint">—</span>}
+                  </Td>
+                  {view !== 'seller' && (
+                    <Td last showFrom="md" className="text-ink-soft">
+                      {trial.sellerName ?? (
+                        <span className="text-faint">ждёт продажника</span>
+                      )}
+                    </Td>
+                  )}
+                </tr>
+              ))}
+            </TableShell>
+          </Card>
+        )}
 
         <Card className="mt-4">
           <CardHeader

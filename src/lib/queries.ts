@@ -1981,6 +1981,64 @@ export async function getTrials(
   }));
 }
 
+/**
+ * Уроки, которые ещё впереди.
+ *
+ * Раздел отбирает занятия по дню, а все готовые периоды заканчиваются
+ * сегодняшним днём: записанное на завтра не попадает ни в один из них.
+ * Руководитель открывал «Пробные уроки» и видел пустую страницу, хотя на
+ * неделе стояло полтора десятка занятий. Поэтому ближайшие показываются
+ * отдельно и от периода не зависят — расписание живёт вперёд, а не назад.
+ */
+export async function getUpcomingTrials(
+  companyId: string,
+  options?: { sellerId?: string | null; limit?: number },
+): Promise<TrialListItem[]> {
+  const supabase = await createServerSupabase();
+
+  let query = supabase
+    .from('trials')
+    .select('id, date, status, amount, lead_id, assigned_to, starts_at, created_at')
+    .eq('company_id', companyId)
+    .eq('status', 'scheduled')
+    .gte('starts_at', new Date().toISOString());
+
+  if (options?.sellerId) query = query.eq('assigned_to', options.sellerId);
+
+  const { data } = await query
+    .order('starts_at', { ascending: true })
+    .limit(options?.limit ?? 50);
+
+  const trials = (data ?? []) as unknown as TrialQueryRow[];
+  if (trials.length === 0) return [];
+
+  const [leads, { data: employees }] = await Promise.all([
+    fetchLeadContacts(companyId, trials),
+    supabase.from('employees').select('id, full_name').eq('company_id', companyId),
+  ]);
+
+  const names = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
+  const managerOf = (leadId: string | null) => {
+    const owner = leadId ? (leads.get(leadId)?.assignedTo ?? null) : null;
+    return owner ? (names.get(owner) ?? null) : null;
+  };
+
+  return trials.map((trial) => ({
+    id: trial.id,
+    date: trial.date,
+    createdAt: trial.created_at,
+    status: trial.status,
+    amount: Number(trial.amount),
+    leadId: trial.lead_id,
+    leadName: trial.lead_id ? (leads.get(trial.lead_id)?.name ?? null) : null,
+    leadPhone: trial.lead_id ? (leads.get(trial.lead_id)?.phone ?? null) : null,
+    sellerName: trial.assigned_to ? (names.get(trial.assigned_to) ?? null) : null,
+    managerName: managerOf(trial.lead_id),
+    startsAt: trial.starts_at,
+    saleAmount: null,
+  }));
+}
+
 /** Покупатель, пришедший с одного ролика. */
 export type CreativeBuyer = {
   saleId: string;

@@ -43,6 +43,7 @@ import {
   bookingTimeButtons,
   bookingSellerButtons,
   qualityButtons,
+  remindButton,
   touchButtons,
   whatsappButton,
   STATUS_ICON,
@@ -769,9 +770,10 @@ async function listLeads(
 
   let query = supabase
     .from('leads')
-    .select('id, name, phone, source, platform, status, creative_id, created_at', {
-      count: 'exact',
-    })
+    .select(
+      'id, name, phone, source, platform, status, creative_id, created_at, last_touch_at',
+      { count: 'exact' },
+    )
     .eq('company_id', employee.company_id)
     .eq('assigned_to', employee.id)
     .eq('status', status);
@@ -802,10 +804,12 @@ async function listLeads(
   const creativeName = await shortCreativeLabel(supabase, employee.company_id, lead.creative_id);
   const label = leadStatusFor(lead.status, company?.trial_term).label;
   const trialNote = await trialNoteFor(supabase, employee.company_id, lead.id);
+  const contact = await lastContactNote(supabase, employee.company_id, lead, timeZone);
 
   const header =
     `${STATUS_ICON[lead.status as LeadStatus] ?? '👤'} <b>${escapeHtml(label)} — ${offset + 1} из ${total}</b>\n` +
-    `📅 заявка от ${leadDay(lead.created_at, timeZone)}`;
+    `📅 заявка от ${leadDay(lead.created_at, timeZone)}` +
+    (contact ? `\n<i>${escapeHtml(contact)}</i>` : '');
 
   const footer: InlineButton[] = [];
   if (offset + 1 < total) {
@@ -822,10 +826,70 @@ async function listLeads(
     ),
     [
       ...statusButtons(lead.id, funnelType, company?.trial_term),
-      ...whatsappButton(lead.phone),
+      [...(whatsappButton(lead.phone)[0] ?? []), remindButton(lead.id)],
       footer,
     ],
   );
+}
+
+/**
+ * Когда с клиентом последний раз общались.
+ *
+ * Сначала переписка: если номер подключён к нашему WhatsApp, там видно живой
+ * след — кто написал последним и когда. Это единственный честный ответ на
+ * вопрос «он вообще на связи». Когда клиент в последний раз заходил в сам
+ * WhatsApp, не знает никто, кроме WhatsApp: наружу он этого не отдаёт.
+ *
+ * Если переписки нет — показываем свою отметку: когда менеджер последний раз
+ * работал с этим клиентом.
+ */
+async function lastContactNote(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  companyId: string,
+  lead: { id: string; last_touch_at: string | null },
+  timeZone: string,
+): Promise<string | null> {
+  const { data: message } = await supabase
+    .from('whatsapp_messages')
+    .select('direction, sent_at, created_at')
+    .eq('company_id', companyId)
+    .eq('lead_id', lead.id)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (message) {
+    const when = momentLabel(message.sent_at ?? message.created_at, timeZone);
+    return message.direction === 'in'
+      ? `WhatsApp: клиент писал ${when}`
+      : `WhatsApp: мы писали ${when}`;
+  }
+
+  if (lead.last_touch_at) {
+    return `Вы работали с ним ${momentLabel(lead.last_touch_at, timeZone)}`;
+  }
+
+  return null;
+}
+
+/** «сегодня в 14:20», «вчера в 18:40», «3 сентября в 14:20». */
+function momentLabel(value: string, timeZone: string): string {
+  const time = new Date(value).toLocaleTimeString('ru-RU', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  const day = localDate(timeZone, new Date(value));
+  const today = localDate(timeZone);
+
+  const yesterday = new Date(`${today}T00:00:00Z`);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+
+  if (day === today) return `сегодня в ${time}`;
+  if (day === yesterday.toISOString().slice(0, 10)) return `вчера в ${time}`;
+
+  return `${leadDay(value, timeZone)} в ${time}`;
 }
 
 /**
@@ -958,6 +1022,12 @@ async function handleCallback(query: TelegramCallbackQuery) {
     );
   }
 
+  // Напоминание ставится по желанию, поэтому у кнопки нет третьего поля.
+  if (kind === 'rm') {
+    await answerCallback(query.id);
+    return askReminder(screen, employee, leadId);
+  }
+
   if (!value) return answerCallback(query.id);
 
   if (kind === 's') return applyStatus(query, screen, employee, leadId, value);
@@ -1068,21 +1138,12 @@ async function applyTrial(
     );
   }
 
-  if (meta.followUp && trial.lead_id) {
-    const callback = meta.followUp === 'callback';
-    return show(
-      screen,
-      `<b>${name}</b> — ${meta.label.toLowerCase()}.\n` +
-        (callback ? 'Когда попробовать снова?' : 'Когда вернуться к клиенту?'),
-      touchButtons(
-        trial.lead_id,
-        callback ? NO_ANSWER_TOUCHES : THINKING_TOUCHES,
-        '🚫 Не напоминать',
-      ),
-    );
-  }
+  // Напоминание — по желанию: продажник и так найдёт клиента в своих уроках,
+  // а вопрос после каждой отметки только удлинял бы работу.
+  const remind: InlineButton[][] =
+    meta.followUp && trial.lead_id ? [[remindButton(trial.lead_id)]] : [];
 
-  return show(screen, `✅ <b>${name}</b> — ${meta.label.toLowerCase()}.`);
+  return show(screen, `✅ <b>${name}</b> — ${meta.label.toLowerCase()}.`, remind);
 }
 
 
@@ -1121,21 +1182,22 @@ async function applyStatus(
 
   await answerCallback(query.id, `Статус: ${label}`);
 
-  // Прежнее обещание больше не про этот статус: закрываем до того, как
-  // спросим новое, иначе менеджеру придут два напоминания об одном клиенте.
+  // Прежнее обещание больше не про этот статус: напоминание о нём только
+  // сбивало бы с толку.
   await closeOpenTouches(supabase, lead.id);
 
-  // Не дозвонился — вернуться надо сегодня же, пока клиент помнит заявку.
-  if (status === 'no_answer') {
-    return show(screen, `📵 <b>${name}</b> не отвечает.\nКогда перезвонить?`,
-      touchButtons(lead.id, NO_ANSWER_TOUCHES, '🚫 Не напоминать'));
-  }
-
-  // Взял паузу на решение — сроки длиннее: дёргать через час значит потерять.
-  if (status === 'thinking') {
-    return show(screen, `🤔 <b>${name}</b> думает.\nКогда вернуться?`,
-      touchButtons(lead.id, THINKING_TOUCHES, '🚫 Не напоминать'));
-  }
+  // Отметка о работе: раньше её ставило назначение напоминания, а оно стало
+  // делом добровольным. Без этой записи «когда с клиентом последний раз
+  // говорили» знать неоткуда. Безрезультатной попыткой считаем только
+  // недозвон: «думает» — это состоявшийся разговор.
+  await supabase
+    .from('leads')
+    .update({
+      last_touch_at: new Date().toISOString(),
+      touch_count: (lead.touch_count ?? 0) + (status === 'no_answer' ? 1 : 0),
+    })
+    .eq('id', lead.id)
+    .eq('company_id', employee.company_id);
 
   // Продажа в прямой воронке: урока нет, закрывает тот же менеджер. Сумму
   // спрашиваем сразу — без неё покупка не попадёт ни в выручку, ни в Meta,
@@ -1187,6 +1249,26 @@ async function applyStatus(
   }
 
   return listLeads(screen, employee, 'new');
+}
+
+/**
+ * Сроки напоминания для одного клиента.
+ *
+ * Набор зависит от того, чем кончился разговор: не взял трубку — перезванивают
+ * в тот же день, взял паузу на решение — через день-два.
+ */
+async function askReminder(screen: Screen, employee: Employee, leadId: string) {
+  const reach = await reachableLead(employee, leadId);
+  if (!reach) return show(screen, 'Этот клиент уже не за вами.');
+
+  const name = escapeHtml(reach.lead.name || 'Клиент');
+  const soon = reach.lead.status === 'no_answer';
+
+  return show(
+    screen,
+    `⏰ <b>${name}</b>\n${soon ? 'Когда перезвонить?' : 'Когда вернуться к клиенту?'}`,
+    touchButtons(leadId, soon ? NO_ANSWER_TOUCHES : THINKING_TOUCHES, '↩️ Не нужно'),
+  );
 }
 
 /**

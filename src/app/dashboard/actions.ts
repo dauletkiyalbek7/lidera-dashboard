@@ -113,7 +113,13 @@ export async function updateLeadStatus(
   const supabase = await createServerSupabase();
   const { error } = await supabase
     .from('leads')
-    .update({ status: parsed.data.status })
+    .update({
+      status: parsed.data.status,
+      // Отметка о работе с клиентом — та же, что ставит бот. Без неё в
+      // карточке было бы «последний контакт» из чата и пусто из кабинета,
+      // хотя человеком занимались в обоих местах.
+      last_touch_at: new Date().toISOString(),
+    })
     .eq('id', parsed.data.leadId)
     .eq('company_id', company.id);
 

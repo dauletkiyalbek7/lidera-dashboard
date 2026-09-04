@@ -617,8 +617,10 @@ async function show(
 
   // Старое сообщение Telegram править отказывается. Молча проглотить отказ
   // нельзя: менеджер нажал кнопку и не увидел бы ничего — присылаем новое.
+  // Но повторное нажатие той же кнопки — это не отказ, а «и так уже показано»:
+  // новая карточка здесь только плодила бы копии одного и того же экрана.
   const edited = await editMessageText(screen.chatId, screen.messageId, text, inline);
-  if (!edited) await sendMessage(screen.chatId, text, { inline });
+  if (edited === 'failed') await sendMessage(screen.chatId, text, { inline });
 }
 
 /**
@@ -1771,7 +1773,7 @@ async function pickDay(
   // Сегодняшние часы, которые уже прошли, не предлагаем: урок в прошлом —
   // это урок, о котором никто не напомнит.
   const after = offsetDays === 0 ? nowInZone(timeZone) : undefined;
-  const { slots, workingDay } = await freeSlots(
+  const { slots, hasSellers } = await freeSlots(
     supabase,
     employee.company_id,
     date,
@@ -1779,16 +1781,14 @@ async function pickDay(
     { exceptTrialId: trialId, after },
   );
 
-  // Две разные новости: «в этот день никто не работает» чинится графиком в
-  // настройках, а «всё разобрали» — другим часом или днём.
   if (slots.length === 0) {
     await answerCallback(query.id, 'Свободных часов нет');
     return show(
       screen,
-      workingDay
+      hasSellers
         ? `🌙 На ${formatDay(date)} свободных часов не осталось — всё занято.\nВыберите другой день.`
-        : `🌙 ${formatDay(date)} — нерабочий день по графику продажников.\nВыберите другой день или попросите директора изменить график.`,
-      bookingDayButtons(trialId, timeZone),
+        : 'В компании нет продажников — урок пока не на кого записать. Скажите директору.',
+      hasSellers ? bookingDayButtons(trialId, timeZone) : undefined,
     );
   }
 

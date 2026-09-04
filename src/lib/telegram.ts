@@ -36,11 +36,11 @@ export type InlineButton =
   // здесь быть не может, поэтому «позвонить» остаётся номером в тексте.
   | { text: string; url: string };
 
-/** Возвращает, удалось ли: вызывающему бывает нужен запасной путь. */
-async function call(
+/** Ответ Telegram: текст ошибки нужен, чтобы отличать отказы друг от друга. */
+async function request(
   method: string,
   payload: Record<string, unknown>,
-): Promise<boolean> {
+): Promise<{ ok: boolean; description: string }> {
   const response = await fetch(`${API}/bot${botToken()}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -51,11 +51,21 @@ async function call(
   // Ошибку Telegram не бросаем наружу: вебхук обязан ответить 200, иначе
   // Telegram будет слать то же обновление снова и снова.
   if (!response.ok) {
-    console.error('telegram', method, response.status, await response.text());
-    return false;
+    const description = await response.text();
+    console.error('telegram', method, response.status, description);
+    return { ok: false, description };
   }
 
-  return true;
+  return { ok: true, description: '' };
+}
+
+/** Возвращает, удалось ли: вызывающему бывает нужен запасной путь. */
+async function call(
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<boolean> {
+  const { ok } = await request(method, payload);
+  return ok;
 }
 
 /** Кнопка обычной клавиатуры. Строка — просто текст, объект — запрос данных. */
@@ -92,22 +102,30 @@ export function answerCallback(callbackId: string, text?: string): Promise<boole
 }
 
 /**
- * Перерисовать своё сообщение. Возвращает false, если Telegram отказал —
- * сообщение слишком старое или текст с кнопками не изменились.
+ * Итог правки сообщения. «unchanged» — это не поломка: Telegram отвечает
+ * отказом, когда текст с кнопками совпали с тем, что уже на экране. Так бывает
+ * при повторном нажатии той же кнопки, и присылать в ответ ещё одну такую же
+ * карточку нельзя — из этого и вырастали дубли в чате.
  */
-export function editMessageText(
+export type EditResult = 'ok' | 'unchanged' | 'failed';
+
+/** Перерисовать своё сообщение. */
+export async function editMessageText(
   chatId: number,
   messageId: number,
   text: string,
   inline?: InlineButton[][],
-): Promise<boolean> {
-  return call('editMessageText', {
+): Promise<EditResult> {
+  const { ok, description } = await request('editMessageText', {
     chat_id: chatId,
     message_id: messageId,
     text,
     parse_mode: 'HTML',
     reply_markup: inline ? { inline_keyboard: inline } : undefined,
   });
+
+  if (ok) return 'ok';
+  return description.includes('message is not modified') ? 'unchanged' : 'failed';
 }
 
 /** Привязать вебхук к адресу. Вызывается скриптом при деплое. */

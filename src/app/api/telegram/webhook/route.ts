@@ -45,6 +45,7 @@ import {
   bookingSellerButtons,
   qualityButtons,
   touchButtons,
+  whatsappButton,
   STATUS_ICON,
   NO_ANSWER_TOUCHES,
   THINKING_TOUCHES,
@@ -785,7 +786,11 @@ async function listLeads(
     chatId,
     leadCard({ ...lead, creativeLabel: creativeName }, header, company?.trial_term),
     {
-      inline: [...statusButtons(lead.id, funnelType, company?.trial_term), footer],
+      inline: [
+        ...statusButtons(lead.id, funnelType, company?.trial_term),
+        ...whatsappButton(lead.phone),
+        footer,
+      ],
     },
   );
 }

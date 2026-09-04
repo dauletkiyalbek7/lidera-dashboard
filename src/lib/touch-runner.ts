@@ -11,6 +11,7 @@ import {
   statusButtons,
   trialButtons,
   trialOutcomeButtons,
+  whatsappButton,
 } from '@/lib/telegram-lead-card';
 import { formatTrialTime, shortCreativeLabel } from '@/lib/trials';
 import type { FunnelType } from '@/lib/metrics';
@@ -175,7 +176,7 @@ async function remindAboutLessons(supabase: Admin): Promise<number> {
         { ...lead, creativeLabel: creativeName },
         `⏰ <b>Урок через ${Math.max(1, minutes)} мин</b>\n🕒 ${formatTrialTime(lesson.starts_at, timeZone)}`,
       ),
-      { inline: trialButtons(lesson.id) },
+      { inline: [...trialButtons(lesson.id), ...whatsappButton(lead.phone)] },
     );
 
     sent += 1;
@@ -253,9 +254,12 @@ async function sendDueReminders(supabase: Admin): Promise<number> {
     if (!own && !trialId) continue;
 
     await sendMessage(chatId, leadCard(context.lead, header, context.trialTerm), {
-      inline: trialId
-        ? trialOutcomeButtons(trialId)
-        : statusButtons(touch.lead_id, context.funnelType, context.trialTerm),
+      inline: [
+        ...(trialId
+          ? trialOutcomeButtons(trialId)
+          : statusButtons(touch.lead_id, context.funnelType, context.trialTerm)),
+        ...whatsappButton(context.lead.phone),
+      ],
     });
 
     sent += 1;

@@ -6,7 +6,7 @@ import { zonedIsoDate } from '@/lib/period';
 import { creativeLabel } from '@/lib/creative-label';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
-import { leadCard, trialButtons } from '@/lib/telegram-lead-card';
+import { leadCard, trialButtons, whatsappButton } from '@/lib/telegram-lead-card';
 import { trialStatusMeta, wasHeld } from '@/lib/trial-status';
 
 /**
@@ -170,7 +170,7 @@ export async function notifyTrialBooked(
       },
       `🎓 <b>Онлайн-урок</b>\n🕒 ${formatTrialTime(startsAt, timeZone)}\nМенеджер согласовал время — урок за вами.`,
     ),
-    { inline: trialButtons(trial.id) },
+    { inline: [...trialButtons(trial.id), ...whatsappButton(lead.phone)] },
   );
 
   return { delivered: true };

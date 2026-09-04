@@ -102,6 +102,13 @@ export const IconReceipts = (p: IconProps) => (
   </Icon>
 );
 
+export const IconWhatsapp = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M21 11.5a8.5 8.5 0 0 1-12.6 7.4L3.5 20.5l1.7-4.8A8.5 8.5 0 1 1 21 11.5Z" />
+    <path d="M9 9.2c.3-.7.6-.7.9-.7h.5c.2 0 .4 0 .6.5l.6 1.4c.1.2 0 .4-.1.6l-.4.4c-.1.2-.2.3 0 .6.5.8 1.2 1.4 2 1.8.3.1.4.1.6-.1l.5-.5c.2-.2.3-.2.6-.1l1.3.7c.3.2.4.3.4.5 0 .5-.3 1.3-1.3 1.5-.9.2-2 .1-3.8-1.2-1.4-1-2.3-2.4-2.6-3.4-.2-.9 0-1.6.2-2Z" />
+  </Icon>
+);
+
 export const IconReports = (p: IconProps) => (
   <Icon {...p}>
     <path d="M4 20V4" />

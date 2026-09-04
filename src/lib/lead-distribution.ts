@@ -10,7 +10,7 @@ import { creativeLabel } from '@/lib/creative-label';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
-import { leadCard, statusButtons } from '@/lib/telegram-lead-card';
+import { leadCard, statusButtons, whatsappButton } from '@/lib/telegram-lead-card';
 
 /**
  * Авто-раздача лидов.
@@ -381,7 +381,8 @@ async function assignTo(
       ),
       {
         inline: [
-            ...statusButtons(lead.id, funnelType, company.trial_term),
+          ...statusButtons(lead.id, funnelType, company.trial_term),
+          ...whatsappButton(lead.phone),
         ],
       },
     );

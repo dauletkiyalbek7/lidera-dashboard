@@ -3,6 +3,7 @@ import Link from 'next/link';
 
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
+import { PhoneCell } from '@/components/app/phone-cell';
 import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
@@ -238,7 +239,7 @@ export default async function LeadsPage({
                         {lead.name || 'Без имени'}
                       </Td>
                       <Td showFrom="lg" className="tabular text-ink-soft">
-                        {lead.phone ?? '—'}
+                        <PhoneCell phone={lead.phone} />
                       </Td>
                       <Td showFrom="md" className="text-ink-soft">
                         {lead.platform

@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { redirect } from 'next/navigation';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
+import { PhoneCell } from '@/components/app/phone-cell';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell, type TableColumn } from '@/components/app/table';
 import { Card, CardHeader } from '@/components/ui/card';
@@ -110,7 +111,7 @@ export default async function TrialsPage({
                     {trial.leadName ?? 'Без имени'}
                   </Td>
                   <Td showFrom="lg" className="tabular text-ink-soft">
-                    {trial.leadPhone ?? '—'}
+                    <PhoneCell phone={trial.leadPhone} />
                   </Td>
                   <Td showFrom="md" className="tabular text-ink-soft">
                     {trial.startsAt ? (

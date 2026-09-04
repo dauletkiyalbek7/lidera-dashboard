@@ -31,7 +31,10 @@ export function webhookSecret(): string | undefined {
  */
 export type InlineButton =
   | { text: string; callback_data: string }
-  | { text: string; copy_text: { text: string } };
+  | { text: string; copy_text: { text: string } }
+  // Telegram открывает по кнопке только http(s) и tg:// — телефонной ссылки
+  // здесь быть не может, поэтому «позвонить» остаётся номером в тексте.
+  | { text: string; url: string };
 
 async function call(method: string, payload: Record<string, unknown>): Promise<void> {
   const response = await fetch(`${API}/bot${botToken()}/${method}`, {

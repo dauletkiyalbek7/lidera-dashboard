@@ -13,6 +13,7 @@ import {
   IconIntegrations,
   IconLeads,
   IconReceipts,
+  IconReports,
   IconSales,
   IconSettings,
   IconTeam,
@@ -89,6 +90,16 @@ const COMPANY_NAV: NavGroup[] = [
         staff: true,
       },
       { href: '/dashboard/sales', label: 'Продажи', icon: IconSales },
+      // Отчёт по отделу — рабочий стол РОПа: он ведёт менеджеров и
+      // продажников, и без цифр по каждому руководить нечем. Настройки,
+      // деньги компании и правка чужих чеков ему по-прежнему закрыты.
+      {
+        href: '/dashboard/reports',
+        label: 'Отчёты',
+        icon: IconReports,
+        staff: true,
+        onlyRole: 'rop',
+      },
       { href: '/dashboard/returns', label: 'Возвраты', icon: IconReceipts },
       { href: '/dashboard/team', label: 'Команда', icon: IconTeam },
       { href: '/dashboard/attendance', label: 'Посещение', icon: IconAttendance },

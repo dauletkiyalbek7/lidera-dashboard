@@ -2443,3 +2443,213 @@ export async function getAttendance(
 
   return Array.from(byEmployee.values());
 }
+
+// -----------------------------------------------------------------------------
+// Отчёт отдела продаж
+// -----------------------------------------------------------------------------
+
+export type SalesReportRow = {
+  id: string;
+  name: string;
+  role: string;
+  fired: boolean;
+  /** Заявок выдано за период. */
+  leads: number;
+  /** Из них тронуты: статус ушёл с «Нового». */
+  worked: number;
+  leadsByStatus: Record<string, number>;
+  /** Уроков, назначенных на этого продажника за период. */
+  trials: number;
+  trialsByStatus: Record<string, number>;
+  salesCount: number;
+  revenue: number;
+};
+
+export type SalesReport = {
+  rows: SalesReportRow[];
+  totals: {
+    leads: number;
+    worked: number;
+    trialsHeld: number;
+    salesCount: number;
+    revenue: number;
+  };
+};
+
+const EMPTY_REPORT_ROW = {
+  leads: 0,
+  worked: 0,
+  trials: 0,
+  salesCount: 0,
+  revenue: 0,
+};
+
+/**
+ * Отчёт руководителя отдела продаж: что сделал каждый человек за период.
+ *
+ * Три части считаются по разным основаниям, и свести их в одно нельзя:
+ *   • заявки — по дню, когда их выдали сотруднику;
+ *   • уроки — по дню, на который назначено занятие;
+ *   • деньги — по дню, когда прошёл чек.
+ * Клиент, пришедший в понедельник и купивший в пятницу, — это заявка
+ * понедельника и деньги пятницы, и оба числа верны.
+ *
+ * Заявку считаем по дате выдачи, а не по сегодняшнему владельцу: при передаче
+ * дата не сбрасывается, поэтому клиент, перешедший к другому человеку, не
+ * появляется в его отчёте второй раз. Смена ответственного — это смена
+ * ответственного, а не новая заявка.
+ *
+ * Уволенные остаются в списке: их работа за прошлый период никуда не делась,
+ * а продажи закреплены в самих чеках и не зависят от того, кто сейчас ведёт
+ * клиента.
+ */
+export async function getSalesReport(
+  companyId: string,
+  from: string,
+  to: string,
+  timeZone: string,
+): Promise<SalesReport> {
+  const supabase = await createServerSupabase();
+  const window = zonedDayWindow(from, to, timeZone);
+
+  const [{ data: employees }, leadRows, { data: trials }, { data: sales }] =
+    await Promise.all([
+      supabase
+        .from('employees')
+        .select('id, full_name, role, status')
+        .eq('company_id', companyId)
+        .order('status')
+        .order('full_name'),
+      selectAll((start, end) =>
+        supabase
+          .from('leads')
+          .select('id, status, assigned_to')
+          .eq('company_id', companyId)
+          .not('assigned_to', 'is', null)
+          .gte('assigned_at', window.startsAt)
+          .lt('assigned_at', window.endsBefore)
+          .range(start, end),
+      ),
+      supabase
+        .from('trials')
+        .select('id, status, assigned_to')
+        .eq('company_id', companyId)
+        .not('assigned_to', 'is', null)
+        .gte('date', from)
+        .lte('date', to),
+      supabase
+        .from('sales')
+        .select('amount, lead_id, seller_id')
+        .eq('company_id', companyId)
+        .eq('status', 'paid')
+        .gte('sale_date', from)
+        .lte('sale_date', to),
+    ]);
+
+  const stats = new Map<
+    string,
+    typeof EMPTY_REPORT_ROW & {
+      leadsByStatus: Record<string, number>;
+      trialsByStatus: Record<string, number>;
+    }
+  >();
+
+  const bucket = (id: string) => {
+    let value = stats.get(id);
+    if (!value) {
+      value = { ...EMPTY_REPORT_ROW, leadsByStatus: {}, trialsByStatus: {} };
+      stats.set(id, value);
+    }
+    return value;
+  };
+
+  for (const lead of leadRows) {
+    if (!lead.assigned_to) continue;
+    const target = bucket(lead.assigned_to);
+    target.leads += 1;
+    if (lead.status !== 'new') target.worked += 1;
+    target.leadsByStatus[lead.status] = (target.leadsByStatus[lead.status] ?? 0) + 1;
+  }
+
+  for (const trial of trials ?? []) {
+    if (!trial.assigned_to) continue;
+    const target = bucket(trial.assigned_to);
+    target.trials += 1;
+    target.trialsByStatus[trial.status] = (target.trialsByStatus[trial.status] ?? 0) + 1;
+  }
+
+  // Продавец записан в самом чеке — он и получает деньги. Старые чеки, где его
+  // нет, считаем прежним способом: через клиента, за кем тот закреплён.
+  const legacy = (sales ?? []).filter((sale) => sale.seller_id === null);
+  const legacyOwner = await ownersOfLeads(
+    supabase,
+    companyId,
+    legacy.map((sale) => sale.lead_id),
+  );
+
+  for (const sale of sales ?? []) {
+    const ownerId =
+      sale.seller_id ?? (sale.lead_id ? (legacyOwner.get(sale.lead_id) ?? null) : null);
+    if (!ownerId) continue;
+    const target = bucket(ownerId);
+    target.salesCount += 1;
+    target.revenue += Number(sale.amount);
+  }
+
+  const rows: SalesReportRow[] = (employees ?? []).map((employee) => {
+    const value = stats.get(employee.id);
+    return {
+      id: employee.id,
+      name: employee.full_name,
+      role: employee.role,
+      fired: employee.status !== 'active',
+      leads: value?.leads ?? 0,
+      worked: value?.worked ?? 0,
+      leadsByStatus: value?.leadsByStatus ?? {},
+      trials: value?.trials ?? 0,
+      trialsByStatus: value?.trialsByStatus ?? {},
+      salesCount: value?.salesCount ?? 0,
+      revenue: value?.revenue ?? 0,
+    };
+  });
+
+  // Итог считаем по самим записям, а не сложением строк таблицы: чек, чей
+  // продавец уже удалён, остаётся выручкой отдела, даже если приписать его
+  // некому. Сумма столбца может быть меньше итога — это честнее, чем итог,
+  // из которого деньги пропали.
+  return {
+    rows,
+    totals: {
+      leads: leadRows.length,
+      worked: leadRows.filter((lead) => lead.status !== 'new').length,
+      trialsHeld: (trials ?? []).filter((trial) => wasHeld(trial.status)).length,
+      salesCount: (sales ?? []).length,
+      revenue: (sales ?? []).reduce((sum, sale) => sum + Number(sale.amount), 0),
+    },
+  };
+}
+
+/** Кто сейчас ведёт этих клиентов — для чеков, записанных до появления продавца. */
+async function ownersOfLeads(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  leadIds: (string | null)[],
+): Promise<Map<string, string>> {
+  const ids = [...new Set(leadIds.filter((id): id is string => id !== null))];
+  if (ids.length === 0) return new Map();
+
+  const rows = await inChunks(ids, (chunk) =>
+    supabase
+      .from('leads')
+      .select('id, assigned_to')
+      .eq('company_id', companyId)
+      .not('assigned_to', 'is', null)
+      .in('id', chunk),
+  );
+
+  return new Map(
+    rows
+      .filter((row): row is { id: string; assigned_to: string } => row.assigned_to !== null)
+      .map((row) => [row.id, row.assigned_to]),
+  );
+}

@@ -102,6 +102,15 @@ export const IconReceipts = (p: IconProps) => (
   </Icon>
 );
 
+export const IconReports = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M4 20V4" />
+    <path d="M4 20h16" />
+    <rect x="7" y="12" width="3.5" height="5" rx="1" />
+    <rect x="13.5" y="7.5" width="3.5" height="9.5" rx="1" />
+  </Icon>
+);
+
 export const IconIntegrations = (p: IconProps) => (
   <Icon {...p}>
     <rect x="3" y="3" width="7" height="7" rx="2" />

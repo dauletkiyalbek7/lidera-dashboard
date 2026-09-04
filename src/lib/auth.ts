@@ -227,6 +227,24 @@ export async function requireFullAccess(): Promise<
   return context;
 }
 
+/**
+ * Отчёты отдела продаж: директор и РОП.
+ *
+ * РОП руководит менеджерами и продажниками, и без цифр по каждому из них
+ * руководить нечем — это его основной инструмент. Остальные разделы
+ * руководства (настройки, интеграции, деньги компании) ему по-прежнему
+ * закрыты: он ведёт отдел, а не компанию.
+ */
+export async function requireReportsAccess(): Promise<
+  SessionContext & { company: CompanyRow }
+> {
+  const context = await requireCompanySession();
+  if (context.employee && context.employee.role !== 'rop') {
+    redirect('/dashboard/leads');
+  }
+  return context;
+}
+
 export async function requireSuperAdmin(): Promise<SessionContext> {
   const context = await requireSession('/admin');
   if (context.profile.role !== 'SUPER_ADMIN') redirect('/dashboard');

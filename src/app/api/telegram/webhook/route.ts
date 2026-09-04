@@ -266,8 +266,16 @@ async function handleMessage(message: TelegramMessage) {
 
   if (text.includes('показатели')) return showStats({ chatId }, employee);
   if (text.includes('Мои уроки')) return trialsMenu({ chatId }, employee);
-  if (text.includes('Недозвон')) return listLeads({ chatId }, employee, 'no_answer');
-  if (text.includes('Мои лиды')) return leadsMenu({ chatId }, employee);
+  if (text.includes('Недозвон') || text.includes('Мои лиды')) {
+    const stop = await bookingGate({ chatId }, employee, () =>
+      sendMessage(chatId, `⏳ ${GATE_HINT}.`),
+    );
+    if (stop) return;
+
+    return text.includes('Недозвон')
+      ? listLeads({ chatId }, employee, 'no_answer')
+      : leadsMenu({ chatId }, employee);
+  }
 
   const open = await openShiftOf(employee.id);
   return sendMessage(
@@ -1263,6 +1271,15 @@ async function handleCallback(query: TelegramCallbackQuery) {
   const [kind, leadId, value] = parts;
   if (!leadId) return answerCallback(query.id);
 
+  // Незаконченная запись на урок держит менеджера на месте: пока у клиента нет
+  // времени и продажника, урок существует только на словах, а другие заявки
+  // подождут. Кнопки самой записи, разумеется, пропускаем — иначе закончить
+  // её было бы нечем.
+  if (GATED_ACTIONS.includes(kind)) {
+    const stop = await bookingGate(screen, employee, () => answerCallback(query.id, GATE_HINT));
+    if (stop) return;
+  }
+
   // Просмотр своих заявок: во втором поле не лид, а статус или период.
   if (kind === 'lm') {
     await answerCallback(query.id);
@@ -1312,6 +1329,7 @@ async function handleCallback(query: TelegramCallbackQuery) {
   if (!value) return answerCallback(query.id);
 
   if (kind === 's') return applyStatus(query, screen, employee, leadId, value);
+  if (kind === 'bc') return cancelBooking(query, screen, employee, leadId, value);
   if (kind === 'bd') return pickDay(query, screen, employee, leadId, value);
   if (kind === 'bt') return pickTime(query, screen, employee, leadId, value);
   if (kind === 'tr') return applyTrial(query, screen, employee, leadId, value);
@@ -1508,7 +1526,7 @@ async function applyStatus(
       return show(
         screen,
         `🎓 <b>${name}</b> — записываем на урок.\nНа какой день?`,
-        bookingDayButtons(trialId, company?.timezone ?? 'Asia/Almaty'),
+        bookingDayButtons(trialId, company?.timezone ?? 'Asia/Almaty', lead.status),
       );
     }
   }
@@ -1753,6 +1771,124 @@ async function draftTrialOf(companyId: string, leadId: string): Promise<string |
     .limit(1)
     .maybeSingle();
   return data?.id ?? null;
+}
+
+/**
+ * Незаконченная запись на урок.
+ *
+ * «Пробный» нажат, а времени у урока нет — значит продажник о клиенте не
+ * знает, и урока на самом деле не существует. Такие черновики копились молча:
+ * менеджер отвлекался на следующего клиента и не возвращался.
+ */
+type PendingTrialRow = { id: string; leads: { name: string | null } | null };
+
+async function pendingBooking(
+  employee: Employee,
+): Promise<{ id: string; name: string } | null> {
+  const supabase = createAdminSupabase();
+  const { data } = await supabase
+    .from('trials')
+    .select('id, leads!inner(name, assigned_to)')
+    .eq('company_id', employee.company_id)
+    .eq('status', 'scheduled')
+    .is('starts_at', null)
+    .eq('leads.assigned_to', employee.id)
+    .order('created_at')
+    .limit(1);
+
+  const row = (data as unknown as PendingTrialRow[] | null)?.[0];
+  return row ? { id: row.id, name: row.leads?.name || 'Клиент' } : null;
+}
+
+/** Действия, которые ждут, пока запись на урок закончат. */
+const GATED_ACTIONS = ['lm', 'lq', 's'];
+
+const GATE_HINT = 'Сначала закончите запись на урок';
+
+/**
+ * Не пускать дальше, пока урок без времени.
+ *
+ * Возвращает true, если ход не сделан: вызывающий на этом останавливается.
+ * Продажника это не касается — записывает менеджер.
+ */
+async function bookingGate(
+  screen: Screen,
+  employee: Employee,
+  notify: () => Promise<unknown>,
+): Promise<boolean> {
+  if (employee.role !== 'manager') return false;
+
+  const pending = await pendingBooking(employee);
+  if (!pending) return false;
+
+  const timeZone = (await companyOf(employee.company_id))?.timezone ?? 'Asia/Almaty';
+
+  await notify();
+  await show(
+    screen,
+    `🎓 <b>${escapeHtml(pending.name)}</b> — запись на урок не закончена.\n` +
+      'Пока у урока нет времени, продажник о клиенте не знает. Выберите день:',
+    bookingDayButtons(pending.id, timeZone),
+  );
+  return true;
+}
+
+/**
+ * Отмена записи: «Пробный» нажали случайно.
+ *
+ * Черновик удаляем, клиента возвращаем в прежний статус. Назначенный урок так
+ * не отменить — у него уже есть время и продажник, которого предупредили;
+ * такое правится в кабинете, чтобы отмена не проходила незаметно для него.
+ */
+async function cancelBooking(
+  query: TelegramCallbackQuery,
+  screen: Screen,
+  employee: Employee,
+  trialId: string,
+  back?: string,
+) {
+  const supabase = createAdminSupabase();
+
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('id, lead_id, starts_at')
+    .eq('id', trialId)
+    .eq('company_id', employee.company_id)
+    .maybeSingle();
+
+  if (!trial) return answerCallback(query.id, 'Запись не найдена.');
+  if (trial.starts_at) {
+    return answerCallback(query.id, 'Урок уже назначен — отмените его в кабинете.');
+  }
+
+  const lead = trial.lead_id ? await ownLead(employee, trial.lead_id) : null;
+  if (!lead) return answerCallback(query.id, 'Этот клиент уже не за вами.');
+
+  await supabase
+    .from('trials')
+    .delete()
+    .eq('id', trial.id)
+    .eq('company_id', employee.company_id);
+
+  const status: LeadStatus =
+    back && isLeadStatus(back) && back !== 'trial' ? back : 'new';
+
+  await supabase
+    .from('leads')
+    .update({ status })
+    .eq('id', lead.id)
+    .eq('company_id', employee.company_id);
+
+  const company = await companyOf(employee.company_id);
+  const label = leadStatusFor(status, company?.trial_term).label;
+
+  await answerCallback(query.id, 'Запись отменена');
+  await show(
+    screen,
+    `↩️ <b>${escapeHtml(lead.name || 'Клиент')}</b> — записи на урок нет, клиент снова в «${label}».`,
+  );
+
+  return listLeads({ chatId: screen.chatId }, employee, 'new');
 }
 
 // -----------------------------------------------------------------------------

@@ -181,12 +181,24 @@ export function escapeHtml(value: string): string {
  * говорит с клиентом, набирать дату ему нечем. Идентификатор урока короче
  * связки «лид + время», поэтому шаги ссылаются на него.
  */
-export function bookingDayButtons(trialId: string, timeZone: string): InlineButton[][] {
+export function bookingDayButtons(
+  trialId: string,
+  timeZone: string,
+  /**
+   * Куда вернуть клиента, если «Пробный» нажали случайно. Статус до нажатия:
+   * без него отмена возвращала бы всех в «Новый» и стирала работу менеджера.
+   */
+  back: string = 'new',
+): InlineButton[][] {
   const buttons = [0, 1, 2, 3].map((offset) => ({
     text: bookingDayLabel(offset, timeZone),
     callback_data: `bd:${trialId}:${offset}`,
   }));
-  return [buttons.slice(0, 2), buttons.slice(2)];
+  return [
+    buttons.slice(0, 2),
+    buttons.slice(2),
+    [{ text: '⬅️ Нажал случайно', callback_data: `bc:${trialId}:${back}` }],
+  ];
 }
 
 /**

@@ -1222,6 +1222,15 @@ export type LeadListItem = {
   departmentName: string | null;
   /** Сумма оплаченной продажи, если чек уже проведён. */
   saleAmount: number | null;
+  /**
+   * Последний урок этой заявки — работа продажника.
+   *
+   * Рядом со статусом заявки намеренно: «Думает» и «Отказ» есть у обоих, но
+   * означают разное — у менеджера до урока, у продажника после. В одну
+   * колонку их не свести, не потеряв, кто и на каком шаге так решил.
+   */
+  trialStatus: string | null;
+  trialSellerName: string | null;
 };
 
 export type LeadStats = {
@@ -1390,6 +1399,23 @@ export async function getLeads(
     saleByLead.set(sale.lead_id, (saleByLead.get(sale.lead_id) ?? 0) + Number(sale.amount));
   }
 
+  // Уроки этих заявок. Берём последний по каждой: клиента, не вышедшего на
+  // связь, записывают заново, и показывать надо текущую попытку.
+  const trials = await inChunks(leadIds, (chunk) =>
+    supabase
+      .from('trials')
+      .select('lead_id, status, assigned_to, created_at')
+      .eq('company_id', companyId)
+      .in('lead_id', chunk)
+      .order('created_at', { ascending: false }),
+  );
+
+  const trialByLead = new Map<string, { status: string; assigned_to: string | null }>();
+  for (const trial of trials) {
+    if (!trial.lead_id || trialByLead.has(trial.lead_id)) continue;
+    trialByLead.set(trial.lead_id, { status: trial.status, assigned_to: trial.assigned_to });
+  }
+
   const items = (leads ?? []).map((lead) => ({
     id: lead.id,
     name: lead.name,
@@ -1404,6 +1430,11 @@ export async function getLeads(
     assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
     departmentName: lead.department_id ? (departmentNames.get(lead.department_id) ?? null) : null,
     saleAmount: saleByLead.get(lead.id) ?? null,
+    trialStatus: trialByLead.get(lead.id)?.status ?? null,
+    trialSellerName: (() => {
+      const sellerId = trialByLead.get(lead.id)?.assigned_to;
+      return sellerId ? (employeeNames.get(sellerId) ?? null) : null;
+    })(),
   }));
 
   return { items, total };

@@ -801,6 +801,7 @@ async function listLeads(
   const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
   const creativeName = await shortCreativeLabel(supabase, employee.company_id, lead.creative_id);
   const label = leadStatusFor(lead.status, company?.trial_term).label;
+  const trialNote = await trialNoteFor(supabase, employee.company_id, lead.id);
 
   const header =
     `${STATUS_ICON[lead.status as LeadStatus] ?? '👤'} <b>${escapeHtml(label)} — ${offset + 1} из ${total}</b>\n` +
@@ -814,13 +815,52 @@ async function listLeads(
 
   return show(
     screen,
-    leadCard({ ...lead, creativeLabel: creativeName }, header, company?.trial_term),
+    leadCard(
+      { ...lead, creativeLabel: creativeName, trialNote },
+      header,
+      company?.trial_term,
+    ),
     [
       ...statusButtons(lead.id, funnelType, company?.trial_term),
       ...whatsappButton(lead.phone),
       footer,
     ],
   );
+}
+
+/**
+ * Что с уроком этого клиента: «Думает · Айгерим».
+ *
+ * Менеджеру это нужно, чтобы не дёргать человека, которого сейчас ведёт
+ * продажник, и чтобы видеть, чем кончилось занятие, которое он же и записал.
+ */
+async function trialNoteFor(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  companyId: string,
+  leadId: string,
+): Promise<string | null> {
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('status, assigned_to')
+    .eq('company_id', companyId)
+    .eq('lead_id', leadId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!trial) return null;
+
+  const label = TRIAL_STATUS[trial.status as keyof typeof TRIAL_STATUS]?.label ?? trial.status;
+
+  if (!trial.assigned_to) return `${label} · продажник не назначен`;
+
+  const { data: seller } = await supabase
+    .from('employees')
+    .select('full_name')
+    .eq('id', trial.assigned_to)
+    .maybeSingle();
+
+  return seller ? `${label} · ${seller.full_name}` : label;
 }
 
 /**

@@ -5,6 +5,7 @@ import { DateRangePicker } from '@/components/app/date-range-picker';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { PhoneCell } from '@/components/app/phone-cell';
 import { Td, TableShell, type TableColumn } from '@/components/app/table';
+import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
 import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -16,6 +17,7 @@ import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { PLATFORM_LABELS } from '@/lib/labels';
 import type { FunnelType } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
+import { trialStatusMeta } from '@/lib/trial-status';
 import { ClientSearchForm, ClientSearchResults } from './client-search';
 import {
   LEADS_PER_PAGE,
@@ -62,8 +64,22 @@ const COLUMNS: TableColumn[] = [
   { key: 'actions', label: 'Действия', align: 'right' as const },
 ];
 
+/**
+ * Колонки для воронки с уроком: у заявки два хозяина и два исхода.
+ *
+ * «Думает» и «Отказ» есть и у менеджера, и у продажника, но означают разное —
+ * до урока и после. Свести их в одну колонку значит потерять, кто и на каком
+ * шаге так решил, поэтому исход урока стоит своим столбцом рядом.
+ */
+const TRIAL_COLUMNS: TableColumn[] = COLUMNS.flatMap((column) =>
+  column.key === 'status'
+    ? [column, { key: 'trial', label: 'Урок', showFrom: 'lg' as const }]
+    : [column],
+);
+
 /** Ширина таблицы для каждого набора видимых колонок. */
 const TABLE_MIN_WIDTH = { base: 520, md: 820, lg: 1040, xl: 1400 };
+const TRIAL_TABLE_MIN_WIDTH = { base: 520, md: 820, lg: 1220, xl: 1580 };
 
 export default async function LeadsPage({
   searchParams,
@@ -227,7 +243,12 @@ export default async function LeadsPage({
                   />
                 </div>
               ) : (
-                <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
+                <TableShell
+                  columns={funnelType === 'trial' ? TRIAL_COLUMNS : COLUMNS}
+                  minWidth={
+                    funnelType === 'trial' ? TRIAL_TABLE_MIN_WIDTH : TABLE_MIN_WIDTH
+                  }
+                >
                   {leads.map((lead) => (
                     <tr key={lead.id} className="transition-colors hover:bg-surface-2/60">
                       <Td
@@ -290,6 +311,22 @@ export default async function LeadsPage({
                           trialTerm={company.trial_term}
                         />
                       </Td>
+                      {funnelType === 'trial' ? (
+                        <Td showFrom="lg">
+                          {lead.trialStatus ? (
+                            <>
+                              <Badge tone={trialStatusMeta(lead.trialStatus).tone}>
+                                {trialStatusMeta(lead.trialStatus).label}
+                              </Badge>
+                              <span className="mt-0.5 block text-[11.5px] text-faint">
+                                {lead.trialSellerName ?? 'продажник не назначен'}
+                              </span>
+                            </>
+                          ) : (
+                            <span className="text-faint">—</span>
+                          )}
+                        </Td>
+                      ) : null}
                       <Td last align="right">
                         <LeadRowActions
                           leadId={lead.id}

@@ -63,9 +63,16 @@ type TrialStatusMeta = {
   /** Итог подведён: урок больше не в работе. */
   closed: boolean;
   /**
-   * Во что переходит сам лид. Урок и клиент — разные вещи: урок бывает закрыт,
-   * а клиент остаётся в работе, как при отказе банка. null — статус лида не
-   * трогаем.
+   * Во что переходит сам лид — почти всегда никуда.
+   *
+   * «Думает» и «Отказ» есть у обоих, но означают разное: у менеджера — до
+   * урока, у продажника — после. Пока исход урока переписывал статус заявки,
+   * эти пары сливались в одну, и в разделе «Лиды» было не понять, кто и на
+   * каком шаге так решил. Теперь у каждого своё поле: статус заявки — работа
+   * менеджера, статус урока — работа продажника, и рядом видно оба.
+   *
+   * Исключение одно — покупка. Она закрывает всю воронку, а не только урок:
+   * по заявке считаются выручка и событие в рекламный кабинет.
    */
   leadStatus: LeadStatus | null;
   /** Следующий шаг продажника: без него отметка повисает без продолжения. */
@@ -100,7 +107,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     stage: 'deciding',
     held: true,
     closed: false,
-    leadStatus: 'thinking',
+    leadStatus: null,
     followUp: 'return',
   },
   sale: {
@@ -120,8 +127,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     stage: 'blocked',
     held: true,
     closed: true,
-    // Клиент никуда не делся: платят полностью или идут в другой банк.
-    leadStatus: 'thinking',
+    leadStatus: null,
     followUp: 'return',
   },
   rejected: {
@@ -131,7 +137,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     stage: 'lost',
     held: true,
     closed: true,
-    leadStatus: 'rejected',
+    leadStatus: null,
     followUp: null,
   },
   no_show: {
@@ -141,7 +147,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     stage: 'missed',
     held: false,
     closed: true,
-    leadStatus: 'no_answer',
+    leadStatus: null,
     followUp: 'callback',
   },
   canceled: {
@@ -151,7 +157,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     stage: 'missed',
     held: false,
     closed: true,
-    leadStatus: 'thinking',
+    leadStatus: null,
     followUp: 'return',
   },
 };
@@ -200,10 +206,11 @@ export function trialStage(status: string): TrialStage {
 }
 
 /**
- * Куда переводится клиент следом за исходом урока.
+ * Куда переводится клиент следом за исходом урока — и переводится ли вообще.
  *
- * Одно правило на бот и на кабинет: иначе продажник отмечает урок в чате, а в
- * разделе «Лиды» человек так и висит записанным на занятие, которое прошло.
+ * Одно правило на бот и на кабинет, иначе они разойдутся. Двигает заявку
+ * только покупка: остальные исходы принадлежат уроку, а не клиенту, и живут
+ * в своём поле рядом.
  */
 export function leadStatusAfterTrial(status: string): LeadStatus | null {
   return trialStatusMeta(status).leadStatus;

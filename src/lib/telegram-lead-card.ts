@@ -18,6 +18,14 @@ export type LeadCardData = {
   status: string;
   /** Объявление, с которого пришёл лид, — с ним понятно, о чём говорить. */
   creativeLabel?: string | null;
+  /**
+   * Что с уроком: «Думает · Айгерим».
+   *
+   * Отдельной строкой от статуса намеренно. «Думает» и «Отказ» есть и у
+   * менеджера, и у продажника, но означают разное — до урока и после. В одной
+   * строке они слились бы, и стало бы не понять, кто и на каком шаге решил.
+   */
+  trialNote?: string | null;
 };
 
 export function leadCard(lead: LeadCardData, title?: string, trialTerm?: string): string {
@@ -32,6 +40,7 @@ export function leadCard(lead: LeadCardData, title?: string, trialTerm?: string)
       ? `Источник: ${escapeHtml(sourceLabel(lead))}`
       : null,
     `Статус: ${leadStatusFor(lead.status, trialTerm).label}`,
+    lead.trialNote ? `🎓 Урок: ${escapeHtml(lead.trialNote)}` : null,
   ];
   return rows.filter(Boolean).join('\n');
 }

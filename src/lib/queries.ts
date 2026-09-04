@@ -1919,13 +1919,17 @@ export async function getTrials(
 
   if (options?.basis === 'sold') {
     const window = zonedDayWindow(from, to, options.timeZone ?? 'Asia/Almaty');
-    query = query
-      .gte('created_at', window.startsAt)
-      .lt('created_at', window.endsBefore)
-      .order('created_at', { ascending: false });
+    query = query.gte('created_at', window.startsAt).lt('created_at', window.endsBefore);
   } else {
-    query = query.gte('date', from).lte('date', to).order('date', { ascending: false });
+    query = query.gte('date', from).lte('date', to);
   }
+
+  // Список читают как расписание: сверху то, что раньше. Урок в 10:00 стоит
+  // выше урока в 13:00 независимо от того, какой из них записали первым.
+  // Записи без времени уходят вниз своего дня — их ещё предстоит назначить.
+  query = query
+    .order('date', { ascending: true })
+    .order('starts_at', { ascending: true, nullsFirst: false });
 
   const { data } = await query.limit(LIST_LIMIT);
   const trials = (data ?? []) as unknown as TrialQueryRow[];

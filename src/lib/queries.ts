@@ -1862,28 +1862,78 @@ export type TrialListItem = {
   startsAt: string | null;
   /** Сумма проведённого чека по этому клиенту. null — продажи ещё нет. */
   saleAmount: number | null;
+  /** Когда менеджер продал урок и записал клиента. */
+  createdAt: string;
 };
+
+/** Строка запроса уроков: связь с заявкой нужна только для фильтра. */
+type TrialQueryRow = {
+  id: string;
+  date: string;
+  status: string;
+  amount: number | string;
+  lead_id: string | null;
+  assigned_to: string | null;
+  starts_at: string | null;
+  created_at: string;
+};
+
+/**
+ * По какому дню отбирать уроки.
+ *
+ * У продажника и менеджера это разные дни, и подменять один другим нельзя:
+ *   • `lesson` — день занятия. Продажник смотрит расписание: что у него
+ *     сегодня, что в понедельник.
+ *   • `sold` — день, когда менеджер продал урок. Он записал сегодня девятнадцать
+ *     человек, а занятия у них на всю неделю вперёд; по дню занятия его работа
+ *     за сегодня показала бы три записи из девятнадцати.
+ */
+export type TrialBasis = 'lesson' | 'sold';
 
 export async function getTrials(
   companyId: string,
   from: string,
   to: string,
+  options?: {
+    timeZone?: string;
+    basis?: TrialBasis;
+    /** Только уроки, проданные этим менеджером (его заявки). */
+    managerId?: string | null;
+    /** Только уроки, которые ведёт этот продажник. */
+    sellerId?: string | null;
+  },
 ): Promise<TrialListItem[]> {
   const supabase = await createServerSupabase();
 
-  const { data: trials } = await supabase
-    .from('trials')
-    .select('id, date, status, amount, lead_id, assigned_to, starts_at')
-    .eq('company_id', companyId)
-    .gte('date', from)
-    .lte('date', to)
-    .order('date', { ascending: false })
-    .limit(LIST_LIMIT);
+  const columns = 'id, date, status, amount, lead_id, assigned_to, starts_at, created_at';
 
-  const leadIds = [...new Set((trials ?? []).map((row) => row.lead_id).filter(Boolean))] as string[];
+  // Связь с заявкой добавляем только когда по ней фильтруем: `!inner`
+  // выбросил бы уроки без клиента, а они бывают у старых записей.
+  let query = supabase
+    .from('trials')
+    .select(options?.managerId ? `${columns}, leads!inner(assigned_to)` : columns)
+    .eq('company_id', companyId);
+
+  if (options?.managerId) query = query.eq('leads.assigned_to', options.managerId);
+  if (options?.sellerId) query = query.eq('assigned_to', options.sellerId);
+
+  if (options?.basis === 'sold') {
+    const window = zonedDayWindow(from, to, options.timeZone ?? 'Asia/Almaty');
+    query = query
+      .gte('created_at', window.startsAt)
+      .lt('created_at', window.endsBefore)
+      .order('created_at', { ascending: false });
+  } else {
+    query = query.gte('date', from).lte('date', to).order('date', { ascending: false });
+  }
+
+  const { data } = await query.limit(LIST_LIMIT);
+  const trials = (data ?? []) as unknown as TrialQueryRow[];
+
+  const leadIds = [...new Set(trials.map((row) => row.lead_id).filter(Boolean))] as string[];
 
   const [leads, { data: employees }, sales] = await Promise.all([
-    fetchLeadContacts(companyId, trials ?? []),
+    fetchLeadContacts(companyId, trials),
     supabase.from('employees').select('id, full_name').eq('company_id', companyId),
     // Чек мог провести бот — тогда сумму спрашивать во второй раз нельзя.
     inChunks(leadIds, (chunk) =>
@@ -1903,9 +1953,10 @@ export async function getTrials(
       .map((row) => [row.lead_id as string, Number(row.amount)]),
   );
 
-  return (trials ?? []).map((trial) => ({
+  return trials.map((trial) => ({
     id: trial.id,
     date: trial.date,
+    createdAt: trial.created_at,
     status: trial.status,
     amount: Number(trial.amount),
     leadId: trial.lead_id,

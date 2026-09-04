@@ -36,7 +36,11 @@ export type InlineButton =
   // здесь быть не может, поэтому «позвонить» остаётся номером в тексте.
   | { text: string; url: string };
 
-async function call(method: string, payload: Record<string, unknown>): Promise<void> {
+/** Возвращает, удалось ли: вызывающему бывает нужен запасной путь. */
+async function call(
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<boolean> {
   const response = await fetch(`${API}/bot${botToken()}/${method}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -48,7 +52,10 @@ async function call(method: string, payload: Record<string, unknown>): Promise<v
   // Telegram будет слать то же обновление снова и снова.
   if (!response.ok) {
     console.error('telegram', method, response.status, await response.text());
+    return false;
   }
+
+  return true;
 }
 
 /** Кнопка обычной клавиатуры. Строка — просто текст, объект — запрос данных. */
@@ -58,7 +65,7 @@ export function sendMessage(
   chatId: number,
   text: string,
   options?: { inline?: InlineButton[][]; keyboard?: KeyboardButton[][] },
-): Promise<void> {
+): Promise<boolean> {
   const payload: Record<string, unknown> = {
     chat_id: chatId,
     text,
@@ -80,16 +87,20 @@ export function sendMessage(
   return call('sendMessage', payload);
 }
 
-export function answerCallback(callbackId: string, text?: string): Promise<void> {
+export function answerCallback(callbackId: string, text?: string): Promise<boolean> {
   return call('answerCallbackQuery', { callback_query_id: callbackId, text });
 }
 
+/**
+ * Перерисовать своё сообщение. Возвращает false, если Telegram отказал —
+ * сообщение слишком старое или текст с кнопками не изменились.
+ */
 export function editMessageText(
   chatId: number,
   messageId: number,
   text: string,
   inline?: InlineButton[][],
-): Promise<void> {
+): Promise<boolean> {
   return call('editMessageText', {
     chat_id: chatId,
     message_id: messageId,

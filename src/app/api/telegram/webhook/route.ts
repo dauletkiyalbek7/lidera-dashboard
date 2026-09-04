@@ -22,7 +22,6 @@ import {
   instantInZone,
   isTouchPreset,
   resolveTouchTime,
-  touchPreset,
   untilLabel,
 } from '@/lib/lead-touches';
 import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
@@ -54,6 +53,7 @@ import {
 } from '@/lib/telegram-lead-card';
 import {
   answerCallback,
+  editMessageText,
   isBotConfigured,
   sendMessage,
   webhookSecret,
@@ -255,8 +255,8 @@ async function handleMessage(message: TelegramMessage) {
   }
 
   if (text.includes('показатели')) return showStats(chatId, employee);
-  if (text.includes('Недозвон')) return listLeads(chatId, employee, 'no_answer');
-  if (text.includes('Мои лиды')) return leadsMenu(chatId, employee);
+  if (text.includes('Недозвон')) return listLeads({ chatId }, employee, 'no_answer');
+  if (text.includes('Мои лиды')) return leadsMenu({ chatId }, employee);
 
   const open = await openShiftOf(employee.id);
   return sendMessage(
@@ -574,6 +574,36 @@ async function closeShift(chatId: number, employee: Employee) {
 const ACTIVE_STATUSES: LeadStatus[] = ['new', 'no_answer', 'thinking'];
 
 /**
+ * Куда рисовать ответ.
+ *
+ * Работа с клиентом — это один экран, а не лента. Пока каждое нажатие слало
+ * новое сообщение, чат за смену превращался в простыню из полусотни карточек:
+ * менеджер листал вверх, искал, где он остановился, и терял место. Поэтому
+ * нажатие кнопки перерисовывает то же сообщение — карточка сменяется
+ * карточкой, а не уезжает вниз.
+ *
+ * `messageId` есть только у нажатия кнопки. Команда с клавиатуры открывает
+ * новый экран: ей перерисовывать нечего.
+ */
+type Screen = { chatId: number; messageId?: number };
+
+async function show(
+  screen: Screen,
+  text: string,
+  inline?: InlineButton[][],
+): Promise<void> {
+  if (screen.messageId === undefined) {
+    await sendMessage(screen.chatId, text, { inline });
+    return;
+  }
+
+  // Старое сообщение Telegram править отказывается. Молча проглотить отказ
+  // нельзя: менеджер нажал кнопку и не увидел бы ничего — присылаем новое.
+  const edited = await editMessageText(screen.chatId, screen.messageId, text, inline);
+  if (!edited) await sendMessage(screen.chatId, text, { inline });
+}
+
+/**
  * Периоды выборки. Кодируются одной буквой: в callback_data Telegram всего
  * 64 байта, а туда же идут статус и место в списке.
  */
@@ -656,14 +686,14 @@ async function ownLeads(
  * статусу.
  */
 async function leadsMenu(
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   period: LeadPeriod = 'a',
 ) {
   const supabase = createAdminSupabase();
   const company = await companyOf(employee.company_id);
 
-  if (!(await allowedOnShift(chatId, employee, company))) return;
+  if (!(await allowedOnShift(screen.chatId, employee, company))) return;
 
   const timeZone = company?.timezone ?? 'Asia/Almaty';
   const leads = await ownLeads(supabase, employee, period, timeZone);
@@ -676,10 +706,10 @@ async function leadsMenu(
   ).filter((status) => (counts.get(status) ?? 0) > 0);
 
   if (statuses.length === 0) {
-    return sendMessage(
-      chatId,
+    return show(
+      screen,
       `📋 <b>Мои клиенты</b> · ${PERIOD_LABEL[period].toLowerCase()}\n\nЗа этот период клиентов нет.`,
-      { inline: periodButtons(period) },
+      periodButtons(period),
     );
   }
 
@@ -698,10 +728,10 @@ async function leadsMenu(
     );
   }
 
-  return sendMessage(
-    chatId,
+  return show(
+    screen,
     `📋 <b>Мои клиенты</b> · ${PERIOD_LABEL[period].toLowerCase()}\n\n${lines.join('\n')}\n\nВсего: <b>${leads.length}</b>`,
-    { inline: [...rows, ...periodButtons(period)] },
+    [...rows, ...periodButtons(period)],
   );
 }
 
@@ -724,7 +754,7 @@ function periodButtons(current: LeadPeriod): InlineButton[][] {
  * чаще всего.
  */
 async function listLeads(
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   status: LeadStatus,
   period: LeadPeriod = 'a',
@@ -733,7 +763,7 @@ async function listLeads(
   const supabase = createAdminSupabase();
   const company = await companyOf(employee.company_id);
 
-  if (!(await allowedOnShift(chatId, employee, company))) return;
+  if (!(await allowedOnShift(screen.chatId, employee, company))) return;
 
   const timeZone = company?.timezone ?? 'Asia/Almaty';
 
@@ -763,9 +793,9 @@ async function listLeads(
       status === 'new'
         ? 'Новых клиентов нет. Как появятся — пришлю сюда.'
         : 'Здесь больше никого нет.';
-    return sendMessage(chatId, empty, {
-      inline: [[{ text: '↩️ Все мои клиенты', callback_data: `lm:${period}` }]],
-    });
+    return show(screen, empty, [
+      [{ text: '↩️ Все мои клиенты', callback_data: `lm:${period}` }],
+    ]);
   }
 
   const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
@@ -782,16 +812,14 @@ async function listLeads(
   }
   footer.push({ text: '↩️ К списку', callback_data: `lm:${period}` });
 
-  return sendMessage(
-    chatId,
+  return show(
+    screen,
     leadCard({ ...lead, creativeLabel: creativeName }, header, company?.trial_term),
-    {
-      inline: [
-        ...statusButtons(lead.id, funnelType, company?.trial_term),
-        ...whatsappButton(lead.phone),
-        footer,
-      ],
-    },
+    [
+      ...statusButtons(lead.id, funnelType, company?.trial_term),
+      ...whatsappButton(lead.phone),
+      footer,
+    ],
   );
 }
 
@@ -862,6 +890,10 @@ async function handleCallback(query: TelegramCallbackQuery) {
   const chatId = query.message?.chat.id;
   if (!userId || !chatId) return;
 
+  // Перерисовываем то сообщение, с которого нажали: клиент сменяется клиентом
+  // на месте, а не уезжает вниз новой карточкой.
+  const screen: Screen = { chatId, messageId: query.message?.message_id };
+
   const employee = await findEmployee(userId);
   if (!employee) return answerCallback(query.id, 'Вы не подключены к платформе.');
 
@@ -872,13 +904,13 @@ async function handleCallback(query: TelegramCallbackQuery) {
   // Просмотр своих заявок: во втором поле не лид, а статус или период.
   if (kind === 'lm') {
     await answerCallback(query.id);
-    return leadsMenu(chatId, employee, isLeadPeriod(leadId) ? leadId : 'a');
+    return leadsMenu(screen, employee, isLeadPeriod(leadId) ? leadId : 'a');
   }
 
   if (kind === 'lq') {
     await answerCallback(query.id);
     return listLeads(
-      chatId,
+      screen,
       employee,
       isLeadStatus(leadId) ? leadId : 'new',
       isLeadPeriod(value ?? '') ? (value as LeadPeriod) : 'a',
@@ -888,13 +920,13 @@ async function handleCallback(query: TelegramCallbackQuery) {
 
   if (!value) return answerCallback(query.id);
 
-  if (kind === 's') return applyStatus(query, chatId, employee, leadId, value);
-  if (kind === 't') return applyTouch(query, chatId, employee, leadId, value);
-  if (kind === 'bd') return pickDay(query, chatId, employee, leadId, value);
-  if (kind === 'bt') return pickTime(query, chatId, employee, leadId, value);
-  if (kind === 'bs') return pickSeller(query, chatId, employee, leadId, value);
-  if (kind === 'tr') return applyTrial(query, chatId, employee, leadId, value);
-  if (kind === 'q') return applyQuality(query, chatId, employee, leadId, value);
+  if (kind === 's') return applyStatus(query, screen, employee, leadId, value);
+  if (kind === 't') return applyTouch(query, screen, employee, leadId, value);
+  if (kind === 'bd') return pickDay(query, screen, employee, leadId, value);
+  if (kind === 'bt') return pickTime(query, screen, employee, leadId, value);
+  if (kind === 'bs') return pickSeller(query, screen, employee, leadId, value);
+  if (kind === 'tr') return applyTrial(query, screen, employee, leadId, value);
+  if (kind === 'q') return applyQuality(query, screen, employee, leadId, value);
 
   return answerCallback(query.id);
 }
@@ -913,7 +945,7 @@ async function handleCallback(query: TelegramCallbackQuery) {
  */
 async function applyTrial(
   query: TelegramCallbackQuery,
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   trialId: string,
   outcome: string,
@@ -974,9 +1006,12 @@ async function applyTrial(
     // продажник выбирал бы её на каждой продаже, а ошибётся один раз — и в
     // отчёте доход разойдётся в сотни раз.
     const currency = (await companyOf(employee.company_id))?.sales_currency ?? 'KZT';
+    // Сумму присылают текстом, поэтому вопрос уходит отдельным сообщением:
+    // ответ должен встать в чате под ним, а не под старой карточкой.
+    await show(screen, `💰 <b>${name}</b> — покупка отмечена. Жду сумму.`);
     return sendMessage(
-      chatId,
-      `💰 <b>${name}</b> купил курс.\nНа какую сумму? Отправьте число одним сообщением — например <code>390000</code>.\n` +
+      screen.chatId,
+      `На какую сумму? Отправьте число одним сообщением — например <code>390000</code>.\n` +
         `Считаем в <b>${escapeHtml(currency)}</b>. Платили в другой валюте — напишите её рядом: <code>300$</code>.`,
     );
   }
@@ -986,30 +1021,28 @@ async function applyTrial(
   // Урок провели — решение клиента отдельным вопросом: между занятием и
   // оплатой обычно проходит день-два.
   if (meta.followUp === 'outcome') {
-    return sendMessage(
-      chatId,
+    return show(
+      screen,
       `✅ Урок с <b>${name}</b> проведён.\nЧем закончилось?`,
-      { inline: trialOutcomeButtons(trial.id) },
+      trialOutcomeButtons(trial.id),
     );
   }
 
   if (meta.followUp && trial.lead_id) {
     const callback = meta.followUp === 'callback';
-    return sendMessage(
-      chatId,
+    return show(
+      screen,
       `<b>${name}</b> — ${meta.label.toLowerCase()}.\n` +
         (callback ? 'Когда попробовать снова?' : 'Когда вернуться к клиенту?'),
-      {
-        inline: touchButtons(
-          trial.lead_id,
-          callback ? NO_ANSWER_TOUCHES : THINKING_TOUCHES,
-          '🚫 Не напоминать',
-        ),
-      },
+      touchButtons(
+        trial.lead_id,
+        callback ? NO_ANSWER_TOUCHES : THINKING_TOUCHES,
+        '🚫 Не напоминать',
+      ),
     );
   }
 
-  return sendMessage(chatId, `✅ <b>${name}</b> — ${meta.label.toLowerCase()}.`);
+  return show(screen, `✅ <b>${name}</b> — ${meta.label.toLowerCase()}.`);
 }
 
 
@@ -1023,7 +1056,7 @@ async function applyTrial(
  */
 async function applyStatus(
   query: TelegramCallbackQuery,
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   leadId: string,
   status: string,
@@ -1054,16 +1087,14 @@ async function applyStatus(
 
   // Не дозвонился — вернуться надо сегодня же, пока клиент помнит заявку.
   if (status === 'no_answer') {
-    return sendMessage(chatId, `📵 <b>${name}</b> не отвечает.\nКогда перезвонить?`, {
-      inline: touchButtons(lead.id, NO_ANSWER_TOUCHES, '🚫 Не напоминать'),
-    });
+    return show(screen, `📵 <b>${name}</b> не отвечает.\nКогда перезвонить?`,
+      touchButtons(lead.id, NO_ANSWER_TOUCHES, '🚫 Не напоминать'));
   }
 
   // Взял паузу на решение — сроки длиннее: дёргать через час значит потерять.
   if (status === 'thinking') {
-    return sendMessage(chatId, `🤔 <b>${name}</b> думает.\nКогда вернуться?`, {
-      inline: touchButtons(lead.id, THINKING_TOUCHES, '🚫 Не напоминать'),
-    });
+    return show(screen, `🤔 <b>${name}</b> думает.\nКогда вернуться?`,
+      touchButtons(lead.id, THINKING_TOUCHES, '🚫 Не напоминать'));
   }
 
   // Продажа в прямой воронке: урока нет, закрывает тот же менеджер. Сумму
@@ -1076,9 +1107,12 @@ async function applyStatus(
       .eq('id', employee.id);
 
     const currency = company.sales_currency ?? 'KZT';
+    // Сумму присылают текстом — вопрос уходит отдельным сообщением, чтобы
+    // ответ встал под ним, а не под старой карточкой.
+    await show(screen, `💰 <b>${name}</b> — покупка отмечена. Жду сумму.`);
     return sendMessage(
-      chatId,
-      `💰 <b>${name}</b> купил.\nНа какую сумму? Отправьте число одним сообщением — например <code>35000</code>.\n` +
+      screen.chatId,
+      `На какую сумму? Отправьте число одним сообщением — например <code>35000</code>.\n` +
         `Считаем в <b>${escapeHtml(currency)}</b>. Платили в другой валюте — напишите её рядом: <code>300$</code>.`,
     );
   }
@@ -1095,10 +1129,10 @@ async function applyStatus(
     const trialId = createdId ?? (await draftTrialOf(employee.company_id, lead.id));
 
     if (trialId) {
-      return sendMessage(
-        chatId,
+      return show(
+        screen,
         `🎓 <b>${name}</b> — записываем на урок.\nНа какой день?`,
-        { inline: bookingDayButtons(trialId, company?.timezone ?? 'Asia/Almaty') },
+        bookingDayButtons(trialId, company?.timezone ?? 'Asia/Almaty'),
       );
     }
   }
@@ -1112,8 +1146,7 @@ async function applyStatus(
     });
   }
 
-  await sendMessage(chatId, `✅ <b>${name}</b> → ${label}`);
-  return listLeads(chatId, employee, 'new');
+  return listLeads(screen, employee, 'new');
 }
 
 /**
@@ -1125,7 +1158,7 @@ async function applyStatus(
  */
 async function applyTouch(
   query: TelegramCallbackQuery,
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   leadId: string,
   preset: string,
@@ -1141,13 +1174,9 @@ async function applyTouch(
   // в пачке «📵 Недозвон», вернуться к нему можно руками.
   if (preset === 'skip') {
     await answerCallback(query.id, 'Без напоминания');
-    await sendMessage(
-      chatId,
-      own
-        ? `<b>${name}</b> — без напоминания. Найдёте его в «📵 Недозвон».`
-        : `<b>${name}</b> — без напоминания.`,
-    );
-    return own ? listLeads(chatId, employee, 'new') : undefined;
+    return own
+      ? listLeads(screen, employee, 'new')
+      : show(screen, `<b>${name}</b> — без напоминания.`);
   }
 
   if (!isTouchPreset(preset)) return answerCallback(query.id, 'Неизвестный срок.');
@@ -1165,12 +1194,15 @@ async function applyTouch(
     countsAsAttempt: lead.status === 'no_answer',
   });
 
-  await answerCallback(query.id, touchPreset(preset).label);
-  await sendMessage(chatId, `⏰ <b>${name}</b> — напомню ${untilLabel(remindAt)}.`);
+  // Срок подтверждаем всплывающей подсказкой, а не сообщением: экран занят
+  // следующим клиентом, и лента ради одной строки копиться не должна.
+  await answerCallback(query.id, `Напомню ${untilLabel(remindAt)}`);
 
   // Очередь новых — работа менеджера. Продажнику после урока показывать
   // чужую пачку незачем: у него свой список занятий.
-  return own ? listLeads(chatId, employee, 'new') : undefined;
+  return own
+    ? listLeads(screen, employee, 'new')
+    : show(screen, `⏰ <b>${name}</b> — напомню ${untilLabel(remindAt)}.`);
 }
 
 /**
@@ -1356,7 +1388,7 @@ async function toCompanyCurrency(
 /** Оценка клиента: её ставит тот, кто с ним разговаривал. */
 async function applyQuality(
   query: TelegramCallbackQuery,
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   leadId: string,
   value: string,
@@ -1375,10 +1407,9 @@ async function applyQuality(
   if (!lead) return answerCallback(query.id, 'Клиент не найден.');
 
   await answerCallback(query.id, LEAD_QUALITY[value].label);
-  return sendMessage(
-    chatId,
+  return show(
+    screen,
     `${qualityBadge(value)} — <b>${escapeHtml(lead.name || 'клиент')}</b>.\n${LEAD_QUALITY[value].hint}.`,
-    { keyboard: KEYBOARD_ON },
   );
 }
 
@@ -1409,7 +1440,7 @@ async function draftTrialOf(companyId: string, leadId: string): Promise<string |
 /** Шаг 1: выбран день. Запоминаем дату и спрашиваем час. */
 async function pickDay(
   query: TelegramCallbackQuery,
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   trialId: string,
   offset: string,
@@ -1429,9 +1460,8 @@ async function pickDay(
 
   if (times.length === 0) {
     await answerCallback(query.id, 'На сегодня время вышло');
-    return sendMessage(chatId, '🌙 На сегодня свободных часов не осталось. Выберите другой день.', {
-      inline: bookingDayButtons(trialId, timeZone),
-    });
+    return show(screen, '🌙 На сегодня свободных часов не осталось. Выберите другой день.',
+      bookingDayButtons(trialId, timeZone));
   }
 
   const { error } = await supabase
@@ -1443,7 +1473,7 @@ async function pickDay(
   if (error) return answerCallback(query.id, 'Не удалось сохранить день.');
 
   await answerCallback(query.id, date);
-  return sendMessage(chatId, `📅 ${formatDay(date)}. Во сколько урок?`, { inline: times });
+  return show(screen, `📅 ${formatDay(date)}. Во сколько урок?`, times);
 }
 
 /** «17:30» по времени компании — чтобы отсечь часы, которые уже прошли. */
@@ -1459,7 +1489,7 @@ function nowInZone(timeZone: string): string {
 /** Шаг 2: выбран час. Считаем занятость и показываем продажников. */
 async function pickTime(
   query: TelegramCallbackQuery,
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   trialId: string,
   hhmm: string,
@@ -1487,9 +1517,8 @@ async function pickTime(
   // прошлом принимать нельзя: напоминание о нём уже не придёт.
   if (startsAt.getTime() <= Date.now()) {
     await answerCallback(query.id, 'Это время уже прошло');
-    return sendMessage(chatId, '⏰ Это время уже прошло. Выберите день заново.', {
-      inline: bookingDayButtons(trialId, timeZone),
-    });
+    return show(screen, '⏰ Это время уже прошло. Выберите день заново.',
+      bookingDayButtons(trialId, timeZone));
   }
 
   await supabase
@@ -1505,24 +1534,24 @@ async function pickTime(
   );
 
   if (sellers.length === 0) {
-    return sendMessage(
-      chatId,
+    return show(
+      screen,
       'В компании нет продажников — урок пока не на кого записать. Скажите директору.',
     );
   }
 
   await answerCallback(query.id, time);
-  return sendMessage(
-    chatId,
+  return show(
+    screen,
     `🕒 ${formatTrialTime(startsAt, timeZone)}\nКто проводит урок?`,
-    { inline: bookingSellerButtons(trial.id, sellers) },
+    bookingSellerButtons(trial.id, sellers),
   );
 }
 
 /** Шаг 3: выбран продажник. Закрепляем урок и предупреждаем его. */
 async function pickSeller(
   query: TelegramCallbackQuery,
-  chatId: number,
+  screen: Screen,
   employee: Employee,
   trialId: string,
   index: string,
@@ -1555,10 +1584,10 @@ async function pickSeller(
   // другой менеджер.
   if (seller.busy) {
     await answerCallback(query.id, 'Занят в это время');
-    return sendMessage(
-      chatId,
+    return show(
+      screen,
       `${escapeHtml(seller.fullName)} уже ведёт урок в это время. Выберите другого или другой час.`,
-      { inline: bookingSellerButtons(trial.id, sellers) },
+      bookingSellerButtons(trial.id, sellers),
     );
   }
 
@@ -1586,12 +1615,14 @@ async function pickSeller(
     ? `Продажник ${escapeHtml(seller.fullName)} предупреждён.`
     : `⚠️ ${escapeHtml(seller.fullName)} не получил уведомление: ${sent.reason}. Сообщите ему сами.`;
 
-  await sendMessage(
-    chatId,
+  // Запись урока — итог целой цепочки нажатий, и он остаётся в чате
+  // отдельной строкой: менеджеру потом важно видеть, что и на когда записано.
+  await show(
+    screen,
     `✅ Урок записан: ${formatTrialTime(startsAt, timeZone)}, проводит ${escapeHtml(seller.fullName)}.\n${note}`,
   );
 
-  return listLeads(chatId, employee, 'new');
+  return listLeads({ chatId: screen.chatId }, employee, 'new');
 }
 
 type OwnLead = { id: string; name: string; status: string; touch_count: number };

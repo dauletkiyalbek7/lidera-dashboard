@@ -3,6 +3,7 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { employeeStats, statsMessage, type EmployeeStats } from '@/lib/employee-stats';
+import type { FunnelType } from '@/lib/metrics';
 import { currencySymbol } from '@/lib/format';
 import { conversionRate } from '@/lib/metrics';
 import { zonedIsoDate } from '@/lib/period';
@@ -39,7 +40,7 @@ export async function runDayReports(): Promise<DayReportResult> {
 
   const { data: companies } = await supabase
     .from('companies')
-    .select('id, name, timezone, work_end_time, sales_currency, trial_term');
+    .select('id, name, timezone, work_end_time, sales_currency, trial_term, funnel_type');
 
   let reports = 0;
   let summaries = 0;
@@ -85,6 +86,7 @@ export async function runDayReports(): Promise<DayReportResult> {
     const settings = {
       currency: company.sales_currency ?? 'KZT',
       trialTerm: company.trial_term,
+      funnelType: (company.funnel_type === 'direct' ? 'direct' : 'trial') as FunnelType,
     };
 
     // Считаем один раз на сотрудника: те же числа нужны и ему, и сводке.

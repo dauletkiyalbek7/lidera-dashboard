@@ -1232,6 +1232,7 @@ async function showStats(
       title: `📊 <b>${escapeHtml(employee.full_name)}</b>\n${PERIOD_LABEL[period]} · ${range}`,
       currency: company?.sales_currency ?? 'KZT',
       trialTerm: company?.trial_term,
+      funnelType: company?.funnel_type === 'direct' ? 'direct' : 'trial',
     }),
     periodButtons(period, 'sm'),
   );

@@ -2491,6 +2491,11 @@ export type SalesReportRow = {
   leadsByStatus: Record<string, number>;
   /** Уроков, назначенных на этого продажника за период. */
   trials: number;
+  /**
+   * Сколько выданных ему заявок купили урок. Метрика менеджера: курс закрывает
+   * продажник, и мерить менеджера чужим результатом нечестно.
+   */
+  soldTrials: number;
   trialsByStatus: Record<string, number>;
   salesCount: number;
   revenue: number;
@@ -2507,10 +2512,22 @@ export type SalesReport = {
   };
 };
 
+/**
+ * Строка связанного запроса «урок + его заявка».
+ *
+ * Типы базы у нас написаны руками и связей между таблицами не описывают,
+ * поэтому вложенный `leads!inner(...)` приходится называть здесь.
+ */
+type SoldTrialRow = {
+  lead_id: string | null;
+  leads: { assigned_to: string | null } | null;
+};
+
 const EMPTY_REPORT_ROW = {
   leads: 0,
   worked: 0,
   trials: 0,
+  soldTrials: 0,
   salesCount: 0,
   revenue: 0,
 };
@@ -2543,7 +2560,7 @@ export async function getSalesReport(
   const supabase = await createServerSupabase();
   const window = zonedDayWindow(from, to, timeZone);
 
-  const [{ data: employees }, leadRows, { data: trials }, { data: sales }] =
+  const [{ data: employees }, leadRows, { data: trials }, soldRows, { data: sales }] =
     await Promise.all([
       supabase
         .from('employees')
@@ -2568,6 +2585,17 @@ export async function getSalesReport(
         .not('assigned_to', 'is', null)
         .gte('date', from)
         .lte('date', to),
+      // Проданные уроки считаем от заявки, а не от занятия: урок могли
+      // назначить на следующую неделю, но продал его менеджер в этот период.
+      selectAll((start, end) =>
+        supabase
+          .from('trials')
+          .select('lead_id, leads!inner(assigned_to, assigned_at)')
+          .eq('company_id', companyId)
+          .gte('leads.assigned_at', window.startsAt)
+          .lt('leads.assigned_at', window.endsBefore)
+          .range(start, end),
+      ),
       supabase
         .from('sales')
         .select('amount, lead_id, seller_id')
@@ -2609,6 +2637,16 @@ export async function getSalesReport(
     target.trialsByStatus[trial.status] = (target.trialsByStatus[trial.status] ?? 0) + 1;
   }
 
+  // Клиента считаем один раз, даже если урок ему переназначали: продал его
+  // менеджер всё равно однажды.
+  const soldOnce = new Set<string>();
+  for (const row of soldRows as unknown as SoldTrialRow[]) {
+    const manager = row.leads?.assigned_to ?? null;
+    if (!manager || !row.lead_id || soldOnce.has(row.lead_id)) continue;
+    soldOnce.add(row.lead_id);
+    bucket(manager).soldTrials += 1;
+  }
+
   // Продавец записан в самом чеке — он и получает деньги. Старые чеки, где его
   // нет, считаем прежним способом: через клиента, за кем тот закреплён.
   const legacy = (sales ?? []).filter((sale) => sale.seller_id === null);
@@ -2639,6 +2677,7 @@ export async function getSalesReport(
       leadsByStatus: value?.leadsByStatus ?? {},
       trials: value?.trials ?? 0,
       trialsByStatus: value?.trialsByStatus ?? {},
+      soldTrials: value?.soldTrials ?? 0,
       salesCount: value?.salesCount ?? 0,
       revenue: value?.revenue ?? 0,
     };

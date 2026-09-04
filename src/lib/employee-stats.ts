@@ -3,10 +3,11 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { currencySymbol } from '@/lib/format';
-import { conversionRate, averageCheck } from '@/lib/metrics';
+import { conversionRate, averageCheck, type FunnelType } from '@/lib/metrics';
 import { LEAD_STATUS_ORDER, leadStatusFor, type LeadStatus } from '@/lib/lead-status';
 import { zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import { TRIAL_STATUS, TRIAL_STATUS_ORDER } from '@/lib/trial-status';
+import { trialWords } from '@/lib/trial-term';
 import type { Database } from '@/lib/supabase/database.types';
 
 /**
@@ -35,8 +36,16 @@ export type EmployeeStats = {
   label: string;
   leads: number;
   byStatus: Partial<Record<LeadStatus, number>>;
-  /** Из выданных сегодня — сколько уже купили. */
+  /** Из выданных сегодня — сколько уже купили курс. */
   bought: number;
+  /**
+   * Сколько выданных клиентов купили пробный урок.
+   *
+   * Считается по записям на урок, а не по текущему статусу: клиент, который
+   * после урока купил курс, стоит уже в «Продаже», и по статусу его урок
+   * потерялся бы. А менеджеру платят именно за проданные уроки.
+   */
+  soldTrials: number;
   /** Чеки, проведённые за день, независимо от даты прихода клиента. */
   salesCount: number;
   revenue: number;
@@ -77,11 +86,12 @@ export async function employeeStats(
 
   const window = zonedDayWindow(from, to, input.timezone);
 
-  const [leads, money, touches, trials] = await Promise.all([
+  const [leads, money, touches, trials, soldTrials] = await Promise.all([
     assignedLeads(supabase, input, window),
     ownSales(supabase, input, from, to),
     openPromises(supabase, input),
     ownTrials(supabase, input, from, to),
+    trialsSoldBy(supabase, input, window),
   ]);
 
   const byStatus: Partial<Record<LeadStatus, number>> = {};
@@ -118,6 +128,7 @@ export async function employeeStats(
     leads: leads.length,
     byStatus,
     bought: byStatus.sale ?? 0,
+    soldTrials,
     salesCount: money.count,
     revenue: money.total,
     average: averageCheck(money.total, money.count),
@@ -127,6 +138,30 @@ export async function employeeStats(
     trialsTotal: trials.length,
     week,
   };
+}
+
+/**
+ * Сколько клиентов менеджера дошли до записи на урок.
+ *
+ * Запрос идёт от уроков к заявкам (`leads!inner`), а не наоборот: список
+ * заявок за «всё время» — это тысячи идентификаторов, которые в фильтр
+ * `in(...)` не помещаются. Клиент считается один раз, даже если урок ему
+ * переназначали: продал менеджер его всё равно однажды.
+ */
+async function trialsSoldBy(
+  supabase: Admin,
+  input: { companyId: string; employeeId: string },
+  window: { startsAt: string; endsBefore: string },
+): Promise<number> {
+  const { data } = await supabase
+    .from('trials')
+    .select('lead_id, leads!inner(assigned_to, assigned_at)')
+    .eq('company_id', input.companyId)
+    .eq('leads.assigned_to', input.employeeId)
+    .gte('leads.assigned_at', window.startsAt)
+    .lt('leads.assigned_at', window.endsBefore);
+
+  return new Set((data ?? []).map((row) => row.lead_id).filter(isId)).size;
 }
 
 /** Уроки, которые вёл этот человек. Считаются по дню занятия. */
@@ -265,7 +300,13 @@ function shiftDate(isoDate: string, days: number): string {
  */
 export function statsMessage(
   stats: EmployeeStats,
-  options: { title: string; currency: string; trialTerm?: string },
+  options: {
+    title: string;
+    currency: string;
+    trialTerm?: string;
+    /** Воронка компании: без пробного шага менеджера меряют покупкой. */
+    funnelType?: FunnelType;
+  },
 ): string {
   const sign = currencySymbol(options.currency);
   const lines = [options.title, ''];
@@ -284,9 +325,19 @@ export function statsMessage(
   } else if (stats.leads > 0) {
     lines.push(`👤 Клиентов выдано: <b>${stats.leads}</b>`);
     lines.push(statusBreakdown(stats.byStatus, options.trialTerm));
+
+    // Работа менеджера кончается проданным уроком: курс закрывает уже
+    // продажник, и мерить менеджера чужим результатом нечестно. Там, где
+    // урока в воронке нет, считать по-прежнему нечего — остаётся покупка.
+    const sold = options.funnelType === 'direct' ? stats.bought : stats.soldTrials;
+    const soldLabel =
+      options.funnelType === 'direct'
+        ? 'Купили'
+        : `Купили ${trialWords(options.trialTerm).accusative}`;
+
     lines.push(
-      `Купили: <b>${stats.bought}</b> — конверсия ${percent(
-        conversionRate(stats.bought, stats.leads),
+      `${soldLabel}: <b>${sold}</b> — конверсия ${percent(
+        conversionRate(sold, stats.leads),
       )}`,
     );
     lines.push('');

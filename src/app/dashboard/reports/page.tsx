@@ -108,7 +108,7 @@ export default async function ReportsPage({
             <Empty text="За этот период заявки никому не выдавались." />
           ) : (
             <TableShell
-              columns={managerColumns(leadStatuses, company.trial_term)}
+              columns={managerColumns(leadStatuses, company.trial_term, funnelType)}
               minWidth={{ base: 420, md: 700, lg: 900, xl: 1180 }}
             >
               {managers.map((row) => (
@@ -136,7 +136,15 @@ export default async function ReportsPage({
                     </Td>
                   ))}
                   <Td last align="right" className="tabular font-medium text-lime">
-                    {formatPercent(conversionRate(row.leadsByStatus.sale ?? 0, row.leads), 0)}
+                    {formatPercent(
+                      conversionRate(
+                        funnelType === 'trial'
+                          ? row.soldTrials
+                          : (row.leadsByStatus.sale ?? 0),
+                        row.leads,
+                      ),
+                      0,
+                    )}
                   </Td>
                 </tr>
               ))}
@@ -219,7 +227,16 @@ function count(value: number | undefined): string {
   return value ? formatNumber(value) : '—';
 }
 
-function managerColumns(statuses: string[], trialTerm: string | null): TableColumn[] {
+/**
+ * Последняя колонка — итог работы менеджера, и в воронке с пробным это не
+ * покупка курса: курс закрывает продажник. Поэтому там считается доля
+ * клиентов, купивших урок, и колонка названа так, чтобы это было видно.
+ */
+function managerColumns(
+  statuses: string[],
+  trialTerm: string | null,
+  funnelType: FunnelType,
+): TableColumn[] {
   return [
     { key: 'name', label: 'Сотрудник' },
     { key: 'leads', label: 'Выдано', align: 'right' },
@@ -230,7 +247,14 @@ function managerColumns(statuses: string[], trialTerm: string | null): TableColu
       align: 'right' as const,
       showFrom: status === 'sale' ? undefined : ('lg' as const),
     })),
-    { key: 'conversion', label: 'Конверсия', align: 'right' },
+    {
+      key: 'conversion',
+      label:
+        funnelType === 'trial'
+          ? `Конверсия в ${trialWords(trialTerm).column.toLowerCase()}`
+          : 'Конверсия',
+      align: 'right',
+    },
   ];
 }
 

@@ -173,7 +173,9 @@ export function escapeHtml(value: string): string {
 }
 
 /**
- * Запись на онлайн-урок в три шага: день → час → продажник.
+ * Запись на онлайн-урок в два шага: день → час. Продажника выбирает
+ * система — менеджеру важно вернуться к клиенту с ответом, а не изучать
+ * список людей, которых он в лицо не знает.
  *
  * Всё кнопками, без ввода текста: менеджер держит телефон одной рукой и
  * говорит с клиентом, набирать дату ему нечем. Идентификатор урока короче
@@ -202,7 +204,14 @@ function bookingDayLabel(offset: number, timeZone: string): string {
   return `${weekday}, ${date}`;
 }
 
-/** Часы урока: рабочий день школы с шагом в полчаса. */
+/**
+ * Часы урока: рабочее окно отдела с шагом в полчаса.
+ *
+ * Пока список общий на всю платформу. Когда понадобится учитывать обед и то,
+ * что смена у одних начинается в девять, а у других заканчивается в девять
+ * вечера, окно переедет в настройки компании — сетка тогда будет строиться
+ * из них, а не из этой константы.
+ */
 export const BOOKING_HOURS = [
   '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
   '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
@@ -211,44 +220,25 @@ export const BOOKING_HOURS = [
 ];
 
 /**
- * Свободные часы урока.
+ * Часы урока: занятые видны, но не нажимаются.
  *
- * Список приходит готовым: занятые часы сюда не попадают вовсе. Показывать
- * их и отвечать «продажник занят» на нажатие значит гонять менеджера по
- * кругу, пока клиент ждёт на линии.
+ * Пропуск в сетке менеджер читает как «такого времени у нас нет», а замок —
+ * как «это уже занято, давайте соседнее». Вторая новость честнее: клиент
+ * слышит от менеджера «в час занято, давайте в два», а не растерянное молчание.
  */
-export function bookingTimeButtons(trialId: string, slots: string[]): InlineButton[][] {
-  const buttons = slots.map((time) => ({
-    text: time,
-    callback_data: `bt:${trialId}:${time.replace(':', '')}`,
-  }));
+export function bookingTimeButtons(
+  trialId: string,
+  slots: { time: string; free: boolean }[],
+): InlineButton[][] {
+  const buttons = slots.map((slot) =>
+    slot.free
+      ? { text: slot.time, callback_data: `bt:${trialId}:${slot.time.replace(':', '')}` }
+      : { text: `🔒 ${slot.time}`, callback_data: `bx:${slot.time}` },
+  );
 
   const rows: InlineButton[][] = [];
   for (let index = 0; index < buttons.length; index += 4) {
     rows.push(buttons.slice(index, index + 4));
   }
   return rows;
-}
-
-/**
- * Свободные продажники на выбор.
- *
- * В кнопку идёт место в полном списке, а не идентификатор: два
- * идентификатора в 64 байта callback_data не помещаются. Именно в полном, а
- * не в списке свободных — пока менеджер выбирает, кого-то могут занять, и
- * тогда список свободных сдвинулся бы, а нажатие попало в другого человека.
- *
- * Занятых не показываем совсем: нажать их нельзя, а видеть в списке — повод
- * попробовать и получить отказ.
- */
-export function bookingSellerButtons(
-  trialId: string,
-  sellers: { fullName: string; busy: boolean }[],
-): InlineButton[][] {
-  return sellers
-    .map((seller, index) => ({ seller, index }))
-    .filter(({ seller }) => !seller.busy)
-    .map(({ seller, index }) => [
-      { text: `✅ ${seller.fullName}`, callback_data: `bs:${trialId}:${index}` },
-    ]);
 }

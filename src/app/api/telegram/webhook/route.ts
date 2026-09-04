@@ -29,8 +29,8 @@ import { closeOpenTouches } from '@/lib/touch-runner';
 import { employeeStats, statsMessage } from '@/lib/employee-stats';
 import {
   formatTrialTime,
-  freeSlots,
-  sellerAvailability,
+  daySlots,
+  pickSellerForTrial,
   notifyTrialBooked,
   shortCreativeLabel,
   syncTrialForLead,
@@ -44,7 +44,6 @@ import {
   trialOutcomeButtons,
   bookingDayButtons,
   bookingTimeButtons,
-  bookingSellerButtons,
   qualityButtons,
   whatsappButton,
   STATUS_ICON,
@@ -1280,6 +1279,12 @@ async function handleCallback(query: TelegramCallbackQuery) {
     );
   }
 
+  // Занятый час. Нажимается — иначе Telegram крутил бы часики, — но только
+  // чтобы объяснить, почему на него нельзя записать.
+  if (kind === 'bx') {
+    return answerCallback(query.id, `${leadId} — это время уже занято. Выберите другое.`);
+  }
+
   // Показатели: во втором поле период.
   if (kind === 'sm') {
     await answerCallback(query.id);
@@ -1308,7 +1313,6 @@ async function handleCallback(query: TelegramCallbackQuery) {
   if (kind === 's') return applyStatus(query, screen, employee, leadId, value);
   if (kind === 'bd') return pickDay(query, screen, employee, leadId, value);
   if (kind === 'bt') return pickTime(query, screen, employee, leadId, value);
-  if (kind === 'bs') return pickSeller(query, screen, employee, leadId, value);
   if (kind === 'tr') return applyTrial(query, screen, employee, leadId, value);
   if (kind === 'q') return applyQuality(query, screen, employee, leadId, value);
 
@@ -1773,7 +1777,7 @@ async function pickDay(
   // Сегодняшние часы, которые уже прошли, не предлагаем: урок в прошлом —
   // это урок, о котором никто не напомнит.
   const after = offsetDays === 0 ? nowInZone(timeZone) : undefined;
-  const { slots, hasSellers } = await freeSlots(
+  const { slots, hasSellers } = await daySlots(
     supabase,
     employee.company_id,
     date,
@@ -1781,14 +1785,22 @@ async function pickDay(
     { exceptTrialId: trialId, after },
   );
 
-  if (slots.length === 0) {
+  if (!hasSellers) {
+    await answerCallback(query.id, 'Некому проводить урок');
+    return show(
+      screen,
+      'В компании нет продажников — урок пока не на кого записать. Скажите директору.',
+    );
+  }
+
+  // Сегодня после восьми вечера свободных часов не остаётся вовсе: сетка
+  // кончилась, и замки тут ни при чём — предлагаем другой день.
+  if (slots.length === 0 || slots.every((slot) => !slot.free)) {
     await answerCallback(query.id, 'Свободных часов нет');
     return show(
       screen,
-      hasSellers
-        ? `🌙 На ${formatDay(date)} свободных часов не осталось — всё занято.\nВыберите другой день.`
-        : 'В компании нет продажников — урок пока не на кого записать. Скажите директору.',
-      hasSellers ? bookingDayButtons(trialId, timeZone) : undefined,
+      `🌙 На ${formatDay(date)} свободного времени не осталось.\nВыберите другой день:`,
+      bookingDayButtons(trialId, timeZone),
     );
   }
 
@@ -1818,7 +1830,13 @@ function nowInZone(timeZone: string): string {
   });
 }
 
-/** Шаг 2: выбран час. Считаем занятость и показываем продажников. */
+/**
+ * Шаг 2: выбран час. Дальше всё делает система — выбирает продажника из
+ * свободных по очереди, закрепляет урок и предупреждает его.
+ *
+ * Менеджер в этот момент разговаривает с клиентом: ему нужен готовый ответ
+ * «записал, урок проведёт такой-то», а не ещё один список на выбор.
+ */
 async function pickTime(
   query: TelegramCallbackQuery,
   screen: Screen,
@@ -1835,7 +1853,7 @@ async function pickTime(
 
   const { data: trial } = await supabase
     .from('trials')
-    .select('id, date')
+    .select('id, date, lead_id')
     .eq('id', trialId)
     .eq('company_id', employee.company_id)
     .maybeSingle();
@@ -1853,26 +1871,17 @@ async function pickTime(
       bookingDayButtons(trialId, timeZone));
   }
 
-  await supabase
-    .from('trials')
-    .update({ starts_at: startsAt.toISOString() })
-    .eq('id', trial.id);
+  const seller = await pickSellerForTrial(
+    supabase,
+    employee.company_id,
+    startsAt,
+    trial.id,
+  );
 
-  const all = await sellerAvailability(supabase, employee.company_id, startsAt, trial.id);
-
-  if (all.length === 0) {
-    return show(
-      screen,
-      'В компании нет продажников — урок пока не на кого записать. Скажите директору.',
-    );
-  }
-
-  // Занятых не показываем вовсе: нажать их нельзя, а видеть в списке —
-  // повод попробовать и получить отказ.
-  const free = all.filter((seller) => !seller.busy);
-
-  if (free.length === 0) {
-    const { slots } = await freeSlots(supabase, employee.company_id, trial.date, timeZone, {
+  // Пока менеджер выбирал, час мог занять другой менеджер. Сетку показываем
+  // заново — уже с новым замком на этом часе.
+  if (!seller) {
+    const { slots } = await daySlots(supabase, employee.company_id, trial.date, timeZone, {
       exceptTrialId: trial.id,
     });
 
@@ -1880,75 +1889,7 @@ async function pickTime(
     return show(
       screen,
       `⏰ Пока выбирали, ${time} заняли. Свободное время на ${formatDay(trial.date)}:`,
-      slots.length > 0
-        ? bookingTimeButtons(trial.id, slots)
-        : bookingDayButtons(trial.id, timeZone),
-    );
-  }
-
-  await answerCallback(query.id, time);
-  return show(
-    screen,
-    `🕒 ${formatTrialTime(startsAt, timeZone)}\nКто проводит урок?`,
-    bookingSellerButtons(trial.id, all),
-  );
-}
-
-/** Шаг 3: выбран продажник. Закрепляем урок и предупреждаем его. */
-async function pickSeller(
-  query: TelegramCallbackQuery,
-  screen: Screen,
-  employee: Employee,
-  trialId: string,
-  index: string,
-) {
-  const supabase = createAdminSupabase();
-  const company = await companyOf(employee.company_id);
-  const timeZone = company?.timezone ?? 'Asia/Almaty';
-
-  const { data: trial } = await supabase
-    .from('trials')
-    .select('id, lead_id, starts_at')
-    .eq('id', trialId)
-    .eq('company_id', employee.company_id)
-    .maybeSingle();
-
-  if (!trial?.starts_at) return answerCallback(query.id, 'Сначала выберите время.');
-
-  const startsAt = new Date(trial.starts_at);
-  const sellers = await sellerAvailability(
-    supabase,
-    employee.company_id,
-    startsAt,
-    trial.id,
-  );
-  const seller = sellers[Number(index)];
-
-  if (!seller) return answerCallback(query.id, 'Продажник не найден.');
-
-  // Занятость перепроверяем здесь: пока менеджер выбирал, этот час мог занять
-  // другой менеджер. Если свободных не осталось совсем — не гоняем по кругу,
-  // а сразу показываем, на какое время записать можно.
-  if (seller.busy) {
-    await answerCallback(query.id, 'Занят в это время');
-
-    if (sellers.some((row) => !row.busy)) {
-      return show(
-        screen,
-        `${escapeHtml(seller.fullName)} уже ведёт урок в это время. Свободны:`,
-        bookingSellerButtons(trial.id, sellers),
-      );
-    }
-
-    const date = localDate(timeZone, startsAt);
-    const { slots } = await freeSlots(supabase, employee.company_id, date, timeZone, {
-      exceptTrialId: trial.id,
-    });
-
-    return show(
-      screen,
-      `⏰ Это время уже заняли. Свободное время на ${formatDay(date)}:`,
-      slots.length > 0
+      slots.some((slot) => slot.free)
         ? bookingTimeButtons(trial.id, slots)
         : bookingDayButtons(trial.id, timeZone),
     );
@@ -1956,7 +1897,11 @@ async function pickSeller(
 
   await supabase
     .from('trials')
-    .update({ assigned_to: seller.id, assigned_at: new Date().toISOString() })
+    .update({
+      starts_at: startsAt.toISOString(),
+      assigned_to: seller.id,
+      assigned_at: new Date().toISOString(),
+    })
     .eq('id', trial.id);
 
   const sent = trial.lead_id
@@ -1987,6 +1932,7 @@ async function pickSeller(
 
   return listLeads({ chatId: screen.chatId }, employee, 'new');
 }
+
 
 type OwnLead = { id: string; name: string; status: string; touch_count: number };
 

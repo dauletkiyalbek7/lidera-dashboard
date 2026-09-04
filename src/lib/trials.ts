@@ -179,29 +179,28 @@ export async function notifyTrialBooked(
 }
 
 /**
- * Свободные часы дня.
+ * Часы дня с пометкой, свободен ли час.
  *
- * Менеджер разговаривает с клиентом и должен сразу назвать время, а не
- * упираться в «продажник занят» и начинать сначала. Поэтому час, который взять
- * нельзя, ему просто не предлагается — список всегда состоит из того, на что
- * можно записать прямо сейчас.
+ * Занятые не выкидываются из списка, а показываются замком. Менеджер
+ * разговаривает с клиентом и называет ему время вслух: пропуск в сетке он
+ * читает как «такого времени у нас нет», а замок — как «это уже занято,
+ * давайте соседнее». Вторая новость честнее и короче.
  *
- * Занятость — это только уже назначенные уроки. Рабочий график здесь
- * намеренно не учитывается: отдел работает без выходных, кто-то отдыхает,
- * кто-то на смене, и отказывать клиенту в субботе из-за настройки «пн–пт»
- * дороже, чем изредка предложить час тому, кто сегодня отдыхает. Когда график
- * начнут вести по-настоящему, он вернётся сюда же одним условием.
+ * Час занят, только если заняты все продажники: пока хоть кто-то свободен,
+ * урок есть кому провести.
  *
- * `hasSellers` отделяет «всё занято» от «продажников в компании нет»: это
- * разные новости, и вторая чинится не другим днём, а наймом.
+ * Рабочий график здесь намеренно не учитывается — отдел работает без
+ * выходных, см. `hasSellers` ниже и историю решения в CLAUDE.md.
  */
-export async function freeSlots(
+export type DaySlot = { time: string; free: boolean };
+
+export async function daySlots(
   supabase: Admin,
   companyId: string,
   date: string,
   timeZone: string,
   options?: { exceptTrialId?: string; after?: string },
-): Promise<{ slots: string[]; hasSellers: boolean }> {
+): Promise<{ slots: DaySlot[]; hasSellers: boolean }> {
   const [{ data: sellers }, { data: booked }] = await Promise.all([
     supabase
       .from('employees')
@@ -223,26 +222,112 @@ export async function freeSlots(
 
   const busy = (booked ?? []).filter((trial) => trial.id !== options?.exceptTrialId);
 
-  const slots = BOOKING_HOURS.filter((time) => {
-    if (options?.after && time <= options.after) return false;
+  const slots = BOOKING_HOURS
+    // Прошедшие часы — не «занято», а «уже не будет»: замок про них врал бы.
+    .filter((time) => !options?.after || time > options.after)
+    .map((time) => {
+      const startsAt = instantInZone(date, time, timeZone);
+      if (!startsAt) return { time, free: false };
 
-    const startsAt = instantInZone(date, time, timeZone);
-    if (!startsAt) return false;
-
-    return sellers.some(
-      (seller) =>
-        !busy.some(
-          (trial) =>
-            trial.assigned_to === seller.id &&
-            trial.starts_at !== null &&
-            Math.abs(new Date(trial.starts_at).getTime() - startsAt.getTime()) <
-              TRIAL_DURATION_MINUTES * 60 * 1000,
-        ),
-    );
-  });
+      const free = sellers.some((seller) => !isBusy(busy, seller.id, startsAt));
+      return { time, free };
+    });
 
   return { slots, hasSellers: true };
 }
+
+/** Урок идёт час, поэтому занятость — это пересечение, а не совпадение минут. */
+function isBusy(
+  booked: { assigned_to: string | null; starts_at: string | null }[],
+  sellerId: string,
+  startsAt: Date,
+): boolean {
+  return booked.some(
+    (trial) =>
+      trial.assigned_to === sellerId &&
+      trial.starts_at !== null &&
+      Math.abs(new Date(trial.starts_at).getTime() - startsAt.getTime()) <
+        TRIAL_DURATION_MINUTES * 60 * 1000,
+  );
+}
+
+/**
+ * Кому отдать урок в это время.
+ *
+ * Продажника выбирает не менеджер, а система: менеджер продал урок и должен
+ * вернуться к клиенту с готовым ответом, а не выбирать из списка людей,
+ * которых он в лицо не знает. Заодно это снимает вопрос «почему все уроки
+ * достаются одному» — очередь считается по числу уже выданных занятий.
+ *
+ * Порядок: сначала тот, у кого уроков меньше; при равенстве — тот, кто дольше
+ * всех их не получал. То же правило, что и в раздаче лидов менеджерам.
+ */
+export async function pickSellerForTrial(
+  supabase: Admin,
+  companyId: string,
+  startsAt: Date,
+  exceptTrialId?: string,
+): Promise<{ id: string; fullName: string } | null> {
+  const from = new Date(startsAt.getTime() - TRIAL_DURATION_MINUTES * 60 * 1000);
+  const to = new Date(startsAt.getTime() + TRIAL_DURATION_MINUTES * 60 * 1000);
+  const since = new Date(Date.now() - FAIRNESS_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  const [{ data: sellers }, { data: overlapping }, { data: history }] = await Promise.all([
+    supabase
+      .from('employees')
+      .select('id, full_name')
+      .eq('company_id', companyId)
+      .eq('role', 'salesperson')
+      .eq('status', 'active')
+      .order('full_name'),
+    supabase
+      .from('trials')
+      .select('id, assigned_to, starts_at')
+      .eq('company_id', companyId)
+      .eq('status', 'scheduled')
+      .not('starts_at', 'is', null)
+      .gt('starts_at', from.toISOString())
+      .lt('starts_at', to.toISOString()),
+    supabase
+      .from('trials')
+      .select('assigned_to, assigned_at')
+      .eq('company_id', companyId)
+      .not('assigned_to', 'is', null)
+      .gte('assigned_at', since.toISOString()),
+  ]);
+
+  if (!sellers || sellers.length === 0) return null;
+
+  const taken = new Set(
+    (overlapping ?? [])
+      .filter((trial) => trial.id !== exceptTrialId && trial.assigned_to)
+      .map((trial) => trial.assigned_to as string),
+  );
+
+  const received = new Map<string, number>();
+  const lastAt = new Map<string, number>();
+
+  for (const row of history ?? []) {
+    if (!row.assigned_to) continue;
+    received.set(row.assigned_to, (received.get(row.assigned_to) ?? 0) + 1);
+    const at = row.assigned_at ? new Date(row.assigned_at).getTime() : 0;
+    if (at > (lastAt.get(row.assigned_to) ?? 0)) lastAt.set(row.assigned_to, at);
+  }
+
+  const free = sellers
+    .filter((seller) => !taken.has(seller.id))
+    .sort(
+      (a, b) =>
+        (received.get(a.id) ?? 0) - (received.get(b.id) ?? 0) ||
+        (lastAt.get(a.id) ?? 0) - (lastAt.get(b.id) ?? 0),
+    );
+
+  const chosen = free[0];
+  return chosen ? { id: chosen.id, fullName: chosen.full_name } : null;
+}
+
+/** За какой срок считаем очередь: месяц ровно ложится на смену состава отдела. */
+const FAIRNESS_WINDOW_DAYS = 30;
 
 export async function sellerAvailability(
   supabase: Admin,

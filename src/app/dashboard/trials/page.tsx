@@ -39,6 +39,12 @@ function columnsFor(view: TrialsView): TableColumn[] {
       ? []
       : [{ key: 'sold', label: 'Продан', showFrom: 'md' as const }]),
     { key: 'date', label: 'Урок', showFrom: 'md' as const },
+    // Кто передал и кто ведёт — это два разных человека, и руководителю нужны
+    // оба: по одному видно, чья работа привела клиента, по другому — с кого
+    // спрашивать за само занятие.
+    ...(view === 'manager'
+      ? []
+      : [{ key: 'manager', label: 'Продал', showFrom: 'md' as const }]),
     ...(view === 'seller'
       ? []
       : [
@@ -53,7 +59,7 @@ function columnsFor(view: TrialsView): TableColumn[] {
 }
 
 /** Ширина таблицы для каждого набора видимых колонок. */
-const TABLE_MIN_WIDTH = { base: 340, md: 720 };
+const TABLE_MIN_WIDTH = { base: 340, md: 820 };
 
 export default async function TrialsPage({
   searchParams,
@@ -179,6 +185,11 @@ export default async function TrialsPage({
                       </span>
                     )}
                   </Td>
+                  {view !== 'manager' && (
+                    <Td showFrom="md" className="text-ink-soft">
+                      {trial.managerName ?? <span className="text-faint">—</span>}
+                    </Td>
+                  )}
                   {view !== 'seller' && (
                     <Td showFrom="md" className="text-ink-soft">
                       {trial.sellerName ?? (

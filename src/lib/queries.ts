@@ -1858,6 +1858,8 @@ export type TrialListItem = {
   leadPhone: string | null;
   /** Продажник, который проводит урок. */
   sellerName: string | null;
+  /** Менеджер, который продал урок и передал клиента. */
+  managerName: string | null;
   /** Точное начало урока: онлайн важен час, а не только день. */
   startsAt: string | null;
   /** Сумма проведённого чека по этому клиенту. null — продажи ещё нет. */
@@ -1951,6 +1953,12 @@ export async function getTrials(
   ]);
 
   const sellerNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
+
+  // Кто передал клиента: у заявки один ответственный, и это менеджер.
+  const managerOf = (leadId: string | null) => {
+    const owner = leadId ? (leads.get(leadId)?.assignedTo ?? null) : null;
+    return owner ? (sellerNames.get(owner) ?? null) : null;
+  };
   const paidByLead = new Map(
     sales
       .filter((row) => row.lead_id)
@@ -1967,6 +1975,7 @@ export async function getTrials(
     leadName: trial.lead_id ? (leads.get(trial.lead_id)?.name ?? null) : null,
     leadPhone: trial.lead_id ? (leads.get(trial.lead_id)?.phone ?? null) : null,
     sellerName: trial.assigned_to ? (sellerNames.get(trial.assigned_to) ?? null) : null,
+    managerName: managerOf(trial.lead_id),
     startsAt: trial.starts_at,
     saleAmount: trial.lead_id ? (paidByLead.get(trial.lead_id) ?? null) : null,
   }));
@@ -2208,6 +2217,8 @@ export type LeadContact = {
   phone: string | null;
   creativeId: string | null;
   departmentId: string | null;
+  /** Менеджер, за которым закреплена заявка: он и продал урок. */
+  assignedTo: string | null;
 };
 
 /** Контакты лидов, на которые ссылаются переданные записи. */
@@ -2226,7 +2237,7 @@ async function fetchLeadContacts(
   for (let start = 0; start < ids.length; start += LOOKUP_CHUNK) {
     const { data } = await supabase
       .from('leads')
-      .select('id, name, phone, creative_id, department_id')
+      .select('id, name, phone, creative_id, department_id, assigned_to')
       .eq('company_id', companyId)
       .in('id', ids.slice(start, start + LOOKUP_CHUNK));
 
@@ -2236,6 +2247,7 @@ async function fetchLeadContacts(
         phone: lead.phone,
         creativeId: lead.creative_id ?? null,
         departmentId: lead.department_id ?? null,
+        assignedTo: lead.assigned_to ?? null,
       });
     }
   }

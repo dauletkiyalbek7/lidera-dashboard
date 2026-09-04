@@ -6,6 +6,7 @@ import { currencySymbol } from '@/lib/format';
 import { conversionRate, averageCheck } from '@/lib/metrics';
 import { LEAD_STATUS_ORDER, leadStatusFor, type LeadStatus } from '@/lib/lead-status';
 import { zonedDayWindow, zonedIsoDate } from '@/lib/period';
+import { TRIAL_STATUS, TRIAL_STATUS_ORDER } from '@/lib/trial-status';
 import type { Database } from '@/lib/supabase/database.types';
 
 /**
@@ -28,8 +29,10 @@ type Admin = SupabaseClient<Database>;
 const WEEK_DAYS = 7;
 
 export type EmployeeStats = {
-  /** Локальная дата компании, за которую посчитано. */
+  /** Локальная дата компании, за которую посчитано (конец периода). */
   date: string;
+  /** Подпись периода — её же видит человек в заголовке. */
+  label: string;
   leads: number;
   byStatus: Partial<Record<LeadStatus, number>>;
   /** Из выданных сегодня — сколько уже купили. */
@@ -41,49 +44,107 @@ export type EmployeeStats = {
   /** Открытые обещания перезвонить и сколько из них просрочено. */
   promises: number;
   overdue: number;
-  week: { leads: number; salesCount: number; revenue: number };
+  /**
+   * Уроки продажника за период. У менеджера их нет, у продажника наоборот —
+   * заявок нет, а вся работа здесь, поэтому блоки в отчёте раздельные.
+   */
+  trials: Partial<Record<string, number>>;
+  trialsTotal: number;
+  /**
+   * Хвост «за 7 дней» — только у отчёта за один день. Когда человек сам
+   * выбрал период, эта строка сбивает: он спрашивал про полгода, а внизу
+   * неделя.
+   */
+  week?: { leads: number; salesCount: number; revenue: number };
 };
 
 export async function employeeStats(
   supabase: Admin,
-  input: { companyId: string; employeeId: string; timezone: string },
+  input: {
+    companyId: string;
+    employeeId: string;
+    timezone: string;
+    /** Период в датах компании. По умолчанию — сегодня. */
+    from?: string;
+    to?: string;
+    label?: string;
+  },
 ): Promise<EmployeeStats> {
   const today = zonedIsoDate(new Date(), input.timezone);
-  const weekStart = shiftDate(today, -(WEEK_DAYS - 1));
+  const from = input.from ?? today;
+  const to = input.to ?? today;
+  const singleDay = from === to && to === today;
 
-  const day = zonedDayWindow(today, today, input.timezone);
-  const week = zonedDayWindow(weekStart, today, input.timezone);
+  const window = zonedDayWindow(from, to, input.timezone);
 
-  const [dayLeads, weekLeads, dayMoney, weekMoney, touches] = await Promise.all([
-    assignedLeads(supabase, input, day),
-    assignedLeads(supabase, input, week),
-    ownSales(supabase, input, today, today),
-    ownSales(supabase, input, weekStart, today),
+  const [leads, money, touches, trials] = await Promise.all([
+    assignedLeads(supabase, input, window),
+    ownSales(supabase, input, from, to),
     openPromises(supabase, input),
+    ownTrials(supabase, input, from, to),
   ]);
 
   const byStatus: Partial<Record<LeadStatus, number>> = {};
-  for (const lead of dayLeads) {
+  for (const lead of leads) {
     const status = lead.status as LeadStatus;
     byStatus[status] = (byStatus[status] ?? 0) + 1;
   }
 
+  const byTrial: Partial<Record<string, number>> = {};
+  for (const trial of trials) {
+    byTrial[trial.status] = (byTrial[trial.status] ?? 0) + 1;
+  }
+
+  // Хвост за неделю считаем только для отчёта за день: в нём он и полезен —
+  // сегодняшний ноль не выглядит провалом, когда рядом видна неделя.
+  const week = singleDay
+    ? await (async () => {
+        const weekStart = shiftDate(today, -(WEEK_DAYS - 1));
+        const [weekLeads, weekMoney] = await Promise.all([
+          assignedLeads(supabase, input, zonedDayWindow(weekStart, today, input.timezone)),
+          ownSales(supabase, input, weekStart, today),
+        ]);
+        return {
+          leads: weekLeads.length,
+          salesCount: weekMoney.count,
+          revenue: weekMoney.total,
+        };
+      })()
+    : undefined;
+
   return {
-    date: today,
-    leads: dayLeads.length,
+    date: to,
+    label: input.label ?? 'сегодня',
+    leads: leads.length,
     byStatus,
     bought: byStatus.sale ?? 0,
-    salesCount: dayMoney.count,
-    revenue: dayMoney.total,
-    average: averageCheck(dayMoney.total, dayMoney.count),
+    salesCount: money.count,
+    revenue: money.total,
+    average: averageCheck(money.total, money.count),
     promises: touches.open,
     overdue: touches.overdue,
-    week: {
-      leads: weekLeads.length,
-      salesCount: weekMoney.count,
-      revenue: weekMoney.total,
-    },
+    trials: byTrial,
+    trialsTotal: trials.length,
+    week,
   };
+}
+
+/** Уроки, которые вёл этот человек. Считаются по дню занятия. */
+async function ownTrials(
+  supabase: Admin,
+  input: { companyId: string; employeeId: string },
+  from: string,
+  to: string,
+): Promise<{ status: string }[]> {
+  const { data } = await supabase
+    .from('trials')
+    .select('status')
+    .eq('company_id', input.companyId)
+    .eq('assigned_to', input.employeeId)
+    .gte('date', from)
+    .lte('date', to);
+
+  return data ?? [];
 }
 
 /** Клиенты, выданные сотруднику в этом окне. */
@@ -209,9 +270,18 @@ export function statsMessage(
   const sign = currencySymbol(options.currency);
   const lines = [options.title, ''];
 
-  if (stats.leads === 0) {
-    lines.push('Новых клиентов сегодня не было.');
-  } else {
+  // У продажника заявок нет вовсе — вся его работа в уроках. Показывать ему
+  // «клиентов не было» бессмысленно: их ему и не выдают.
+  if (stats.trialsTotal > 0) {
+    lines.push(`🎓 Уроков: <b>${stats.trialsTotal}</b>`);
+    lines.push(trialBreakdown(stats.trials));
+    lines.push('');
+  }
+
+  if (stats.leads === 0 && stats.trialsTotal === 0) {
+    lines.push('Новых клиентов за этот период не было.');
+    lines.push('');
+  } else if (stats.leads > 0) {
     lines.push(`👤 Клиентов выдано: <b>${stats.leads}</b>`);
     lines.push(statusBreakdown(stats.byStatus, options.trialTerm));
     lines.push(
@@ -219,15 +289,14 @@ export function statsMessage(
         conversionRate(stats.bought, stats.leads),
       )}`,
     );
+    lines.push('');
   }
 
-  lines.push('');
-
   if (stats.salesCount === 0) {
-    lines.push('💰 Чеков сегодня не было.');
+    lines.push('💰 Чеков за этот период не было.');
   } else {
     lines.push(
-      `💰 Чеков за день: <b>${stats.salesCount}</b> на <b>${money(stats.revenue)} ${sign}</b>`,
+      `💰 Чеков: <b>${stats.salesCount}</b> на <b>${money(stats.revenue)} ${sign}</b>`,
     );
     lines.push(`Средний чек: ${money(stats.average)} ${sign}`);
   }
@@ -241,14 +310,24 @@ export function statsMessage(
     );
   }
 
-  lines.push('');
-  lines.push(
-    `<i>За 7 дней: ${stats.week.leads} ${plural(stats.week.leads, 'клиент', 'клиента', 'клиентов')} · ` +
-      `${stats.week.salesCount} ${plural(stats.week.salesCount, 'продажа', 'продажи', 'продаж')} · ` +
-      `${money(stats.week.revenue)} ${sign}</i>`,
-  );
+  if (stats.week) {
+    lines.push('');
+    lines.push(
+      `<i>За 7 дней: ${stats.week.leads} ${plural(stats.week.leads, 'клиент', 'клиента', 'клиентов')} · ` +
+        `${stats.week.salesCount} ${plural(stats.week.salesCount, 'продажа', 'продажи', 'продаж')} · ` +
+        `${money(stats.week.revenue)} ${sign}</i>`,
+    );
+  }
 
   return lines.join('\n');
+}
+
+/** Разбор уроков по исходам — только то, что реально было. */
+function trialBreakdown(byStatus: Partial<Record<string, number>>): string {
+  const parts = TRIAL_STATUS_ORDER.filter((status) => (byStatus[status] ?? 0) > 0).map(
+    (status) => `${TRIAL_STATUS[status].label} ${byStatus[status]}`,
+  );
+  return parts.length > 0 ? `   ${parts.join(' · ')}` : '   —';
 }
 
 /** Разбор выданных клиентов по статусам — только то, что реально есть. */

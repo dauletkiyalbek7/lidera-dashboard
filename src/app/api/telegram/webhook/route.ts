@@ -98,7 +98,9 @@ function keyboardFor(role: string, onShift: boolean): KeyboardButton[][] {
     return [[shift], ['🎓 Мои уроки'], ['📊 Мои показатели']];
   }
 
-  return [[shift], ['📋 Мои лиды', '📵 Недозвон'], ['📊 Мои показатели']];
+  // «Недозвон» отдельной кнопкой убран: это одна из пачек внутри «Моих
+  // лидов», и две двери в одну комнату только путали.
+  return [[shift], ['📋 Мои лиды'], ['📊 Мои показатели']];
 }
 
 /** Геолокацию Telegram отдаёт только по нажатию этой кнопки — не автоматически. */
@@ -271,7 +273,7 @@ async function handleMessage(message: TelegramMessage) {
     return saveSaleAmount(chatId, employee, text);
   }
 
-  if (text.includes('показатели')) return showStats(chatId, employee);
+  if (text.includes('показатели')) return showStats({ chatId }, employee);
   if (text.includes('Мои уроки')) return trialsMenu({ chatId }, employee);
   if (text.includes('Недозвон')) return listLeads({ chatId }, employee, 'no_answer');
   if (text.includes('Мои лиды')) return leadsMenu({ chatId }, employee);
@@ -631,7 +633,7 @@ async function show(
  * Периоды выборки. Кодируются одной буквой: в callback_data Telegram всего
  * 64 байта, а туда же идут статус и место в списке.
  */
-type LeadPeriod = 'a' | 't' | 'y' | 'w' | 'm';
+type LeadPeriod = 'a' | 't' | 'y' | 'w' | 'm' | 'h';
 
 const PERIOD_LABEL: Record<LeadPeriod, string> = {
   a: 'За всё время',
@@ -639,17 +641,18 @@ const PERIOD_LABEL: Record<LeadPeriod, string> = {
   y: 'Вчера',
   w: '7 дней',
   m: '30 дней',
+  h: 'Полгода',
 };
 
 function isLeadPeriod(value: string): value is LeadPeriod {
   return value in PERIOD_LABEL;
 }
 
-/** Границы периода по времени компании. `a` — без границ. */
-function periodWindow(
+/** Даты периода в календаре компании. `a` — без границ. */
+function periodDates(
   period: LeadPeriod,
   timeZone: string,
-): { startsAt: string; endsBefore: string } | null {
+): { from: string; to: string } | null {
   if (period === 'a') return null;
 
   const today = localDate(timeZone);
@@ -659,10 +662,20 @@ function periodWindow(
     return date.toISOString().slice(0, 10);
   };
 
-  if (period === 't') return zonedDayWindow(today, today, timeZone);
-  if (period === 'y') return zonedDayWindow(shift(-1), shift(-1), timeZone);
-  if (period === 'w') return zonedDayWindow(shift(-6), today, timeZone);
-  return zonedDayWindow(shift(-29), today, timeZone);
+  if (period === 't') return { from: today, to: today };
+  if (period === 'y') return { from: shift(-1), to: shift(-1) };
+  if (period === 'w') return { from: shift(-6), to: today };
+  if (period === 'm') return { from: shift(-29), to: today };
+  return { from: shift(-179), to: today };
+}
+
+/** Границы периода моментами времени — для полей с точным временем. */
+function periodWindow(
+  period: LeadPeriod,
+  timeZone: string,
+): { startsAt: string; endsBefore: string } | null {
+  const dates = periodDates(period, timeZone);
+  return dates ? zonedDayWindow(dates.from, dates.to, timeZone) : null;
 }
 
 /** «3 сентября» по времени компании — дата заявки в заголовке карточки. */
@@ -763,8 +776,11 @@ async function leadsMenu(
  * Выбор периода. Текущий помечен галочкой, чтобы было видно, что открыто.
  * `kind` разводит два списка: клиенты менеджера и уроки продажника.
  */
-function periodButtons(current: LeadPeriod, kind: 'lm' | 'um' = 'lm'): InlineButton[][] {
-  const order: LeadPeriod[] = ['t', 'y', 'w', 'm', 'a'];
+function periodButtons(
+  current: LeadPeriod,
+  kind: 'lm' | 'um' | 'sm' = 'lm',
+): InlineButton[][] {
+  const order: LeadPeriod[] = ['t', 'y', 'w', 'm', 'h', 'a'];
   const buttons = order.map((period) => ({
     text: `${period === current ? '✅ ' : '📅 '}${PERIOD_LABEL[period]}`,
     callback_data: `${kind}:${period}`,
@@ -985,6 +1001,11 @@ async function trialsMenu(screen: Screen, employee: Employee, period: LeadPeriod
     (status) => `${TRIAL_ICON[status]} ${TRIAL_STATUS[status].label} — <b>${counts.get(status)}</b>`,
   );
 
+  // Ближайший урок — первое, что продажник ищет глазами: к нему готовиться
+  // прямо сейчас. Ради этой строки не надо открывать пачку и листать.
+  const next = await nextLesson(supabase, employee, timeZone);
+  if (next) lines.unshift(`⏭ <b>Ближайший:</b> ${next}`, '');
+
   const buttons: InlineButton[][] = [];
   for (let index = 0; index < statuses.length; index += 2) {
     buttons.push(
@@ -1000,6 +1021,33 @@ async function trialsMenu(screen: Screen, employee: Employee, period: LeadPeriod
     `${title}\n\n${lines.join('\n')}\n\nВсего: <b>${rows.length}</b>`,
     [...buttons, ...periodButtons(period, 'um')],
   );
+}
+
+/** «сегодня в 15:00 · Айару» — ближайшее назначенное занятие. */
+async function nextLesson(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  employee: Employee,
+  timeZone: string,
+): Promise<string | null> {
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('starts_at, lead_id')
+    .eq('company_id', employee.company_id)
+    .eq('assigned_to', employee.id)
+    .eq('status', 'scheduled')
+    .gt('starts_at', new Date().toISOString())
+    .order('starts_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (!trial?.starts_at) return null;
+
+  const { data: lead } = trial.lead_id
+    ? await supabase.from('leads').select('name').eq('id', trial.lead_id).maybeSingle()
+    : { data: null };
+
+  const when = momentLabel(trial.starts_at, timeZone);
+  return lead?.name ? `${when} · ${escapeHtml(lead.name)}` : when;
 }
 
 /** Значки исходов урока — те же, что на кнопках продажника. */
@@ -1153,26 +1201,46 @@ async function allowedOnShift(
  * Свои цифры он должен видеть сам и в любой момент, а не ждать, пока их
  * посчитает директор: человек, который видит свою конверсию, её и правит.
  */
-async function showStats(chatId: number, employee: Employee) {
+async function showStats(
+  screen: Screen,
+  employee: Employee,
+  period: LeadPeriod = 't',
+) {
   const supabase = createAdminSupabase();
   const company = await companyOf(employee.company_id);
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
+
+  // «За всё время» — это тоже период, просто с очень ранним началом: считать
+  // его отдельной веткой значит завести второй путь для тех же цифр.
+  const dates = periodDates(period, timeZone) ?? {
+    from: '2000-01-01',
+    to: localDate(timeZone),
+  };
 
   const stats = await employeeStats(supabase, {
     companyId: employee.company_id,
     employeeId: employee.id,
-    timezone: company?.timezone ?? 'Asia/Almaty',
+    timezone: timeZone,
+    from: dates.from,
+    to: dates.to,
+    label: PERIOD_LABEL[period].toLowerCase(),
   });
 
-  const open = await openShiftOf(employee.id);
+  // Заголовок называет период словами и датами сразу: «за 7 дней» без чисел
+  // читается по-разному, если открыть отчёт назавтра.
+  const range =
+    dates.from === dates.to
+      ? formatDay(dates.to)
+      : `${formatDay(dates.from)} — ${formatDay(dates.to)}`;
 
-  return sendMessage(
-    chatId,
+  return show(
+    screen,
     statsMessage(stats, {
-      title: `📊 <b>${escapeHtml(employee.full_name)}</b> — сегодня, ${formatDay(stats.date)}`,
+      title: `📊 <b>${escapeHtml(employee.full_name)}</b>\n${PERIOD_LABEL[period]} · ${range}`,
       currency: company?.sales_currency ?? 'KZT',
       trialTerm: company?.trial_term,
     }),
-    { keyboard: keyboardFor(employee.role, Boolean(open)) },
+    periodButtons(period, 'sm'),
   );
 }
 
@@ -1216,6 +1284,12 @@ async function handleCallback(query: TelegramCallbackQuery) {
       isLeadPeriod(value ?? '') ? (value as LeadPeriod) : 'a',
       Number(parts[3]) || 0,
     );
+  }
+
+  // Показатели: во втором поле период.
+  if (kind === 'sm') {
+    await answerCallback(query.id);
+    return showStats(screen, employee, isLeadPeriod(leadId) ? leadId : 't');
   }
 
   // Уроки продажника: во втором поле статус урока или период.

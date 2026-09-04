@@ -1845,7 +1845,13 @@ async function pickTime(
   hhmm: string,
 ) {
   const time = `${hhmm.slice(0, 2)}:${hhmm.slice(2)}`;
-  if (!BOOKING_HOURS.includes(time)) return answerCallback(query.id, 'Неизвестное время.');
+  // Кнопка из старой сетки — например, с получасом, которого больше нет.
+  // Отвечаем не ошибкой, а свежим списком дней: менеджер на линии с клиентом.
+  if (!BOOKING_HOURS.includes(time)) {
+    const zone = (await companyOf(employee.company_id))?.timezone ?? 'Asia/Almaty';
+    await answerCallback(query.id, 'Это время больше не предлагается');
+    return show(screen, '🕒 Выберите день заново:', bookingDayButtons(trialId, zone));
+  }
 
   const supabase = createAdminSupabase();
   const company = await companyOf(employee.company_id);

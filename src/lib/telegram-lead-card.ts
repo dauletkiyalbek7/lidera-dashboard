@@ -1,5 +1,4 @@
 import { leadStatusFor, type LeadStatus } from '@/lib/lead-status';
-import { touchPreset, type TouchPresetKey } from '@/lib/lead-touches';
 import type { FunnelType } from '@/lib/metrics';
 import { LEAD_QUALITY, LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import type { InlineButton } from '@/lib/telegram';
@@ -116,60 +115,6 @@ export function whatsappButton(phone: string | null | undefined): InlineButton[]
   if (digits.length < 10) return [];
   return [[{ text: '💬 Написать в WhatsApp', url: `https://wa.me/${digits}` }]];
 }
-
-/**
- * «Напомнить» — предложение, а не обязанность.
- *
- * Раньше «Игнор» и «Думает» упирались в вопрос «когда вернуться»: отметить
- * статус одним касанием было нельзя, а менеджер жмёт их по десятку раз за
- * смену. Клиент и без будильника не теряется — он лежит в своей пачке в
- * «Моих клиентах». Поэтому напоминание ставится по желанию, этой кнопкой.
- */
-export function remindButton(leadId: string): InlineButton {
-  return { text: '⏰ Напомнить', callback_data: `rm:${leadId}` };
-}
-
-/**
- * Когда вернуться к клиенту.
- *
- * Спрашивается сразу после «Игнора» и «Думает»: обещание, записанное в
- * момент разговора, — единственное, которое выполняется. Сроки разные:
- * не дозвонился — перезванивают в тот же день, взял паузу на решение —
- * через день-два.
- */
-export function touchButtons(
-  leadId: string,
-  keys: TouchPresetKey[],
-  skipText: string,
-): InlineButton[][] {
-  const buttons = keys.map((key) => ({
-    text: touchPreset(key).short,
-    callback_data: `t:${leadId}:${key}`,
-  }));
-
-  const rows: InlineButton[][] = [];
-  for (let index = 0; index < buttons.length; index += 2) {
-    rows.push(buttons.slice(index, index + 2));
-  }
-  rows.push([{ text: skipText, callback_data: `t:${leadId}:skip` }]);
-  return rows;
-}
-
-/** Сроки после «Игнора»: клиент не взял трубку — пробуем ещё сегодня. */
-export const NO_ANSWER_TOUCHES: TouchPresetKey[] = [
-  'in_1h',
-  'in_3h',
-  'evening',
-  'tomorrow',
-];
-
-/** Сроки после «Думает»: человеку дали время, дёргать его через час нельзя. */
-export const THINKING_TOUCHES: TouchPresetKey[] = [
-  'evening',
-  'tomorrow',
-  'in_2d',
-  'in_week',
-];
 
 /**
  * Кнопки продажника под карточкой урока — шаг первый: состоялся ли урок.

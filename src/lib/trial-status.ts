@@ -50,8 +50,12 @@ export const TRIAL_STAGE_LABELS: Record<TrialStage, string> = {
   missed: 'Не состоялись',
 };
 
-/** О чём бот спрашивает продажника сразу после отметки. */
-export type TrialFollowUp = 'outcome' | 'return' | 'callback';
+/**
+ * Нужен ли второй шаг после отметки. Единственный такой случай — «провёл
+ * урок»: решение клиента спрашивается отдельно, потому что между занятием и
+ * оплатой обычно проходит день-два.
+ */
+export type TrialFollowUp = 'outcome';
 
 type TrialStatusMeta = {
   label: string;
@@ -108,7 +112,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     held: true,
     closed: false,
     leadStatus: null,
-    followUp: 'return',
+    followUp: null,
   },
   sale: {
     label: 'Купил курс',
@@ -128,7 +132,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     held: true,
     closed: true,
     leadStatus: null,
-    followUp: 'return',
+    followUp: null,
   },
   rejected: {
     label: 'Отказ',
@@ -148,7 +152,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     held: false,
     closed: true,
     leadStatus: null,
-    followUp: 'callback',
+    followUp: null,
   },
   canceled: {
     label: 'Отменён',
@@ -158,7 +162,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     held: false,
     closed: true,
     leadStatus: null,
-    followUp: 'return',
+    followUp: null,
   },
 };
 

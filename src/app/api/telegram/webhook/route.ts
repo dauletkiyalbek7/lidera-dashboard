@@ -24,13 +24,8 @@ import { zonedDayWindow } from '@/lib/period';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { parseSaleAmount } from '@/lib/sale-amount';
 import { runDistribution } from '@/lib/lead-distribution';
-import {
-  instantInZone,
-  isTouchPreset,
-  resolveTouchTime,
-  untilLabel,
-} from '@/lib/lead-touches';
-import { closeOpenTouches, scheduleTouch } from '@/lib/touch-runner';
+import { instantInZone } from '@/lib/lead-touches';
+import { closeOpenTouches } from '@/lib/touch-runner';
 import { employeeStats, statsMessage } from '@/lib/employee-stats';
 import {
   formatTrialTime,
@@ -50,12 +45,8 @@ import {
   bookingTimeButtons,
   bookingSellerButtons,
   qualityButtons,
-  remindButton,
-  touchButtons,
   whatsappButton,
   STATUS_ICON,
-  NO_ANSWER_TOUCHES,
-  THINKING_TOUCHES,
   BOOKING_HOURS,
   escapeHtml,
 } from '@/lib/telegram-lead-card';
@@ -868,7 +859,7 @@ async function listLeads(
     ),
     [
       ...statusButtons(lead.id, funnelType, company?.trial_term),
-      [...(whatsappButton(lead.phone)[0] ?? []), remindButton(lead.id)],
+      ...whatsappButton(lead.phone),
       footer,
     ],
   );
@@ -1309,16 +1300,9 @@ async function handleCallback(query: TelegramCallbackQuery) {
     );
   }
 
-  // Напоминание ставится по желанию, поэтому у кнопки нет третьего поля.
-  if (kind === 'rm') {
-    await answerCallback(query.id);
-    return askReminder(screen, employee, leadId);
-  }
-
   if (!value) return answerCallback(query.id);
 
   if (kind === 's') return applyStatus(query, screen, employee, leadId, value);
-  if (kind === 't') return applyTouch(query, screen, employee, leadId, value);
   if (kind === 'bd') return pickDay(query, screen, employee, leadId, value);
   if (kind === 'bt') return pickTime(query, screen, employee, leadId, value);
   if (kind === 'bs') return pickSeller(query, screen, employee, leadId, value);
@@ -1425,12 +1409,7 @@ async function applyTrial(
     );
   }
 
-  // Напоминание — по желанию: продажник и так найдёт клиента в своих уроках,
-  // а вопрос после каждой отметки только удлинял бы работу.
-  const remind: InlineButton[][] =
-    meta.followUp && trial.lead_id ? [[remindButton(trial.lead_id)]] : [];
-
-  return show(screen, `✅ <b>${name}</b> — ${meta.label.toLowerCase()}.`, remind);
+  return show(screen, `✅ <b>${name}</b> — ${meta.label.toLowerCase()}.`);
 }
 
 
@@ -1536,82 +1515,6 @@ async function applyStatus(
   }
 
   return listLeads(screen, employee, 'new');
-}
-
-/**
- * Сроки напоминания для одного клиента.
- *
- * Набор зависит от того, чем кончился разговор: не взял трубку — перезванивают
- * в тот же день, взял паузу на решение — через день-два.
- */
-async function askReminder(screen: Screen, employee: Employee, leadId: string) {
-  const reach = await reachableLead(employee, leadId);
-  if (!reach) return show(screen, 'Этот клиент уже не за вами.');
-
-  const name = escapeHtml(reach.lead.name || 'Клиент');
-  const soon = reach.lead.status === 'no_answer';
-
-  return show(
-    screen,
-    `⏰ <b>${name}</b>\n${soon ? 'Когда перезвонить?' : 'Когда вернуться к клиенту?'}`,
-    touchButtons(leadId, soon ? NO_ANSWER_TOUCHES : THINKING_TOUCHES, '↩️ Не нужно'),
-  );
-}
-
-/**
- * Срок следующего касания, выбранный кнопкой.
- *
- * Клиент остаётся у того же менеджера: второй звонок с другого номера
- * выглядит для человека как спам, а менеджер, у которого отбирают заявки,
- * перестаёт их дожимать.
- */
-async function applyTouch(
-  query: TelegramCallbackQuery,
-  screen: Screen,
-  employee: Employee,
-  leadId: string,
-  preset: string,
-) {
-  const supabase = createAdminSupabase();
-  const reach = await reachableLead(employee, leadId);
-  if (!reach) return answerCallback(query.id, 'Этот клиент уже не за вами.');
-
-  const { lead, own } = reach;
-  const name = escapeHtml(lead.name || 'Клиент');
-
-  // «Не напоминать» — не отказ клиента, а отказ от будильника. Лид остаётся
-  // в пачке «📵 Недозвон», вернуться к нему можно руками.
-  if (preset === 'skip') {
-    await answerCallback(query.id, 'Без напоминания');
-    return own
-      ? listLeads(screen, employee, 'new')
-      : show(screen, `<b>${name}</b> — без напоминания.`);
-  }
-
-  if (!isTouchPreset(preset)) return answerCallback(query.id, 'Неизвестный срок.');
-
-  const company = await companyOf(employee.company_id);
-  const remindAt = resolveTouchTime(preset, company?.timezone ?? 'Asia/Almaty');
-
-  await scheduleTouch(supabase, {
-    companyId: employee.company_id,
-    leadId: lead.id,
-    employeeId: employee.id,
-    remindAt,
-    // Попытка дозвона считается только тогда, когда её и правда не было:
-    // «думает» — это состоявшийся разговор, а не промах.
-    countsAsAttempt: lead.status === 'no_answer',
-  });
-
-  // Срок подтверждаем всплывающей подсказкой, а не сообщением: экран занят
-  // следующим клиентом, и лента ради одной строки копиться не должна.
-  await answerCallback(query.id, `Напомню ${untilLabel(remindAt)}`);
-
-  // Очередь новых — работа менеджера. Продажнику после урока показывать
-  // чужую пачку незачем: у него свой список занятий.
-  return own
-    ? listLeads(screen, employee, 'new')
-    : show(screen, `⏰ <b>${name}</b> — напомню ${untilLabel(remindAt)}.`);
 }
 
 /**
@@ -2049,44 +1952,6 @@ async function ownLead(employee: Employee, leadId: string): Promise<OwnLead | nu
     .eq('assigned_to', employee.id)
     .maybeSingle();
   return data ?? null;
-}
-
-/**
- * Клиент, с которым сотруднику можно работать.
- *
- * У менеджера это его заявка. У продажника заявка чужая — она закреплена за
- * менеджером, который её дозвонил, — но урок ведёт он, и обещание «вернусь к
- * нему в четверг» после урока даёт тоже он. Тот же круг доступа описан
- * правилом чтения заявок в самой базе, здесь оно повторено для бота: у него
- * пользовательской сессии нет, он ходит сервисным ключом.
- */
-async function reachableLead(
-  employee: Employee,
-  leadId: string,
-): Promise<{ lead: OwnLead; own: boolean } | null> {
-  const own = await ownLead(employee, leadId);
-  if (own) return { lead: own, own: true };
-
-  const supabase = createAdminSupabase();
-
-  const { data: trial } = await supabase
-    .from('trials')
-    .select('id')
-    .eq('company_id', employee.company_id)
-    .eq('lead_id', leadId)
-    .eq('assigned_to', employee.id)
-    .maybeSingle();
-
-  if (!trial) return null;
-
-  const { data } = await supabase
-    .from('leads')
-    .select('id, name, status, touch_count')
-    .eq('id', leadId)
-    .eq('company_id', employee.company_id)
-    .maybeSingle();
-
-  return data ? { lead: data, own: false } : null;
 }
 
 // -----------------------------------------------------------------------------

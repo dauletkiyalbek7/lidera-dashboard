@@ -26,7 +26,10 @@ import { NumberSwitch } from './number-switch';
 export const metadata: Metadata = { title: 'WhatsApp' };
 
 export default async function WhatsappPage() {
-  const { company } = await requireFullAccess();
+  // Инструкцию по подключению видит только администратор платформы, когда
+  // смотрит компанию со стороны: подключает номер он, а не директор. Директору
+  // это шум — он открывает раздел, чтобы посмотреть переписки и номера.
+  const { company, readOnly } = await requireFullAccess();
   const { numbers, departments, stats } = await getWhatsappOverview(company.id);
 
   // Адрес берём из самого запроса: он верен и на боевом домене, и на превью.
@@ -183,6 +186,7 @@ export default async function WhatsappPage() {
           <NumberForm departments={departments} />
         </Card>
 
+        {readOnly ? (
         <Card className="mt-4">
           <CardHeader
             title="Как подключить"
@@ -220,6 +224,7 @@ export default async function WhatsappPage() {
             с Meta шаблонами.
           </p>
         </Card>
+        ) : null}
       </PageBody>
     </>
   );

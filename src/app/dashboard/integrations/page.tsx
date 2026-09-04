@@ -56,7 +56,7 @@ const CATALOG = [
 ] as const;
 
 export default async function IntegrationsPage() {
-  const { company } = await requireFullAccess();
+  const { company, readOnly } = await requireFullAccess();
   const [integrations, lost, sources] = await Promise.all([
     getIntegrations(company.id),
     getLostSubmissions(company.id),
@@ -221,6 +221,7 @@ export default async function IntegrationsPage() {
           </Card>
         ) : null}
 
+        {readOnly ? (
         <Card className="mt-4">
           <CardHeader
             title="Как обновляются данные"
@@ -242,6 +243,7 @@ export default async function IntegrationsPage() {
             ))}
           </ol>
         </Card>
+        ) : null}
       </PageBody>
     </>
   );

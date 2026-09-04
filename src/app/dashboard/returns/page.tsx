@@ -7,7 +7,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconReceipts } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireFullAccess } from '@/lib/auth';
+import { requireTeamAccess } from '@/lib/auth';
 import { formatDate, formatDateTime, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import { currentRange } from '@/lib/period-preference';
 import { getReturns, getSales } from '@/lib/queries';
@@ -33,7 +33,7 @@ export default async function ReturnsPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireFullAccess();
+  const { company } = await requireTeamAccess();
   const currency = company.sales_currency;
   const range = await currentRange(await searchParams, company.timezone);
 

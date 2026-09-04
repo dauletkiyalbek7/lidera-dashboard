@@ -680,7 +680,16 @@ export type Database = {
     };
     Views: Record<never, never>;
     // Служебные функции RLS живут в схеме private и наружу не выставлены.
-    Functions: Record<never, never>;
+    Functions: {
+      /**
+       * Возврат: журнал и статус продажи одной транзакцией. Право проверяет
+       * сама функция — у РОПа профиль без права записи в `sales`.
+       */
+      register_return: {
+        Args: { sale: string; refund: number; reason?: string | null };
+        Returns: string;
+      };
+    };
     Enums: Record<never, never>;
     CompositeTypes: Record<never, never>;
   };

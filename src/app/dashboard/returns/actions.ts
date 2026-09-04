@@ -34,7 +34,7 @@ export async function registerReturn(
   _prev: ReturnState,
   formData: FormData,
 ): Promise<ReturnState> {
-  const { company, readOnly, employee } = await requireCompanySession();
+  const { readOnly, employee } = await requireCompanySession();
   if (readOnly) return { error: VIEW_ONLY_ERROR };
 
   if (employee && employee.role !== 'rop') {
@@ -51,49 +51,27 @@ export async function registerReturn(
 
   const supabase = await createServerSupabase();
 
-  const { data: sale } = await supabase
-    .from('sales')
-    .select('id, amount, status')
-    .eq('id', parsed.data.saleId)
-    .eq('company_id', company.id)
-    .maybeSingle();
-
-  if (!sale) return { error: 'Продажа не найдена.' };
-  if (sale.status === 'refunded') return { error: 'По этой продаже возврат уже оформлен.' };
-  if (parsed.data.amount > Number(sale.amount)) {
-    return { error: 'Возврат больше суммы продажи.' };
-  }
-
-  const { error } = await supabase.from('returns').insert({
-    company_id: company.id,
-    sale_id: sale.id,
-    amount: parsed.data.amount,
-    currency: company.sales_currency,
-    reason: parsed.data.reason || null,
-    processed_by: employee?.id ?? null,
+  // Журнал и статус продажи меняются одной функцией базы: раньше это были два
+  // запроса подряд, и падение второго оставляло возвращённые деньги в выручке.
+  // Она же проверяет право — у РОПа профиль без права записи, и обычный запрос
+  // база бы отклонила.
+  const { error } = await supabase.rpc('register_return', {
+    sale: parsed.data.saleId,
+    refund: parsed.data.amount,
+    reason: parsed.data.reason ?? null,
   });
 
-  // 23505 — уникальный ключ по продаже: возврат уже оформлен, просто гонка.
   if (error) {
-    return {
-      error:
-        error.code === '23505'
-          ? 'По этой продаже возврат уже оформлен.'
-          : 'Не удалось оформить возврат.',
-    };
-  }
+    // Свои сообщения функция пишет по-русски — их и показываем. Уникальный
+    // ключ по продаже (23505) значит гонку: возврат успели оформить рядом.
+    const known =
+      error.code === '23505'
+        ? 'По этой продаже возврат уже оформлен.'
+        : /[а-яё]/i.test(error.message)
+          ? error.message
+          : null;
 
-  // Статус меняем после записи журнала: если упадёт этот запрос, возврат
-  // останется видимым в списке, и его можно будет доделать руками. Обратный
-  // порядок потерял бы деньги из выручки без единого следа о причине.
-  const { error: statusError } = await supabase
-    .from('sales')
-    .update({ status: 'refunded' })
-    .eq('id', sale.id)
-    .eq('company_id', company.id);
-
-  if (statusError) {
-    return { error: 'Возврат записан, но статус продажи изменить не удалось.' };
+    return { error: known ?? 'Не удалось оформить возврат.' };
   }
 
   revalidatePath('/dashboard', 'layout');

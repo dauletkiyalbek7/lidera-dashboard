@@ -108,7 +108,15 @@ const COMPANY_NAV: NavGroup[] = [
         staff: true,
         onlyRole: 'rop',
       },
-      { href: '/dashboard/returns', label: 'Возвраты', icon: IconReceipts },
+      // Возврат оформляет РОП: он разбирается с недовольным клиентом, а не
+      // директор. Право на это стоит в базе — функция register_return.
+      {
+        href: '/dashboard/returns',
+        label: 'Возвраты',
+        icon: IconReceipts,
+        staff: true,
+        onlyRole: 'rop',
+      },
       // Людей набирает РОП: у агентства состав отдела меняется чаще, чем
       // владелец успевает этим заниматься. Чужие роли база ему не отдаст.
       {
@@ -125,7 +133,6 @@ const COMPANY_NAV: NavGroup[] = [
     title: 'Финансы',
     items: [
       { href: '/dashboard/finance', label: 'Финансы', icon: IconFinance },
-      { href: '/dashboard/receipts', label: 'Чеки', icon: IconReceipts, soon: true },
     ],
   },
   {

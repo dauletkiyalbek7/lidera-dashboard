@@ -165,6 +165,16 @@ export async function requireCompanySession(): Promise<
   if (!context.company) redirect('/login?error=no_company');
   if (context.company.status === 'inactive') redirect('/login?error=company_inactive');
 
+  // Уволенный сотрудник не должен попадать внутрь вообще.
+  //
+  // Карточка ищется среди активных, поэтому у уволенного она не находится — а
+  // «карточки нет» весь кабинет читает как «это руководитель». Без этой
+  // проверки увольнение без удаления входа не закрывало доступ, а расширяло
+  // его: вчерашний менеджер видел деньги, команду и настройки.
+  if (context.profile.role === 'EMPLOYEE' && !context.employee) {
+    redirect('/login?error=account_disabled');
+  }
+
   return context as SessionContext & { company: CompanyRow };
 }
 

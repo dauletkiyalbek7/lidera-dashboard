@@ -13,6 +13,7 @@ export const metadata: Metadata = {
 const ERRORS: Record<string, string> = {
   no_company: 'К вашей учётной записи не привязана компания. Обратитесь в поддержку Lidera.',
   company_inactive: 'Доступ компании приостановлен. Свяжитесь с администратором Lidera.',
+  account_disabled: 'Доступ закрыт: карточка сотрудника больше не активна. Обратитесь к директору проекта.',
 };
 
 export default async function LoginPage({

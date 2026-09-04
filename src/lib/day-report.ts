@@ -50,6 +50,28 @@ export async function runDayReports(): Promise<DayReportResult> {
 
     const date = zonedIsoDate(new Date(), timezone);
 
+    // Что за сегодня уже отправлено — спрашиваем один раз и до всех расчётов.
+    //
+    // Планировщик ходит каждую минуту, и вечером эта ветка выполнялась снова и
+    // снова: показатели каждого сотрудника считались заново, отметка о
+    // доставке падала с ошибкой «уже есть», работа выбрасывалась. Час такой
+    // работы — это больше тысячи лишних запросов, и база просто переставала
+    // успевать: обычная страница за месяц отваливалась по таймауту.
+    const { data: alreadySent } = await supabase
+      .from('day_reports')
+      .select('kind, employee_id')
+      .eq('company_id', company.id)
+      .eq('date', date);
+
+    const done = alreadySent ?? [];
+    // Сводка ставится последней, поэтому она есть — значит по этой компании
+    // сегодня всё сделано.
+    if (done.some((row) => row.kind === 'summary')) continue;
+
+    const reported = new Set(
+      done.filter((row) => row.kind === 'employee').map((row) => row.employee_id),
+    );
+
     const { data: staff } = await supabase
       .from('employees')
       .select('id, full_name, role, telegram_user_id')
@@ -69,6 +91,9 @@ export async function runDayReports(): Promise<DayReportResult> {
     const measured: { name: string; stats: EmployeeStats }[] = [];
 
     for (const person of team.filter((row) => REPORTED_ROLES.includes(row.role))) {
+      // Отчёт этому человеку уже уходил — считать его заново незачем.
+      if (reported.has(person.id)) continue;
+
       const stats = await employeeStats(supabase, {
         companyId: company.id,
         employeeId: person.id,

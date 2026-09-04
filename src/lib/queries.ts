@@ -2874,3 +2874,114 @@ async function ownersOfLeads(
       .map((row) => [row.id, row.assigned_to]),
   );
 }
+
+/** Канал, по которому приходят заявки: номер WhatsApp или форма на сайте. */
+export type FunnelChannel = {
+  id: string;
+  kind: 'whatsapp' | 'form';
+  name: string;
+  /** Номер телефона или площадка формы — то, чем канал узнают в жизни. */
+  detail: string | null;
+  departmentName: string | null;
+  status: string;
+  /** Заявок за выбранный период. */
+  leads: number;
+  /** Из них с рекламы — там, где метка клика дошла. */
+  fromAds: number;
+  lastLeadAt: string | null;
+};
+
+/**
+ * Все воронки проекта в одном списке.
+ *
+ * Каналы заведены в разных местах — номера в «WhatsApp», формы в
+ * «Интеграциях», — и общей картины «куда вообще приходят люди» не было ни на
+ * одном экране. Здесь она есть: сколько заявок дал каждый канал за период и
+ * когда он подавал признаки жизни в последний раз.
+ */
+export async function getFunnelChannels(
+  companyId: string,
+  from: string,
+  to: string,
+  timeZone: string,
+): Promise<FunnelChannel[]> {
+  const supabase = await createServerSupabase();
+  const window = zonedDayWindow(from, to, timeZone);
+
+  const [{ data: numbers }, sources, leadRows] = await Promise.all([
+    supabase
+      .from('whatsapp_numbers')
+      .select('id, label, display_phone, status, department_id')
+      .eq('company_id', companyId)
+      .order('created_at'),
+    getLeadSources(companyId),
+    selectAll((start, end) =>
+      supabase
+        .from('leads')
+        .select('created_at, whatsapp_number_id, lead_source_id, creative_id')
+        .eq('company_id', companyId)
+        .gte('created_at', window.startsAt)
+        .lt('created_at', window.endsBefore)
+        .range(start, end),
+    ),
+  ]);
+
+  const { data: departments } = await supabase
+    .from('departments')
+    .select('id, name')
+    .eq('company_id', companyId);
+
+  const departmentNames = new Map((departments ?? []).map((row) => [row.id, row.name]));
+
+  const stats = new Map<string, { leads: number; fromAds: number; last: string | null }>();
+  const bump = (key: string | null, row: { created_at: string; creative_id: string | null }) => {
+    if (!key) return;
+    const current = stats.get(key) ?? { leads: 0, fromAds: 0, last: null };
+    current.leads += 1;
+    if (row.creative_id) current.fromAds += 1;
+    if (!current.last || row.created_at > current.last) current.last = row.created_at;
+    stats.set(key, current);
+  };
+
+  for (const lead of leadRows) {
+    bump(lead.whatsapp_number_id, lead);
+    bump(lead.lead_source_id, lead);
+  }
+
+  const empty = { leads: 0, fromAds: 0, last: null };
+
+  const whatsapp: FunnelChannel[] = (numbers ?? []).map((row) => {
+    const value = stats.get(row.id) ?? empty;
+    return {
+      id: row.id,
+      kind: 'whatsapp' as const,
+      name: row.label,
+      detail: row.display_phone,
+      departmentName: row.department_id
+        ? (departmentNames.get(row.department_id) ?? null)
+        : null,
+      status: row.status,
+      leads: value.leads,
+      fromAds: value.fromAds,
+      lastLeadAt: value.last,
+    };
+  });
+
+  const forms: FunnelChannel[] = sources.map((row) => {
+    const value = stats.get(row.id) ?? empty;
+    return {
+      id: row.id,
+      kind: 'form' as const,
+      name: row.name,
+      detail: row.platform,
+      departmentName: row.departmentName,
+      status: row.status,
+      leads: value.leads,
+      fromAds: value.fromAds,
+      lastLeadAt: value.last,
+    };
+  });
+
+  // Сверху то, что работает: канал с заявками важнее выключенного справочника.
+  return [...whatsapp, ...forms].sort((a, b) => b.leads - a.leads);
+}

@@ -138,9 +138,14 @@ const COMPANY_NAV: NavGroup[] = [
   {
     title: 'Система',
     items: [
+      // Куда вообще приходят люди: номера, сайты и формы одним списком.
+      { href: '/dashboard/funnels', label: 'Воронки', icon: IconChain },
       { href: '/dashboard/whatsapp', label: 'WhatsApp', icon: IconChain },
       { href: '/dashboard/integrations', label: 'Интеграции', icon: IconIntegrations },
       { href: '/dashboard/settings', label: 'Настройки', icon: IconSettings },
+      // Таблица «кто что видит». Ничего не настраивает: отвечает на вопрос,
+      // что увидит новый сотрудник, — чтобы не проверять это чужим входом.
+      { href: '/dashboard/access', label: 'Права доступа', icon: IconTeam },
       // Рабочее место сотрудника: подключить Telegram и сменить свой пароль.
       // Директору не нужно — у него для этого «Настройки» и «Команда».
       {

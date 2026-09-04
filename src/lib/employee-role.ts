@@ -64,6 +64,32 @@ export function employeeRolesFor(funnelType: FunnelType): EmployeeRole[] {
 }
 
 /**
+ * Кем распоряжается руководитель отдела продаж.
+ *
+ * Своими: менеджерами и продажниками. Ни второго РОПа, ни таргетолога он не
+ * заводит и не увольняет — иначе руководитель отдела за одно нажатие
+ * становился бы руководителем компании. У директора ограничений нет, поэтому
+ * его роль здесь — null.
+ *
+ * То же правило стоит в политиках базы; здесь оно живёт ради интерфейса и
+ * понятных сообщений об отказе.
+ */
+const SUBORDINATE_ROLES: EmployeeRole[] = ['manager', 'salesperson'];
+
+export function managesRole(actorRole: string | null, role: string): boolean {
+  if (actorRole === null) return true;
+  return SUBORDINATE_ROLES.includes(role as EmployeeRole);
+}
+
+/** Роли, которые актор вправе завести в этой компании. */
+export function rolesManagedBy(
+  actorRole: string | null,
+  funnelType: FunnelType,
+): EmployeeRole[] {
+  return employeeRolesFor(funnelType).filter((role) => managesRole(actorRole, role));
+}
+
+/**
  * Кому раздаются лиды. Продажник подключается на шаге пробного,
  * а РОП руководит — входящий поток на них не идёт.
  */

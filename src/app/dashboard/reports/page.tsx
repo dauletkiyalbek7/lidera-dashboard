@@ -8,7 +8,7 @@ import { Card, CardHeader } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
 import { IconReports } from '@/components/ui/icons';
 import { StatTile } from '@/components/ui/stat-tile';
-import { requireReportsAccess } from '@/lib/auth';
+import { requireTeamAccess } from '@/lib/auth';
 import { employeeRoleLabel } from '@/lib/employee-role';
 import { formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import { leadStatusFor, leadStatusesFor } from '@/lib/lead-status';
@@ -34,7 +34,7 @@ export default async function ReportsPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireReportsAccess();
+  const { company } = await requireTeamAccess();
   const funnelType = company.funnel_type as FunnelType;
   const words = trialWords(company.trial_term);
   const currency = company.sales_currency;

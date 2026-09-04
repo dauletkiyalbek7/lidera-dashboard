@@ -28,15 +28,22 @@ import {
   shiftDurationMinutes,
   type ShiftMode,
 } from '@/lib/attendance';
-import { EMPLOYEE_ROLE, employeeRolesFor } from '@/lib/employee-role';
+import { EMPLOYEE_ROLE, type EmployeeRole } from '@/lib/employee-role';
 import type { FunnelType } from '@/lib/metrics';
 
 /** Кнопка «Добавить сотрудника». Роли зависят от воронки компании. */
-export function AddEmployeeButton({ funnelType }: { funnelType: FunnelType }) {
+export function AddEmployeeButton({
+  roles: allowed,
+  funnelType,
+}: {
+  /** Роли, доступные тому, кто заводит: РОП заводит только своих. */
+  roles: EmployeeRole[];
+  funnelType: FunnelType;
+}) {
   const [open, setOpen] = useState(false);
   const [state, formAction] = useActionState(createEmployee, {} as TeamState);
 
-  const roles = employeeRolesFor(funnelType).map((role) => ({
+  const roles = allowed.map((role) => ({
     value: role,
     label: EMPLOYEE_ROLE[role].label,
   }));

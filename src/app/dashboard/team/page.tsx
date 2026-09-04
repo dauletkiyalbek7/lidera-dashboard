@@ -15,8 +15,8 @@ import {
   shiftDurationMinutes,
   type ShiftMode,
 } from '@/lib/attendance';
-import { requireFullAccess } from '@/lib/auth';
-import { employeeRoleLabel } from '@/lib/employee-role';
+import { requireTeamAccess } from '@/lib/auth';
+import { employeeRoleLabel, managesRole, rolesManagedBy } from '@/lib/employee-role';
 import { formatDate, formatMoney, formatNumber, formatPercent } from '@/lib/format';
 import type { FunnelType } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
@@ -59,8 +59,13 @@ export default async function TeamPage({
 }: {
   searchParams: Promise<{ period?: string; from?: string; to?: string }>;
 }) {
-  const { company } = await requireFullAccess();
+  const { company, employee } = await requireTeamAccess();
   const currency = company.sales_currency;
+
+  // Роль того, кто смотрит: у директора карточки сотрудника нет. РОП ведёт
+  // только своих, поэтому чужие строки он видит без кнопок — так понятнее,
+  // чем кнопка, отвечающая отказом.
+  const actorRole = employee?.role ?? null;
   const range = await currentRange(await searchParams, company.timezone);
   const funnelType = company.funnel_type as FunnelType;
 
@@ -77,7 +82,7 @@ export default async function TeamPage({
         description="Кто работает в компании и что каждый сделал за выбранный период."
         action={
           <div className="flex flex-wrap items-center justify-end gap-4">
-            <AddEmployeeButton funnelType={funnelType} />
+            <AddEmployeeButton roles={rolesManagedBy(actorRole, funnelType)} funnelType={funnelType} />
             <DateRangePicker range={range} />
           </div>
         }
@@ -209,6 +214,9 @@ export default async function TeamPage({
                     {member.revenue ? formatMoney(member.revenue, { compact: true, currency }) : '—'}
                   </Td>
                   <Td last align="right">
+                    {!managesRole(actorRole, member.role) ? (
+                      <span className="text-[12.5px] text-faint">не ваш подчинённый</span>
+                    ) : (
                     <div className="flex items-center justify-end gap-1">
                       {member.status === 'active' ? (
                         <ScheduleButton
@@ -251,6 +259,7 @@ export default async function TeamPage({
                         status={member.status}
                       />
                     </div>
+                    )}
                   </Td>
                 </tr>
               ))}

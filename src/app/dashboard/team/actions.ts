@@ -5,8 +5,9 @@ import { z } from 'zod';
 
 import { SHIFT_MODE_ORDER, parseWorkDays } from '@/lib/attendance';
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
+import type { CompanyRow } from '@/lib/supabase/database.types';
 import { runDistribution } from '@/lib/lead-distribution';
-import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER } from '@/lib/employee-role';
+import { EMPLOYEE_ROLE, EMPLOYEE_ROLE_ORDER, managesRole } from '@/lib/employee-role';
 import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
 
@@ -18,6 +19,52 @@ import { createServerSupabase } from '@/lib/supabase/server';
  */
 
 export type TeamState = { error?: string; success?: string };
+
+/** Актор действия: роль сотрудника или null, если это директор. */
+type TeamActor = { company: CompanyRow; actorRole: string | null };
+
+/**
+ * Кто вправе распоряжаться командой: директор и РОП.
+ *
+ * Настоящая граница стоит в политиках базы — она не пустит РОПа к чужим
+ * ролям, даже если запрос отправить в обход интерфейса. Здесь проверка ради
+ * понятного ответа: «нельзя» лучше, чем молчаливый отказ базы.
+ */
+async function teamActor(): Promise<{ error: string } | TeamActor> {
+  const { company, employee, readOnly } = await requireCompanySession();
+
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  if (employee && employee.role !== 'rop') {
+    return { error: 'Команду ведут директор и руководитель отдела продаж.' };
+  }
+
+  return { company, actorRole: employee?.role ?? null };
+}
+
+function isDenied(actor: { error: string } | TeamActor): actor is { error: string } {
+  return 'error' in actor;
+}
+
+const NOT_SUBORDINATE = 'Руководитель отдела ведёт только менеджеров и продажников.';
+
+/** Карточка сотрудника вместе с проверкой, вправе ли актор её трогать. */
+async function targetEmployee(actor: TeamActor, employeeId: string) {
+  const parsed = z.string().uuid().safeParse(employeeId);
+  if (!parsed.success) return { error: 'Некорректный сотрудник.' as const };
+
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from('employees')
+    .select('id, full_name, role, status, profile_id')
+    .eq('id', parsed.data)
+    .eq('company_id', actor.company.id)
+    .maybeSingle();
+
+  if (!data) return { error: 'Сотрудник не найден.' as const };
+  if (!managesRole(actor.actorRole, data.role)) return { error: NOT_SUBORDINATE };
+
+  return data;
+}
 
 const employeeSchema = z.object({
   fullName: z.string().trim().min(2, 'Укажите имя сотрудника').max(120),
@@ -34,9 +81,8 @@ export async function createEmployee(
   _prevState: TeamState,
   formData: FormData,
 ): Promise<TeamState> {
-  const { company, readOnly } = await requireCompanySession();
-
-  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
 
   const parsed = employeeSchema.safeParse({
     fullName: formData.get('fullName'),
@@ -45,6 +91,9 @@ export async function createEmployee(
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+  if (!managesRole(actor.actorRole, parsed.data.role)) return { error: NOT_SUBORDINATE };
+
+  const { company } = actor;
 
   // Продажник существует только там, где есть пробные занятия.
   if (
@@ -77,18 +126,18 @@ export async function createEmployee(
  * работа, и в отчёте за прошлый месяц она обязана остаться за ним.
  */
 export async function fireEmployee(employeeId: string): Promise<TeamState> {
-  const { company, readOnly } = await requireCompanySession();
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
 
-  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  const target = await targetEmployee(actor, employeeId);
+  if ('error' in target) return target;
 
-  const parsed = z.string().uuid().safeParse(employeeId);
-  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
-
+  const { company } = actor;
   const supabase = await createServerSupabase();
   const { error } = await supabase
     .from('employees')
     .update({ status: 'fired', fired_at: new Date().toISOString() })
-    .eq('id', parsed.data)
+    .eq('id', target.id)
     .eq('company_id', company.id);
 
   if (error) return { error: 'Не удалось уволить сотрудника.' };
@@ -100,13 +149,13 @@ export async function fireEmployee(employeeId: string): Promise<TeamState> {
     .from('leads')
     .update({ assigned_to: null })
     .eq('company_id', company.id)
-    .eq('assigned_to', parsed.data)
+    .eq('assigned_to', target.id)
     .in('status', ['new', 'no_answer', 'contacted', 'in_progress', 'thinking']);
 
   await supabase
     .from('lead_assignments')
     .update({ released_at: new Date().toISOString(), reason: 'fired' })
-    .eq('employee_id', parsed.data)
+    .eq('employee_id', target.id)
     .eq('company_id', company.id)
     .is('released_at', null);
 
@@ -119,19 +168,18 @@ export async function fireEmployee(employeeId: string): Promise<TeamState> {
 
 /** Возврат сотрудника — бывает и такое, повторно заводить карточку не нужно. */
 export async function rehireEmployee(employeeId: string): Promise<TeamState> {
-  const { company, readOnly } = await requireCompanySession();
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
 
-  if (readOnly) return { error: VIEW_ONLY_ERROR };
-
-  const parsed = z.string().uuid().safeParse(employeeId);
-  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
+  const target = await targetEmployee(actor, employeeId);
+  if ('error' in target) return target;
 
   const supabase = await createServerSupabase();
   const { error } = await supabase
     .from('employees')
     .update({ status: 'active', fired_at: null })
-    .eq('id', parsed.data)
-    .eq('company_id', company.id);
+    .eq('id', target.id)
+    .eq('company_id', actor.company.id);
 
   if (error) return { error: 'Не удалось вернуть сотрудника.' };
 
@@ -152,33 +200,24 @@ export type InviteState = { error?: string; link?: string; expiresAt?: string };
  * старая ссылка из переписки останется рабочей.
  */
 export async function createInvite(employeeId: string): Promise<InviteState> {
-  const { company, readOnly } = await requireCompanySession();
-
-  if (readOnly) return { error: VIEW_ONLY_ERROR };
-
-  const parsed = z.string().uuid().safeParse(employeeId);
-  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
 
   const botUsername = process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME;
   if (!botUsername) return { error: 'Бот не настроен: не задано имя бота.' };
 
-  const supabase = await createServerSupabase();
-
-  const { data: employee } = await supabase
-    .from('employees')
-    .select('id, status')
-    .eq('id', parsed.data)
-    .eq('company_id', company.id)
-    .maybeSingle();
-
-  if (!employee) return { error: 'Сотрудник не найден.' };
+  const employee = await targetEmployee(actor, employeeId);
+  if ('error' in employee) return employee;
   if (employee.status !== 'active') return { error: 'Сотрудник уволен.' };
+
+  const { company } = actor;
+  const supabase = await createServerSupabase();
 
   const now = new Date();
   await supabase
     .from('employee_invites')
     .update({ used_at: now.toISOString() })
-    .eq('employee_id', parsed.data)
+    .eq('employee_id', employee.id)
     .eq('company_id', company.id)
     .is('used_at', null);
 
@@ -187,7 +226,7 @@ export async function createInvite(employeeId: string): Promise<InviteState> {
 
   const { error } = await supabase.from('employee_invites').insert({
     company_id: company.id,
-    employee_id: parsed.data,
+    employee_id: employee.id,
     token,
     expires_at: expiresAt.toISOString(),
   });
@@ -305,13 +344,10 @@ export async function updateEmployeeSchedule(
   _prevState: TeamState,
   formData: FormData,
 ): Promise<TeamState> {
-  const { company, profile, readOnly } = await requireCompanySession();
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
 
-  if (readOnly) return { error: VIEW_ONLY_ERROR };
-
-  if (profile.role !== 'DIRECTOR') {
-    return { error: 'Менять график сотрудников может только директор.' };
-  }
+  const { company } = actor;
 
   const parsed = scheduleSchema.safeParse({
     employeeId: formData.get('employeeId'),
@@ -320,6 +356,9 @@ export async function updateEmployeeSchedule(
   });
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const target = await targetEmployee(actor, parsed.data.employeeId);
+  if ('error' in target) return target;
 
   if (parsed.data.shiftMode === 'geo' && company.office_lat === null) {
     return { error: 'Сначала укажите координаты офиса в настройках компании.' };
@@ -360,7 +399,7 @@ export async function updateEmployeeSchedule(
   const { error } = await supabase
     .from('employees')
     .update({ shift_mode: parsed.data.shiftMode || null, ...schedule })
-    .eq('id', parsed.data.employeeId)
+    .eq('id', target.id)
     .eq('company_id', company.id);
 
   if (error) return { error: 'Не удалось сохранить график.' };
@@ -401,8 +440,8 @@ export async function createEmployeeLogin(
   _prev: LoginState,
   formData: FormData,
 ): Promise<LoginState> {
-  const { company, readOnly } = await requireCompanySession();
-  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
   if (!isAdminConfigured()) {
     return { error: 'Не настроен сервисный ключ — учётные записи создать нельзя.' };
   }
@@ -415,16 +454,13 @@ export async function createEmployeeLogin(
 
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const supabase = await createServerSupabase();
-  const { data: employee } = await supabase
-    .from('employees')
-    .select('id, full_name, status, profile_id')
-    .eq('id', parsed.data.employeeId)
-    .eq('company_id', company.id)
-    .maybeSingle();
-
-  if (!employee) return { error: 'Сотрудник не найден.' };
+  // Дальше работает сервисный ключ, а он политик не спрашивает — значит право
+  // проверяем сами и до того, как заведём учётную запись.
+  const employee = await targetEmployee(actor, parsed.data.employeeId);
+  if ('error' in employee) return employee;
   if (employee.status !== 'active') return { error: 'Сотрудник уволен.' };
+
+  const { company } = actor;
   if (employee.profile_id) return { error: 'У этого сотрудника вход уже есть.' };
 
   const admin = createAdminSupabase();
@@ -481,22 +517,13 @@ export async function createEmployeeLogin(
 
 /** Закрыть сотруднику вход, не трогая его карточку и историю. */
 export async function revokeEmployeeLogin(employeeId: string): Promise<LoginState> {
-  const { company, readOnly } = await requireCompanySession();
-  if (readOnly) return { error: VIEW_ONLY_ERROR };
+  const actor = await teamActor();
+  if (isDenied(actor)) return actor;
   if (!isAdminConfigured()) return { error: 'Не настроен сервисный ключ.' };
 
-  const parsed = z.string().uuid().safeParse(employeeId);
-  if (!parsed.success) return { error: 'Некорректный сотрудник.' };
-
-  const supabase = await createServerSupabase();
-  const { data: employee } = await supabase
-    .from('employees')
-    .select('id, profile_id')
-    .eq('id', parsed.data)
-    .eq('company_id', company.id)
-    .maybeSingle();
-
-  if (!employee?.profile_id) return { error: 'У этого сотрудника входа нет.' };
+  const employee = await targetEmployee(actor, employeeId);
+  if ('error' in employee) return employee;
+  if (!employee.profile_id) return { error: 'У этого сотрудника входа нет.' };
 
   const admin = createAdminSupabase();
   const { data: profile } = await admin

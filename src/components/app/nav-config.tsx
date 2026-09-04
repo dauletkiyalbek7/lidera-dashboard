@@ -101,7 +101,15 @@ const COMPANY_NAV: NavGroup[] = [
         onlyRole: 'rop',
       },
       { href: '/dashboard/returns', label: 'Возвраты', icon: IconReceipts },
-      { href: '/dashboard/team', label: 'Команда', icon: IconTeam },
+      // Людей набирает РОП: у агентства состав отдела меняется чаще, чем
+      // владелец успевает этим заниматься. Чужие роли база ему не отдаст.
+      {
+        href: '/dashboard/team',
+        label: 'Команда',
+        icon: IconTeam,
+        staff: true,
+        onlyRole: 'rop',
+      },
       { href: '/dashboard/attendance', label: 'Посещение', icon: IconAttendance },
     ],
   },

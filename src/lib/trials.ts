@@ -3,6 +3,9 @@ import 'server-only';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { zonedIsoDate } from '@/lib/period';
+import { instantInZone } from '@/lib/lead-touches';
+import { resolveShiftRules, weekdayInZone } from '@/lib/attendance';
+import { BOOKING_HOURS } from '@/lib/telegram-lead-card';
 import { creativeLabel } from '@/lib/creative-label';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
@@ -174,6 +177,101 @@ export async function notifyTrialBooked(
   );
 
   return { delivered: true };
+}
+
+/**
+ * Свободные часы дня.
+ *
+ * Менеджер разговаривает с клиентом и должен сразу назвать время, а не
+ * упираться в «продажник занят» и начинать сначала. Поэтому час, который взять
+ * нельзя, ему просто не предлагается — список всегда состоит из того, на что
+ * можно записать прямо сейчас.
+ *
+ * Занятость считается двумя вещами: уже назначенными уроками и рабочим
+ * графиком продажника. Предлагать девять утра тому, кто выходит в два, —
+ * тот же тупик, только на шаг позже.
+ *
+ * `workingDay` отделяет «всё занято» от «в этот день никто не работает»: это
+ * разные новости, и вторая чинится не другим часом, а графиком в настройках.
+ */
+export async function freeSlots(
+  supabase: Admin,
+  companyId: string,
+  date: string,
+  timeZone: string,
+  options?: { exceptTrialId?: string; after?: string },
+): Promise<{ slots: string[]; workingDay: boolean }> {
+  const [{ data: sellers }, { data: company }, { data: booked }] = await Promise.all([
+    supabase
+      .from('employees')
+      .select(
+        'id, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
+      )
+      .eq('company_id', companyId)
+      .eq('role', 'salesperson')
+      .eq('status', 'active'),
+    supabase
+      .from('companies')
+      .select('shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes')
+      .eq('id', companyId)
+      .maybeSingle(),
+    supabase
+      .from('trials')
+      .select('id, assigned_to, starts_at')
+      .eq('company_id', companyId)
+      .eq('status', 'scheduled')
+      .eq('date', date)
+      .not('starts_at', 'is', null)
+      .not('assigned_to', 'is', null),
+  ]);
+
+  if (!sellers || sellers.length === 0 || !company) {
+    return { slots: [], workingDay: false };
+  }
+
+  const busy = (booked ?? []).filter((trial) => trial.id !== options?.exceptTrialId);
+  const weekday = weekdayInZone(new Date(`${date}T12:00:00Z`), timeZone);
+
+  const working = sellers.filter((seller) => {
+    const days = resolveShiftRules(seller, company).workDays;
+    return days.length === 0 || days.includes(weekday);
+  });
+
+  if (working.length === 0) return { slots: [], workingDay: false };
+
+  const slots = BOOKING_HOURS.filter((time) => {
+    if (options?.after && time <= options.after) return false;
+
+    const startsAt = instantInZone(date, time, timeZone);
+    if (!startsAt) return false;
+
+    return working.some((seller) => {
+      const rules = resolveShiftRules(seller, company);
+
+      // Рабочие часы. Урок длится час, поэтому начаться он должен так, чтобы
+      // успеть закончиться до конца дня — ровно в конец можно.
+      if (time < rules.workStartTime) return false;
+      if (time > shiftEndMinusLesson(rules.workEndTime)) return false;
+
+      return !busy.some(
+        (trial) =>
+          trial.assigned_to === seller.id &&
+          trial.starts_at !== null &&
+          Math.abs(new Date(trial.starts_at).getTime() - startsAt.getTime()) <
+            TRIAL_DURATION_MINUTES * 60 * 1000,
+      );
+    });
+  });
+
+  return { slots, workingDay: true };
+}
+
+/** Последний час, когда урок ещё успевает закончиться до конца смены. */
+function shiftEndMinusLesson(workEndTime: string): string {
+  const [hours, minutes] = workEndTime.split(':').map(Number);
+  const total = hours * 60 + minutes - TRIAL_DURATION_MINUTES;
+  if (total <= 0) return '00:00';
+  return `${String(Math.floor(total / 60)).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
 }
 
 export async function sellerAvailability(

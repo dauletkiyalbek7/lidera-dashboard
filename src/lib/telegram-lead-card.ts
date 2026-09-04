@@ -211,19 +211,13 @@ export const BOOKING_HOURS = [
 ];
 
 /**
- * Время урока.
+ * Свободные часы урока.
  *
- * `after` отсекает часы, которые на выбранный день уже прошли: предложить
- * записать клиента на девять утра в четыре часа дня — верный способ получить
- * урок, о котором никто не напомнит.
+ * Список приходит готовым: занятые часы сюда не попадают вовсе. Показывать
+ * их и отвечать «продажник занят» на нажатие значит гонять менеджера по
+ * кругу, пока клиент ждёт на линии.
  */
-export function bookingTimeButtons(
-  trialId: string,
-  options?: { after?: string },
-): InlineButton[][] {
-  const after = options?.after;
-  const slots = after ? BOOKING_HOURS.filter((time) => time > after) : BOOKING_HOURS;
-
+export function bookingTimeButtons(trialId: string, slots: string[]): InlineButton[][] {
   const buttons = slots.map((time) => ({
     text: time,
     callback_data: `bt:${trialId}:${time.replace(':', '')}`,
@@ -237,17 +231,24 @@ export function bookingTimeButtons(
 }
 
 /**
- * Продажники на выбор. В кнопку идёт место в списке, а не идентификатор:
- * два идентификатора в 64 байта callback_data не помещаются.
+ * Свободные продажники на выбор.
+ *
+ * В кнопку идёт место в полном списке, а не идентификатор: два
+ * идентификатора в 64 байта callback_data не помещаются. Именно в полном, а
+ * не в списке свободных — пока менеджер выбирает, кого-то могут занять, и
+ * тогда список свободных сдвинулся бы, а нажатие попало в другого человека.
+ *
+ * Занятых не показываем совсем: нажать их нельзя, а видеть в списке — повод
+ * попробовать и получить отказ.
  */
 export function bookingSellerButtons(
   trialId: string,
   sellers: { fullName: string; busy: boolean }[],
 ): InlineButton[][] {
-  return sellers.map((seller, index) => [
-    {
-      text: seller.busy ? `${seller.fullName} — занят` : `✅ ${seller.fullName}`,
-      callback_data: `bs:${trialId}:${index}`,
-    },
-  ]);
+  return sellers
+    .map((seller, index) => ({ seller, index }))
+    .filter(({ seller }) => !seller.busy)
+    .map(({ seller, index }) => [
+      { text: `✅ ${seller.fullName}`, callback_data: `bs:${trialId}:${index}` },
+    ]);
 }

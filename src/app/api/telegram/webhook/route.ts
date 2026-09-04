@@ -29,6 +29,7 @@ import { closeOpenTouches } from '@/lib/touch-runner';
 import { employeeStats, statsMessage } from '@/lib/employee-stats';
 import {
   formatTrialTime,
+  freeSlots,
   sellerAvailability,
   notifyTrialBooked,
   shortCreativeLabel,
@@ -1770,12 +1771,25 @@ async function pickDay(
   // Сегодняшние часы, которые уже прошли, не предлагаем: урок в прошлом —
   // это урок, о котором никто не напомнит.
   const after = offsetDays === 0 ? nowInZone(timeZone) : undefined;
-  const times = bookingTimeButtons(trialId, { after });
+  const { slots, workingDay } = await freeSlots(
+    supabase,
+    employee.company_id,
+    date,
+    timeZone,
+    { exceptTrialId: trialId, after },
+  );
 
-  if (times.length === 0) {
-    await answerCallback(query.id, 'На сегодня время вышло');
-    return show(screen, '🌙 На сегодня свободных часов не осталось. Выберите другой день.',
-      bookingDayButtons(trialId, timeZone));
+  // Две разные новости: «в этот день никто не работает» чинится графиком в
+  // настройках, а «всё разобрали» — другим часом или днём.
+  if (slots.length === 0) {
+    await answerCallback(query.id, 'Свободных часов нет');
+    return show(
+      screen,
+      workingDay
+        ? `🌙 На ${formatDay(date)} свободных часов не осталось — всё занято.\nВыберите другой день.`
+        : `🌙 ${formatDay(date)} — нерабочий день по графику продажников.\nВыберите другой день или попросите директора изменить график.`,
+      bookingDayButtons(trialId, timeZone),
+    );
   }
 
   const { error } = await supabase
@@ -1787,7 +1801,11 @@ async function pickDay(
   if (error) return answerCallback(query.id, 'Не удалось сохранить день.');
 
   await answerCallback(query.id, date);
-  return show(screen, `📅 ${formatDay(date)}. Во сколько урок?`, times);
+  return show(
+    screen,
+    `📅 <b>${formatDay(date)}</b>\nСвободное время — выберите, что подходит клиенту:`,
+    bookingTimeButtons(trialId, slots),
+  );
 }
 
 /** «17:30» по времени компании — чтобы отсечь часы, которые уже прошли. */
@@ -1840,17 +1858,31 @@ async function pickTime(
     .update({ starts_at: startsAt.toISOString() })
     .eq('id', trial.id);
 
-  const sellers = await sellerAvailability(
-    supabase,
-    employee.company_id,
-    startsAt,
-    trial.id,
-  );
+  const all = await sellerAvailability(supabase, employee.company_id, startsAt, trial.id);
 
-  if (sellers.length === 0) {
+  if (all.length === 0) {
     return show(
       screen,
       'В компании нет продажников — урок пока не на кого записать. Скажите директору.',
+    );
+  }
+
+  // Занятых не показываем вовсе: нажать их нельзя, а видеть в списке —
+  // повод попробовать и получить отказ.
+  const free = all.filter((seller) => !seller.busy);
+
+  if (free.length === 0) {
+    const { slots } = await freeSlots(supabase, employee.company_id, trial.date, timeZone, {
+      exceptTrialId: trial.id,
+    });
+
+    await answerCallback(query.id, 'Это время уже заняли');
+    return show(
+      screen,
+      `⏰ Пока выбирали, ${time} заняли. Свободное время на ${formatDay(trial.date)}:`,
+      slots.length > 0
+        ? bookingTimeButtons(trial.id, slots)
+        : bookingDayButtons(trial.id, timeZone),
     );
   }
 
@@ -1858,7 +1890,7 @@ async function pickTime(
   return show(
     screen,
     `🕒 ${formatTrialTime(startsAt, timeZone)}\nКто проводит урок?`,
-    bookingSellerButtons(trial.id, sellers),
+    bookingSellerButtons(trial.id, all),
   );
 }
 
@@ -1895,13 +1927,30 @@ async function pickSeller(
   if (!seller) return answerCallback(query.id, 'Продажник не найден.');
 
   // Занятость перепроверяем здесь: пока менеджер выбирал, этот час мог занять
-  // другой менеджер.
+  // другой менеджер. Если свободных не осталось совсем — не гоняем по кругу,
+  // а сразу показываем, на какое время записать можно.
   if (seller.busy) {
     await answerCallback(query.id, 'Занят в это время');
+
+    if (sellers.some((row) => !row.busy)) {
+      return show(
+        screen,
+        `${escapeHtml(seller.fullName)} уже ведёт урок в это время. Свободны:`,
+        bookingSellerButtons(trial.id, sellers),
+      );
+    }
+
+    const date = localDate(timeZone, startsAt);
+    const { slots } = await freeSlots(supabase, employee.company_id, date, timeZone, {
+      exceptTrialId: trial.id,
+    });
+
     return show(
       screen,
-      `${escapeHtml(seller.fullName)} уже ведёт урок в это время. Выберите другого или другой час.`,
-      bookingSellerButtons(trial.id, sellers),
+      `⏰ Это время уже заняли. Свободное время на ${formatDay(date)}:`,
+      slots.length > 0
+        ? bookingTimeButtons(trial.id, slots)
+        : bookingDayButtons(trial.id, timeZone),
     );
   }
 

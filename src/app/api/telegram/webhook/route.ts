@@ -6,7 +6,13 @@ import {
   leadStatusesFor,
   type LeadStatus,
 } from '@/lib/lead-status';
-import { TRIAL_STATUS, isTrialStatus } from '@/lib/trial-status';
+import {
+  TRIAL_STATUS,
+  TRIAL_STATUS_ORDER,
+  isTrialStatus,
+  type TrialStatus,
+} from '@/lib/trial-status';
+import { trialWords } from '@/lib/trial-term';
 import {
   formatSchedule,
   resolveShiftRules,
@@ -38,6 +44,7 @@ import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import {
   leadCard,
   statusButtons,
+  trialButtons,
   trialOutcomeButtons,
   bookingDayButtons,
   bookingTimeButtons,
@@ -76,16 +83,23 @@ import {
 
 export const dynamic = 'force-dynamic';
 
-const KEYBOARD_OFF = [
-  ['🟢 Я на смене'],
-  ['📋 Мои лиды', '📵 Недозвон'],
-  ['📊 Мои показатели'],
-];
-const KEYBOARD_ON = [
-  ['🔴 Я ухожу'],
-  ['📋 Мои лиды', '📵 Недозвон'],
-  ['📊 Мои показатели'],
-];
+/**
+ * Клавиатура зависит от роли: работа у людей разная.
+ *
+ * Менеджер ведёт заявки, продажник — уроки. Пока кнопка была одна на всех,
+ * продажник жал «Мои лиды» и видел пустоту: заявки закреплены за менеджером,
+ * а его уроки в чате было не найти вовсе — только ждать, когда бот пришлёт
+ * карточку, и не потерять её в переписке.
+ */
+function keyboardFor(role: string, onShift: boolean): KeyboardButton[][] {
+  const shift = onShift ? '🔴 Я ухожу' : '🟢 Я на смене';
+
+  if (role === 'salesperson') {
+    return [[shift], ['🎓 Мои уроки'], ['📊 Мои показатели']];
+  }
+
+  return [[shift], ['📋 Мои лиды', '📵 Недозвон'], ['📊 Мои показатели']];
+}
 
 /** Геолокацию Telegram отдаёт только по нажатию этой кнопки — не автоматически. */
 const KEYBOARD_GEO: KeyboardButton[][] = [
@@ -246,7 +260,9 @@ async function handleMessage(message: TelegramMessage) {
   }
 
   if (text.includes('Отмена')) {
-    return sendMessage(chatId, 'Хорошо, смену не открываем.', { keyboard: KEYBOARD_OFF });
+    return sendMessage(chatId, 'Хорошо, смену не открываем.', {
+      keyboard: keyboardFor(employee.role, false),
+    });
   }
   if (text.includes('на смене')) return startShiftFlow(chatId, employee);
   if (text.includes('ухожу')) return closeShift(chatId, employee);
@@ -256,6 +272,7 @@ async function handleMessage(message: TelegramMessage) {
   }
 
   if (text.includes('показатели')) return showStats(chatId, employee);
+  if (text.includes('Мои уроки')) return trialsMenu({ chatId }, employee);
   if (text.includes('Недозвон')) return listLeads({ chatId }, employee, 'no_answer');
   if (text.includes('Мои лиды')) return leadsMenu({ chatId }, employee);
 
@@ -263,7 +280,7 @@ async function handleMessage(message: TelegramMessage) {
   return sendMessage(
     chatId,
     `Привет, ${escapeHtml(employee.full_name)}!\nВыберите действие на клавиатуре ниже.`,
-    { keyboard: open ? KEYBOARD_ON : KEYBOARD_OFF },
+    { keyboard: keyboardFor(employee.role, Boolean(open)) },
   );
 }
 
@@ -291,7 +308,7 @@ async function bindEmployee(
 
   const { data: employee } = await supabase
     .from('employees')
-    .select('id, full_name, status')
+    .select('id, full_name, status, role')
     .eq('id', invite.employee_id)
     .maybeSingle();
 
@@ -319,8 +336,8 @@ async function bindEmployee(
 
   return sendMessage(
     chatId,
-    `Готово, ${escapeHtml(employee.full_name)}. Аккаунт привязан.\n\nНачинайте рабочий день кнопкой «Я на смене» — лиды будут приходить сюда.`,
-    { keyboard: KEYBOARD_OFF },
+    `Готово, ${escapeHtml(employee.full_name)}. Аккаунт привязан.\n\nНачинайте рабочий день кнопкой «Я на смене» — работа будет приходить сюда.`,
+    { keyboard: keyboardFor(employee.role, false) },
   );
 }
 
@@ -346,7 +363,9 @@ async function startShiftFlow(chatId: number, employee: Employee) {
   }
 
   if (await openShiftOf(employee.id)) {
-    return sendMessage(chatId, 'Смена уже открыта.', { keyboard: KEYBOARD_ON });
+    return sendMessage(chatId, 'Смена уже открыта.', {
+      keyboard: keyboardFor(employee.role, true),
+    });
   }
 
   const needsLocation =
@@ -392,7 +411,7 @@ async function openShiftWithLocation(
     return sendMessage(
       chatId,
       `Вы <b>${formatDistance(distance)}</b> от офиса — это дальше допустимых ${formatDistance(company.office_radius_m)}.\n\nОткрыть смену можно на месте. Если работаете удалённо, попросите директора изменить режим смены.`,
-      { keyboard: KEYBOARD_OFF },
+      { keyboard: keyboardFor(employee.role, false) },
     );
   }
 
@@ -446,7 +465,7 @@ async function openShift(
   ];
 
   return sendMessage(chatId, lines.filter((line) => line !== null).join('\n'), {
-    keyboard: KEYBOARD_ON,
+    keyboard: keyboardFor(employee.role, true),
   });
 }
 
@@ -547,7 +566,11 @@ async function closeShift(chatId: number, employee: Employee) {
   const supabase = createAdminSupabase();
   const shift = await openShiftOf(employee.id);
 
-  if (!shift) return sendMessage(chatId, 'Смена не открыта.', { keyboard: KEYBOARD_OFF });
+  if (!shift) {
+    return sendMessage(chatId, 'Смена не открыта.', {
+      keyboard: keyboardFor(employee.role, false),
+    });
+  }
 
   const endedAt = new Date();
   await supabase
@@ -564,7 +587,7 @@ async function closeShift(chatId: number, employee: Employee) {
   return sendMessage(
     chatId,
     `Смена закрыта. Отработано: <b>${hours ? `${hours} ч ` : ''}${minutes % 60} мин</b>.`,
-    { keyboard: KEYBOARD_OFF },
+    { keyboard: keyboardFor(employee.role, false) },
   );
 }
 
@@ -736,12 +759,15 @@ async function leadsMenu(
   );
 }
 
-/** Выбор периода. Текущий помечен галочкой, чтобы было видно, что открыто. */
-function periodButtons(current: LeadPeriod): InlineButton[][] {
+/**
+ * Выбор периода. Текущий помечен галочкой, чтобы было видно, что открыто.
+ * `kind` разводит два списка: клиенты менеджера и уроки продажника.
+ */
+function periodButtons(current: LeadPeriod, kind: 'lm' | 'um' = 'lm'): InlineButton[][] {
   const order: LeadPeriod[] = ['t', 'y', 'w', 'm', 'a'];
   const buttons = order.map((period) => ({
     text: `${period === current ? '✅ ' : '📅 '}${PERIOD_LABEL[period]}`,
-    callback_data: `lm:${period}`,
+    callback_data: `${kind}:${period}`,
   }));
   return [buttons.slice(0, 3), buttons.slice(3)];
 }
@@ -928,6 +954,176 @@ async function trialNoteFor(
 }
 
 /**
+ * Сводка «Мои уроки» — рабочий стол продажника.
+ *
+ * До сих пор его уроки жили только в присланных карточках: потерял сообщение
+ * в переписке — и не помнишь, кого и когда ведёшь. Заявки ему не помогали,
+ * они закреплены за менеджером. Теперь у него свой список, устроенный так же,
+ * как «Мои клиенты» у менеджера.
+ */
+async function trialsMenu(screen: Screen, employee: Employee, period: LeadPeriod = 'a') {
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+
+  if (!(await allowedOnShift(screen.chatId, employee, company))) return;
+
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
+  const words = trialWords(company?.trial_term);
+  const rows = await ownTrials(supabase, employee, period, timeZone);
+
+  const counts = new Map<string, number>();
+  for (const trial of rows) counts.set(trial.status, (counts.get(trial.status) ?? 0) + 1);
+
+  const statuses = TRIAL_STATUS_ORDER.filter((status) => (counts.get(status) ?? 0) > 0);
+  const title = `🎓 <b>${escapeHtml(words.section)}</b> · ${PERIOD_LABEL[period].toLowerCase()}`;
+
+  if (statuses.length === 0) {
+    return show(screen, `${title}\n\nЗа этот период занятий нет.`, periodButtons(period, 'um'));
+  }
+
+  const lines = statuses.map(
+    (status) => `${TRIAL_ICON[status]} ${TRIAL_STATUS[status].label} — <b>${counts.get(status)}</b>`,
+  );
+
+  const buttons: InlineButton[][] = [];
+  for (let index = 0; index < statuses.length; index += 2) {
+    buttons.push(
+      statuses.slice(index, index + 2).map((status) => ({
+        text: `${TRIAL_ICON[status]} ${TRIAL_STATUS[status].label} ${counts.get(status)}`,
+        callback_data: `uq:${status}:${period}:0`,
+      })),
+    );
+  }
+
+  return show(
+    screen,
+    `${title}\n\n${lines.join('\n')}\n\nВсего: <b>${rows.length}</b>`,
+    [...buttons, ...periodButtons(period, 'um')],
+  );
+}
+
+/** Значки исходов урока — те же, что на кнопках продажника. */
+const TRIAL_ICON: Record<TrialStatus, string> = {
+  scheduled: '🕒',
+  completed: '✅',
+  thinking: '🤔',
+  sale: '💰',
+  bank_declined: '🏦',
+  rejected: '🚫',
+  no_show: '📵',
+  canceled: '🔄',
+};
+
+async function ownTrials(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  employee: Employee,
+  period: LeadPeriod,
+  timeZone: string,
+) {
+  let query = supabase
+    .from('trials')
+    .select('id, status')
+    .eq('company_id', employee.company_id)
+    .eq('assigned_to', employee.id);
+
+  const window = periodWindow(period, timeZone);
+  if (window) {
+    query = query
+      .gte('date', window.startsAt.slice(0, 10))
+      .lte('date', window.endsBefore.slice(0, 10));
+  }
+
+  const { data } = await query.limit(1000);
+  return data ?? [];
+}
+
+/**
+ * Уроки одной пачки — по одному за раз.
+ *
+ * Назначенные идут от ближайшего: продажнику важно, к чему готовиться прямо
+ * сейчас. Закрытые — наоборот, от свежих: там он ищет то, что было недавно.
+ */
+async function listTrials(
+  screen: Screen,
+  employee: Employee,
+  status: TrialStatus,
+  period: LeadPeriod = 'a',
+  offset = 0,
+) {
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+
+  if (!(await allowedOnShift(screen.chatId, employee, company))) return;
+
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
+  const upcoming = status === 'scheduled';
+
+  let query = supabase
+    .from('trials')
+    .select('id, lead_id, status, date, starts_at', { count: 'exact' })
+    .eq('company_id', employee.company_id)
+    .eq('assigned_to', employee.id)
+    .eq('status', status);
+
+  const window = periodWindow(period, timeZone);
+  if (window) {
+    query = query
+      .gte('date', window.startsAt.slice(0, 10))
+      .lte('date', window.endsBefore.slice(0, 10));
+  }
+
+  const { data: found, count } = await query
+    .order('starts_at', { ascending: upcoming, nullsFirst: false })
+    .range(offset, offset);
+
+  const total = count ?? 0;
+  const trial = found?.[0];
+
+  const back: InlineButton[][] = [[{ text: '↩️ Все мои уроки', callback_data: `um:${period}` }]];
+
+  if (!trial) return show(screen, 'Здесь больше ничего нет.', back);
+
+  const { data: lead } = trial.lead_id
+    ? await supabase
+        .from('leads')
+        .select('name, phone, source, platform, status, creative_id')
+        .eq('id', trial.lead_id)
+        .maybeSingle()
+    : { data: null };
+
+  if (!lead) return show(screen, 'У этой записи нет клиента.', back);
+
+  const creativeName = await shortCreativeLabel(supabase, employee.company_id, lead.creative_id);
+  const meta = TRIAL_STATUS[status];
+
+  const header =
+    `${TRIAL_ICON[status]} <b>${escapeHtml(meta.label)} — ${offset + 1} из ${total}</b>\n` +
+    (trial.starts_at
+      ? `🕒 ${formatTrialTime(trial.starts_at, timeZone)}`
+      : `📅 ${formatDay(trial.date)} · время не назначено`);
+
+  // Кнопки по стадии: пока урок не провели — про сам урок, после — про
+  // решение клиента. Закрытому уроку нажимать уже нечего.
+  const actions = meta.closed
+    ? []
+    : meta.held
+      ? trialOutcomeButtons(trial.id)
+      : trialButtons(trial.id);
+
+  const footer: InlineButton[] = [];
+  if (offset + 1 < total) {
+    footer.push({ text: '➡️ Следующий', callback_data: `uq:${status}:${period}:${offset + 1}` });
+  }
+  footer.push({ text: '↩️ Все мои уроки', callback_data: `um:${period}` });
+
+  return show(
+    screen,
+    leadCard({ ...lead, creativeLabel: creativeName }, header, company?.trial_term),
+    [...actions, ...whatsappButton(lead.phone), footer],
+  );
+}
+
+/**
  * Заявки — рабочая информация, и выдаются они только на смене. Иначе бот
  * отдаёт номера человеку, который не работает, и никто не знает, звонит он
  * или нет.
@@ -945,8 +1141,8 @@ async function allowedOnShift(
 
   await sendMessage(
     chatId,
-    'Сначала откройте смену — кнопка «Я на смене» ниже.\nЗаявки выдаются только тем, кто на работе.',
-    { keyboard: KEYBOARD_OFF },
+    'Сначала откройте смену — кнопка «Я на смене» ниже.\nРабота выдаётся только тем, кто на смене.',
+    { keyboard: keyboardFor(employee.role, false) },
   );
   return false;
 }
@@ -976,7 +1172,7 @@ async function showStats(chatId: number, employee: Employee) {
       currency: company?.sales_currency ?? 'KZT',
       trialTerm: company?.trial_term,
     }),
-    { keyboard: open ? KEYBOARD_ON : KEYBOARD_OFF },
+    { keyboard: keyboardFor(employee.role, Boolean(open)) },
   );
 }
 
@@ -1017,6 +1213,23 @@ async function handleCallback(query: TelegramCallbackQuery) {
       screen,
       employee,
       isLeadStatus(leadId) ? leadId : 'new',
+      isLeadPeriod(value ?? '') ? (value as LeadPeriod) : 'a',
+      Number(parts[3]) || 0,
+    );
+  }
+
+  // Уроки продажника: во втором поле статус урока или период.
+  if (kind === 'um') {
+    await answerCallback(query.id);
+    return trialsMenu(screen, employee, isLeadPeriod(leadId) ? leadId : 'a');
+  }
+
+  if (kind === 'uq') {
+    await answerCallback(query.id);
+    return listTrials(
+      screen,
+      employee,
+      isTrialStatus(leadId) ? leadId : 'scheduled',
       isLeadPeriod(value ?? '') ? (value as LeadPeriod) : 'a',
       Number(parts[3]) || 0,
     );
@@ -1346,7 +1559,9 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
 
   if (/отмен/i.test(text)) {
     await clear();
-    return sendMessage(chatId, 'Хорошо, сумму не записываем.', { keyboard: KEYBOARD_ON });
+    return sendMessage(chatId, 'Хорошо, сумму не записываем.', {
+      keyboard: keyboardFor(employee.role, true),
+    });
   }
 
   const leadId = await awaitedLead(employee);

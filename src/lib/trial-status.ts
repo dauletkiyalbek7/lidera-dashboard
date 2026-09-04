@@ -151,7 +151,7 @@ export const TRIAL_STATUS: Record<TrialStatus, TrialStatusMeta> = {
     stage: 'missed',
     held: false,
     closed: true,
-    leadStatus: 'in_progress',
+    leadStatus: 'thinking',
     followUp: 'return',
   },
 };

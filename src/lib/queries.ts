@@ -1629,7 +1629,7 @@ export async function countUnassignedLeads(companyId: string): Promise<number> {
     .select('id', { count: 'exact', head: true })
     .eq('company_id', companyId)
     .is('assigned_to', null)
-    .in('status', ['new', 'no_answer', 'contacted', 'in_progress', 'thinking']);
+    .in('status', ['new', 'no_answer', 'thinking']);
 
   return count ?? 0;
 }

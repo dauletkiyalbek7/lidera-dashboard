@@ -456,7 +456,7 @@ function clock(moment: Date, timeZone: string): string {
 }
 
 /** Статусы, при которых с человеком реально поговорили. */
-const REACHED = new Set(['contacted', 'in_progress', 'thinking', 'trial', 'sale', 'rejected']);
+const REACHED = new Set(['thinking', 'trial', 'sale', 'rejected']);
 
 /** Границы периода в датах компании. */
 export function periodRange(period: ReportPeriod, timeZone: string): {

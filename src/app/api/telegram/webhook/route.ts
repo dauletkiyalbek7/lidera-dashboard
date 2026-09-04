@@ -1,6 +1,11 @@
 import { NextResponse } from 'next/server';
 
-import { isLeadStatus, leadStatusFor, type LeadStatus } from '@/lib/lead-status';
+import {
+  isLeadStatus,
+  leadStatusFor,
+  leadStatusesFor,
+  type LeadStatus,
+} from '@/lib/lead-status';
 import { TRIAL_STATUS, isTrialStatus } from '@/lib/trial-status';
 import {
   formatSchedule,
@@ -9,6 +14,7 @@ import {
   type ShiftRules,
 } from '@/lib/attendance';
 import { createRateLookup } from '@/lib/currency';
+import { zonedDayWindow } from '@/lib/period';
 import { distanceMeters, formatDistance } from '@/lib/geo';
 import { parseSaleAmount } from '@/lib/sale-amount';
 import { runDistribution } from '@/lib/lead-distribution';
@@ -39,6 +45,7 @@ import {
   bookingSellerButtons,
   qualityButtons,
   touchButtons,
+  STATUS_ICON,
   NO_ANSWER_TOUCHES,
   THINKING_TOUCHES,
   BOOKING_HOURS,
@@ -78,8 +85,6 @@ const KEYBOARD_ON = [
   ['📊 Мои показатели'],
 ];
 
-/** Какую пачку показываем: новых или тех, до кого не дозвонились. */
-type QueueMode = 'new' | 'no_answer';
 /** Геолокацию Telegram отдаёт только по нажатию этой кнопки — не автоматически. */
 const KEYBOARD_GEO: KeyboardButton[][] = [
   [{ text: '📍 Отправить геолокацию', request_location: true }],
@@ -249,8 +254,8 @@ async function handleMessage(message: TelegramMessage) {
   }
 
   if (text.includes('показатели')) return showStats(chatId, employee);
-  if (text.includes('Недозвон')) return listLeads(chatId, employee, 0, 'no_answer');
-  if (text.includes('Мои лиды')) return listLeads(chatId, employee);
+  if (text.includes('Недозвон')) return listLeads(chatId, employee, 'no_answer');
+  if (text.includes('Мои лиды')) return leadsMenu(chatId, employee);
 
   const open = await openShiftOf(employee.id);
   return sendMessage(
@@ -565,100 +570,248 @@ async function closeShift(chatId: number, employee: Employee) {
 // Лиды
 // -----------------------------------------------------------------------------
 
-const ACTIVE_STATUSES: LeadStatus[] = [
-  'new',
-  'no_answer',
-  'contacted',
-  'in_progress',
-  'thinking',
-];
+const ACTIVE_STATUSES: LeadStatus[] = ['new', 'no_answer', 'thinking'];
 
 /**
- * Очередь клиентов: по одному за раз.
+ * Периоды выборки. Кодируются одной буквой: в callback_data Telegram всего
+ * 64 байта, а туда же идут статус и место в списке.
+ */
+type LeadPeriod = 'a' | 't' | 'y' | 'w' | 'm';
+
+const PERIOD_LABEL: Record<LeadPeriod, string> = {
+  a: 'За всё время',
+  t: 'Сегодня',
+  y: 'Вчера',
+  w: '7 дней',
+  m: '30 дней',
+};
+
+function isLeadPeriod(value: string): value is LeadPeriod {
+  return value in PERIOD_LABEL;
+}
+
+/** Границы периода по времени компании. `a` — без границ. */
+function periodWindow(
+  period: LeadPeriod,
+  timeZone: string,
+): { startsAt: string; endsBefore: string } | null {
+  if (period === 'a') return null;
+
+  const today = localDate(timeZone);
+  const shift = (days: number) => {
+    const date = new Date(`${today}T00:00:00Z`);
+    date.setUTCDate(date.getUTCDate() + days);
+    return date.toISOString().slice(0, 10);
+  };
+
+  if (period === 't') return zonedDayWindow(today, today, timeZone);
+  if (period === 'y') return zonedDayWindow(shift(-1), shift(-1), timeZone);
+  if (period === 'w') return zonedDayWindow(shift(-6), today, timeZone);
+  return zonedDayWindow(shift(-29), today, timeZone);
+}
+
+/** «3 сентября» по времени компании — дата заявки в заголовке карточки. */
+function leadDay(value: string, timeZone: string): string {
+  return new Date(value).toLocaleDateString('ru-RU', {
+    timeZone,
+    day: 'numeric',
+    month: 'long',
+  });
+}
+
+/**
+ * Все свои заявки сотрудника за период — по ним считаем сводку.
  *
- * Раньше бот вываливал в чат все заявки подряд — работать с этим невозможно,
- * менеджер тонет в ленте и теряет место. Теперь один клиент — одна карточка,
- * а дальше кнопка «Следующий». Порядок — по обещаниям: сначала тот, кому
- * обещали перезвонить раньше всех.
+ * Заявка не исчезает после отметки: менеджер обещал вернуться вечером и
+ * должен уметь найти этого человека днём. Раньше бот показывал только новых и
+ * недозвоны, а «думает» проваливался в никуда — оставалось ждать напоминания.
+ */
+async function ownLeads(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  employee: Employee,
+  period: LeadPeriod,
+  timeZone: string,
+) {
+  let query = supabase
+    .from('leads')
+    .select('id, status')
+    .eq('company_id', employee.company_id)
+    .eq('assigned_to', employee.id);
+
+  const window = periodWindow(period, timeZone);
+  if (window) {
+    query = query.gte('created_at', window.startsAt).lt('created_at', window.endsBefore);
+  }
+
+  const { data } = await query.limit(1000);
+  return data ?? [];
+}
+
+/**
+ * Сводка «Мои лиды»: сколько в каком статусе и кнопка на каждый.
+ *
+ * Отсюда менеджер попадает в любую пачку — и в новых, и в тех, кому обещал
+ * перезвонить. Ниже — выбор периода: заявку ищут по дате не реже, чем по
+ * статусу.
+ */
+async function leadsMenu(
+  chatId: number,
+  employee: Employee,
+  period: LeadPeriod = 'a',
+) {
+  const supabase = createAdminSupabase();
+  const company = await companyOf(employee.company_id);
+
+  if (!(await allowedOnShift(chatId, employee, company))) return;
+
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
+  const leads = await ownLeads(supabase, employee, period, timeZone);
+
+  const counts = new Map<string, number>();
+  for (const lead of leads) counts.set(lead.status, (counts.get(lead.status) ?? 0) + 1);
+
+  const statuses = leadStatusesFor(
+    company?.funnel_type === 'direct' ? 'direct' : 'trial',
+  ).filter((status) => (counts.get(status) ?? 0) > 0);
+
+  if (statuses.length === 0) {
+    return sendMessage(
+      chatId,
+      `📋 <b>Мои клиенты</b> · ${PERIOD_LABEL[period].toLowerCase()}\n\nЗа этот период клиентов нет.`,
+      { inline: periodButtons(period) },
+    );
+  }
+
+  const lines = statuses.map((status) => {
+    const label = leadStatusFor(status, company?.trial_term).label;
+    return `${STATUS_ICON[status]} ${label} — <b>${counts.get(status)}</b>`;
+  });
+
+  const rows: InlineButton[][] = [];
+  for (let index = 0; index < statuses.length; index += 2) {
+    rows.push(
+      statuses.slice(index, index + 2).map((status) => ({
+        text: `${STATUS_ICON[status]} ${leadStatusFor(status, company?.trial_term).label} ${counts.get(status)}`,
+        callback_data: `lq:${status}:${period}:0`,
+      })),
+    );
+  }
+
+  return sendMessage(
+    chatId,
+    `📋 <b>Мои клиенты</b> · ${PERIOD_LABEL[period].toLowerCase()}\n\n${lines.join('\n')}\n\nВсего: <b>${leads.length}</b>`,
+    { inline: [...rows, ...periodButtons(period)] },
+  );
+}
+
+/** Выбор периода. Текущий помечен галочкой, чтобы было видно, что открыто. */
+function periodButtons(current: LeadPeriod): InlineButton[][] {
+  const order: LeadPeriod[] = ['t', 'y', 'w', 'm', 'a'];
+  const buttons = order.map((period) => ({
+    text: `${period === current ? '✅ ' : '📅 '}${PERIOD_LABEL[period]}`,
+    callback_data: `lm:${period}`,
+  }));
+  return [buttons.slice(0, 3), buttons.slice(3)];
+}
+
+/**
+ * Клиенты одной пачки — по одному за раз.
+ *
+ * Раньше бот вываливал в чат все заявки подряд: работать с этим невозможно,
+ * менеджер тонет в ленте и теряет место. Один клиент — одна карточка, дальше
+ * кнопка «Следующий». Порядок — от свежих к старым: последняя заявка нужна
+ * чаще всего.
  */
 async function listLeads(
   chatId: number,
   employee: Employee,
+  status: LeadStatus,
+  period: LeadPeriod = 'a',
   offset = 0,
-  mode: QueueMode = 'new',
 ) {
   const supabase = createAdminSupabase();
-
-  // Заявки — рабочая информация, и выдаются они только на смене. Иначе бот
-  // отдаёт номера человеку, который не работает, и никто не знает, звонит он
-  // или нет.
   const company = await companyOf(employee.company_id);
-  const needsShift = company
-    ? resolveShiftRules(employee, company).mode !== 'always'
-    : true;
 
-  if (needsShift && !(await openShiftOf(employee.id))) {
-    return sendMessage(
-      chatId,
-      'Сначала откройте смену — кнопка «Я на смене» ниже.\nЗаявки выдаются только тем, кто на работе.',
-      { keyboard: KEYBOARD_OFF },
-    );
-  }
+  if (!(await allowedOnShift(chatId, employee, company))) return;
 
-  // Обработанный клиент в очередь не возвращается: менеджер идёт по списку
-  // один раз и не встречает одних и тех же людей по кругу. Недозвоны лежат
-  // отдельной пачкой — к ним возвращаются, когда основная очередь пуста.
-  const statuses = mode === 'new' ? (['new'] as const) : (['no_answer'] as const);
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
 
-  const { data: leads, count } = await supabase
+  let query = supabase
     .from('leads')
-    .select('id, name, phone, source, platform, status, creative_id', { count: 'exact' })
+    .select('id, name, phone, source, platform, status, creative_id, created_at', {
+      count: 'exact',
+    })
     .eq('company_id', employee.company_id)
     .eq('assigned_to', employee.id)
-    .in('status', statuses)
-    .order('created_at', { ascending: true })
+    .eq('status', status);
+
+  const window = periodWindow(period, timeZone);
+  if (window) {
+    query = query.gte('created_at', window.startsAt).lt('created_at', window.endsBefore);
+  }
+
+  const { data: leads, count } = await query
+    .order('created_at', { ascending: false })
     .range(offset, offset);
 
   const total = count ?? 0;
-
-  if (total === 0) {
-    const empty =
-      mode === 'new'
-        ? 'Новых клиентов нет. Как появятся — пришлю сюда.\nНедозвоны — кнопка «📵 Недозвон».'
-        : 'Недозвонов нет.';
-    return sendMessage(chatId, empty, { keyboard: KEYBOARD_ON });
-  }
-
   const lead = leads?.[0];
+
   if (!lead) {
-    return sendMessage(chatId, 'Это был последний клиент в очереди.', {
-      keyboard: KEYBOARD_ON,
+    const empty =
+      status === 'new'
+        ? 'Новых клиентов нет. Как появятся — пришлю сюда.'
+        : 'Здесь больше никого нет.';
+    return sendMessage(chatId, empty, {
+      inline: [[{ text: '↩️ Все мои клиенты', callback_data: `lm:${period}` }]],
     });
   }
 
   const funnelType = company?.funnel_type === 'direct' ? 'direct' : 'trial';
   const creativeName = await shortCreativeLabel(supabase, employee.company_id, lead.creative_id);
+  const label = leadStatusFor(lead.status, company?.trial_term).label;
 
   const header =
-    mode === 'new'
-      ? `👤 <b>Клиент ${offset + 1} из ${total}</b>`
-      : `📵 <b>Недозвон ${offset + 1} из ${total}</b>`;
+    `${STATUS_ICON[lead.status as LeadStatus] ?? '👤'} <b>${escapeHtml(label)} — ${offset + 1} из ${total}</b>\n` +
+    `📅 заявка от ${leadDay(lead.created_at, timeZone)}`;
 
-  const next: InlineButton[][] =
-    offset + 1 < total
-      ? [[{ text: '➡️ Следующий клиент', callback_data: `nx:${offset + 1}:${mode}` }]]
-      : [];
+  const footer: InlineButton[] = [];
+  if (offset + 1 < total) {
+    footer.push({ text: '➡️ Следующий', callback_data: `lq:${status}:${period}:${offset + 1}` });
+  }
+  footer.push({ text: '↩️ К списку', callback_data: `lm:${period}` });
 
   return sendMessage(
     chatId,
     leadCard({ ...lead, creativeLabel: creativeName }, header, company?.trial_term),
     {
-      inline: [
-        ...statusButtons(lead.id, funnelType, company?.trial_term),
-        ...next,
-      ],
+      inline: [...statusButtons(lead.id, funnelType, company?.trial_term), footer],
     },
   );
+}
+
+/**
+ * Заявки — рабочая информация, и выдаются они только на смене. Иначе бот
+ * отдаёт номера человеку, который не работает, и никто не знает, звонит он
+ * или нет.
+ */
+async function allowedOnShift(
+  chatId: number,
+  employee: Employee,
+  company: CompanyRow | null,
+): Promise<boolean> {
+  const needsShift = company
+    ? resolveShiftRules(employee, company).mode !== 'always'
+    : true;
+
+  if (!needsShift || (await openShiftOf(employee.id))) return true;
+
+  await sendMessage(
+    chatId,
+    'Сначала откройте смену — кнопка «Я на смене» ниже.\nЗаявки выдаются только тем, кто на работе.',
+    { keyboard: KEYBOARD_OFF },
+  );
+  return false;
 }
 
 /**
@@ -707,14 +860,25 @@ async function handleCallback(query: TelegramCallbackQuery) {
   const employee = await findEmployee(userId);
   if (!employee) return answerCallback(query.id, 'Вы не подключены к платформе.');
 
-  const [kind, leadId, value] = (query.data ?? '').split(':');
+  const parts = (query.data ?? '').split(':');
+  const [kind, leadId, value] = parts;
   if (!leadId) return answerCallback(query.id);
 
-  // «Следующий клиент»: во втором поле не лид, а место в очереди, третьего нет.
-  if (kind === 'nx') {
+  // Просмотр своих заявок: во втором поле не лид, а статус или период.
+  if (kind === 'lm') {
     await answerCallback(query.id);
-    const mode: QueueMode = value === 'no_answer' ? 'no_answer' : 'new';
-    return listLeads(chatId, employee, Number(leadId) || 0, mode);
+    return leadsMenu(chatId, employee, isLeadPeriod(leadId) ? leadId : 'a');
+  }
+
+  if (kind === 'lq') {
+    await answerCallback(query.id);
+    return listLeads(
+      chatId,
+      employee,
+      isLeadStatus(leadId) ? leadId : 'new',
+      isLeadPeriod(value ?? '') ? (value as LeadPeriod) : 'a',
+      Number(parts[3]) || 0,
+    );
   }
 
   if (!value) return answerCallback(query.id);
@@ -944,7 +1108,7 @@ async function applyStatus(
   }
 
   await sendMessage(chatId, `✅ <b>${name}</b> → ${label}`);
-  return listLeads(chatId, employee);
+  return listLeads(chatId, employee, 'new');
 }
 
 /**
@@ -978,7 +1142,7 @@ async function applyTouch(
         ? `<b>${name}</b> — без напоминания. Найдёте его в «📵 Недозвон».`
         : `<b>${name}</b> — без напоминания.`,
     );
-    return own ? listLeads(chatId, employee) : undefined;
+    return own ? listLeads(chatId, employee, 'new') : undefined;
   }
 
   if (!isTouchPreset(preset)) return answerCallback(query.id, 'Неизвестный срок.');
@@ -999,9 +1163,9 @@ async function applyTouch(
   await answerCallback(query.id, touchPreset(preset).label);
   await sendMessage(chatId, `⏰ <b>${name}</b> — напомню ${untilLabel(remindAt)}.`);
 
-  // Очередь «Мои лиды» — работа менеджера. Продажнику после урока показывать
+  // Очередь новых — работа менеджера. Продажнику после урока показывать
   // чужую пачку незачем: у него свой список занятий.
-  return own ? listLeads(chatId, employee) : undefined;
+  return own ? listLeads(chatId, employee, 'new') : undefined;
 }
 
 /**
@@ -1422,7 +1586,7 @@ async function pickSeller(
     `✅ Урок записан: ${formatTrialTime(startsAt, timeZone)}, проводит ${escapeHtml(seller.fullName)}.\n${note}`,
   );
 
-  return listLeads(chatId, employee);
+  return listLeads(chatId, employee, 'new');
 }
 
 type OwnLead = { id: string; name: string; status: string; touch_count: number };

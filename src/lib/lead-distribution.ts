@@ -40,13 +40,7 @@ import { leadCard, statusButtons } from '@/lib/telegram-lead-card';
 type Admin = SupabaseClient<Database>;
 
 /** Лид считается активным, пока он не куплен, не отказ и не на пробном. */
-const ACTIVE_STATUSES: LeadStatus[] = [
-  'new',
-  'no_answer',
-  'contacted',
-  'in_progress',
-  'thinking',
-];
+const ACTIVE_STATUSES: LeadStatus[] = ['new', 'no_answer', 'thinking'];
 
 export type DistributionResult = {
   assigned: number;

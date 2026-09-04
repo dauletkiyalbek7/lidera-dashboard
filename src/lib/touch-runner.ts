@@ -269,7 +269,7 @@ async function sendDueReminders(supabase: Admin): Promise<number> {
 // -----------------------------------------------------------------------------
 
 /** Статусы, при которых лид ещё в работе и напоминания уместны. */
-const OPEN_STATUSES = ['new', 'no_answer', 'contacted', 'in_progress', 'thinking'];
+const OPEN_STATUSES = ['new', 'no_answer', 'thinking'];
 
 // -----------------------------------------------------------------------------
 // Общее

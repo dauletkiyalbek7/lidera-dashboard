@@ -83,11 +83,9 @@ const MANAGER_STATUSES: Record<FunnelType, LeadStatus[]> = {
  * Значки статусов. Живут здесь, а не в справочнике статусов: в таблицах
  * кабинета значков нет, там роль подписи играет цвет.
  */
-const STATUS_ICON: Record<LeadStatus, string> = {
+export const STATUS_ICON: Record<LeadStatus, string> = {
   new: '🆕',
   no_answer: '📵',
-  contacted: '📞',
-  in_progress: '⏳',
   thinking: '🤔',
   trial: '🎓',
   sale: '💰',

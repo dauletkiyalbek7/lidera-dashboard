@@ -150,7 +150,7 @@ export async function fireEmployee(employeeId: string): Promise<TeamState> {
     .update({ assigned_to: null })
     .eq('company_id', company.id)
     .eq('assigned_to', target.id)
-    .in('status', ['new', 'no_answer', 'contacted', 'in_progress', 'thinking']);
+    .in('status', ['new', 'no_answer', 'thinking']);
 
   await supabase
     .from('lead_assignments')

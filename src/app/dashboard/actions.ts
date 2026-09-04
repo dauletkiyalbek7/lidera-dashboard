@@ -8,7 +8,7 @@ import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
 import { instantInZone } from '@/lib/lead-touches';
-import { TRIAL_STATUS_ORDER } from '@/lib/trial-status';
+import { TRIAL_STATUS_ORDER, leadStatusAfterTrial } from '@/lib/trial-status';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { createServerSupabase } from '@/lib/supabase/server';
 import {
@@ -411,14 +411,16 @@ export async function updateTrialStatus(
 
   if (error) return { error: 'Не удалось изменить статус.' };
 
-  // «Купил курс» — это и про лид: выручка, воронка и событие в Meta считаются
+  // Исход урока — это и про лид: выручка, воронка и событие в Meta считаются
   // по нему, а не по уроку. Раньше отметка оставалась только на уроке, и в
-  // разделе «Лиды» человек так и висел непроданным — ровно то же делает бот,
-  // двигая лид следом за исходом урока.
-  if (parsed.data.status === 'sale' && trial?.lead_id) {
+  // разделе «Лиды» человек так и висел записанным на занятие, которое прошло.
+  // Правило перехода одно на кабинет и на бота — иначе они разойдутся.
+  const nextLeadStatus = leadStatusAfterTrial(parsed.data.status);
+
+  if (nextLeadStatus && trial?.lead_id) {
     await supabase
       .from('leads')
-      .update({ status: 'sale' })
+      .update({ status: nextLeadStatus })
       .eq('id', trial.lead_id)
       .eq('company_id', company.id);
   }

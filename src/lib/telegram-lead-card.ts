@@ -137,20 +137,40 @@ export const THINKING_TOUCHES: TouchPresetKey[] = [
 ];
 
 /**
- * Кнопки продажника под карточкой пробного занятия.
- * Три исхода, которые он и отмечает по факту: провёл, не пришёл, купил.
+ * Кнопки продажника под карточкой урока — шаг первый: состоялся ли урок.
+ *
+ * Решение клиента здесь намеренно не спрашивается. Между уроком и оплатой
+ * обычно проходит день-два, и если свалить всё в один экран, продажник в
+ * момент урока жмёт «Купил» авансом, а потом никто не помнит, было это на
+ * самом деле или нет.
  */
 export function trialButtons(trialId: string): InlineButton[][] {
   return [
+    [{ text: '✅ Провёл урок', callback_data: `tr:${trialId}:completed` }],
     [
-      { text: '✅ Провёл', callback_data: `tr:${trialId}:completed` },
       { text: '📵 Не вышел на связь', callback_data: `tr:${trialId}:no_show` },
+      { text: '🔄 Отменён', callback_data: `tr:${trialId}:canceled` },
     ],
+  ];
+}
+
+/**
+ * Шаг второй: чем кончилось решение клиента.
+ *
+ * «Банк не одобрил» стоит отдельно от «Отказа» намеренно. Курс берут в
+ * рассрочку, и отказ банка — это не отказ человека: он хотел купить. В отчёте
+ * продажника это разные вещи, и одной кнопкой их путать нельзя.
+ */
+export function trialOutcomeButtons(trialId: string): InlineButton[][] {
+  return [
     [
       { text: '💰 Купил курс', callback_data: `tr:${trialId}:sale` },
-      { text: '🚫 Не одобрил', callback_data: `tr:${trialId}:rejected` },
+      { text: '🤔 Думает', callback_data: `tr:${trialId}:thinking` },
     ],
-    [{ text: '🔄 Отменён', callback_data: `tr:${trialId}:canceled` }],
+    [
+      { text: '🏦 Банк не одобрил', callback_data: `tr:${trialId}:bank_declined` },
+      { text: '🚫 Отказ', callback_data: `tr:${trialId}:rejected` },
+    ],
   ];
 }
 
@@ -179,34 +199,59 @@ export function escapeHtml(value: string): string {
  * говорит с клиентом, набирать дату ему нечем. Идентификатор урока короче
  * связки «лид + время», поэтому шаги ссылаются на него.
  */
-export function bookingDayButtons(trialId: string): InlineButton[][] {
-  return [
-    [
-      { text: 'Сегодня', callback_data: `bd:${trialId}:0` },
-      { text: 'Завтра', callback_data: `bd:${trialId}:1` },
-    ],
-    [
-      { text: 'Послезавтра', callback_data: `bd:${trialId}:2` },
-      { text: 'Через 3 дня', callback_data: `bd:${trialId}:3` },
-    ],
-  ];
+export function bookingDayButtons(trialId: string, timeZone: string): InlineButton[][] {
+  const buttons = [0, 1, 2, 3].map((offset) => ({
+    text: bookingDayLabel(offset, timeZone),
+    callback_data: `bd:${trialId}:${offset}`,
+  }));
+  return [buttons.slice(0, 2), buttons.slice(2)];
 }
 
-/** Часы урока: рабочий день школы с шагом в час. */
+/**
+ * «Завтра, 5 сент.» — с датой, а не одним словом: менеджер согласовывает день
+ * вслух с клиентом и должен видеть на кнопке ровно то число, которое называет.
+ */
+function bookingDayLabel(offset: number, timeZone: string): string {
+  const day = new Date(Date.now() + offset * 24 * 60 * 60 * 1000);
+  const date = day.toLocaleDateString('ru-RU', { timeZone, day: 'numeric', month: 'short' });
+
+  if (offset === 0) return `Сегодня, ${date}`;
+  if (offset === 1) return `Завтра, ${date}`;
+
+  const weekday = day.toLocaleDateString('ru-RU', { timeZone, weekday: 'short' });
+  return `${weekday}, ${date}`;
+}
+
+/** Часы урока: рабочий день школы с шагом в полчаса. */
 export const BOOKING_HOURS = [
-  '09:00', '10:00', '11:00', '12:00', '13:00', '14:00',
-  '15:00', '16:00', '17:00', '18:00', '19:00', '20:00',
+  '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+  '12:00', '12:30', '13:00', '13:30', '14:00', '14:30',
+  '15:00', '15:30', '16:00', '16:30', '17:00', '17:30',
+  '18:00', '18:30', '19:00', '19:30', '20:00', '20:30',
 ];
 
-export function bookingTimeButtons(trialId: string): InlineButton[][] {
-  const buttons = BOOKING_HOURS.map((time) => ({
+/**
+ * Время урока.
+ *
+ * `after` отсекает часы, которые на выбранный день уже прошли: предложить
+ * записать клиента на девять утра в четыре часа дня — верный способ получить
+ * урок, о котором никто не напомнит.
+ */
+export function bookingTimeButtons(
+  trialId: string,
+  options?: { after?: string },
+): InlineButton[][] {
+  const after = options?.after;
+  const slots = after ? BOOKING_HOURS.filter((time) => time > after) : BOOKING_HOURS;
+
+  const buttons = slots.map((time) => ({
     text: time,
     callback_data: `bt:${trialId}:${time.replace(':', '')}`,
   }));
 
   const rows: InlineButton[][] = [];
-  for (let index = 0; index < buttons.length; index += 3) {
-    rows.push(buttons.slice(index, index + 3));
+  for (let index = 0; index < buttons.length; index += 4) {
+    rows.push(buttons.slice(index, index + 4));
   }
   return rows;
 }

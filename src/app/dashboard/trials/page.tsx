@@ -51,6 +51,9 @@ export default async function TrialsPage({
   const held = trials.filter((trial) => wasHeld(trial.status)).length;
   const noShow = trials.filter((trial) => trial.status === 'no_show').length;
   const sold = trials.filter((trial) => trial.status === 'sale').length;
+  // Отказ банка по рассрочке считаем отдельно: клиент хотел купить, и в
+  // потери продажника это не идёт.
+  const bankDeclined = trials.filter((trial) => trial.status === 'bank_declined').length;
 
   return (
     <>
@@ -61,7 +64,7 @@ export default async function TrialsPage({
       />
 
       <PageBody>
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <StatTile label="Всего записей" value={formatNumber(trials.length)} />
           <StatTile
             label="Урок состоялся"
@@ -73,6 +76,11 @@ export default async function TrialsPage({
             label="Купили курс"
             value={formatNumber(sold)}
             hint={`Из проведённых: ${formatPercent(safeDivide(sold, held) * 100)}`}
+          />
+          <StatTile
+            label="Банк не одобрил"
+            value={formatNumber(bankDeclined)}
+            hint="Хотели в рассрочку — банк отказал"
           />
           <StatTile
             label="Не вышли на связь"

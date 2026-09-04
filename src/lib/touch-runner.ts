@@ -10,6 +10,7 @@ import {
   leadCard,
   statusButtons,
   trialButtons,
+  trialOutcomeButtons,
 } from '@/lib/telegram-lead-card';
 import { formatTrialTime, shortCreativeLabel } from '@/lib/trials';
 import type { FunnelType } from '@/lib/metrics';
@@ -240,8 +241,21 @@ async function sendDueReminders(supabase: Admin): Promise<number> {
       .filter((line) => line !== null)
       .join('\n');
 
+    // Обещание вернуться даёт и менеджер, и продажник после урока. Кнопки под
+    // напоминанием должны быть те, которые сотрудник вправе нажать: у хозяина
+    // заявки это статусы разговора, у продажника — исход его урока. Иначе
+    // напоминание приходит с кнопками, отвечающими «этот клиент не за вами».
+    const own = context.lead.assigned_to === touch.employee_id;
+    const trialId = own
+      ? null
+      : await trialOf(supabase, touch.company_id, touch.lead_id, touch.employee_id);
+
+    if (!own && !trialId) continue;
+
     await sendMessage(chatId, leadCard(context.lead, header, context.trialTerm), {
-      inline: statusButtons(touch.lead_id, context.funnelType, context.trialTerm),
+      inline: trialId
+        ? trialOutcomeButtons(trialId)
+        : statusButtons(touch.lead_id, context.funnelType, context.trialTerm),
     });
 
     sent += 1;
@@ -265,7 +279,7 @@ async function leadContext(supabase: Admin, companyId: string, leadId: string) {
   const [{ data: lead }, { data: company }] = await Promise.all([
     supabase
       .from('leads')
-      .select('id, name, phone, source, platform, status')
+      .select('id, name, phone, source, platform, status, assigned_to')
       .eq('id', leadId)
       .eq('company_id', companyId)
       .maybeSingle(),
@@ -286,6 +300,26 @@ async function leadContext(supabase: Admin, companyId: string, leadId: string) {
     // у Дарына «Вебинар». В напоминании подпись обязана совпадать с кнопкой.
     trialTerm: company?.trial_term,
   };
+}
+
+/** Урок этого клиента, закреплённый за этим сотрудником. */
+async function trialOf(
+  supabase: Admin,
+  companyId: string,
+  leadId: string,
+  employeeId: string,
+): Promise<string | null> {
+  const { data } = await supabase
+    .from('trials')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('lead_id', leadId)
+    .eq('assigned_to', employeeId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  return data?.id ?? null;
 }
 
 async function telegramOf(supabase: Admin, employeeId: string): Promise<number | null> {

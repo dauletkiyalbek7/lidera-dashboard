@@ -7,7 +7,7 @@ import { creativeLabel } from '@/lib/creative-label';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
 import { leadCard, trialButtons } from '@/lib/telegram-lead-card';
-import { wasHeld } from '@/lib/trial-status';
+import { trialStatusMeta, wasHeld } from '@/lib/trial-status';
 
 /**
  * Запись на пробное занятие.
@@ -30,14 +30,23 @@ export async function syncTrialForLead(
 ): Promise<{ createdId: string | null }> {
   if (input.status !== 'trial' && input.status !== 'sale') return { createdId: null };
 
+  // Уроков у клиента бывает несколько: не вышел на связь или отменил — его
+  // записывают заново. Берём последний, иначе запрос сломается на втором.
   const { data: existing } = await supabase
     .from('trials')
     .select('id, status')
     .eq('company_id', input.companyId)
     .eq('lead_id', input.leadId)
+    .order('created_at', { ascending: false })
+    .limit(1)
     .maybeSingle();
 
-  if (!existing && input.status === 'trial') {
+  // Прошлый урок закрыт — значит это новая попытка, и ей нужна своя запись:
+  // иначе «не вышел на связь» навсегда закрывал бы клиенту дорогу к уроку.
+  const needsRecord =
+    input.status === 'trial' && (!existing || trialStatusMeta(existing.status).closed);
+
+  if (needsRecord) {
     // Время урока согласовывает менеджер с клиентом, поэтому черновик
     // создаётся без него: в разделе «Пробные» он висит как «нужно назначить
     // время и продажника» — так запись не теряется и не выдумывается сама.

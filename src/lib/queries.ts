@@ -749,10 +749,12 @@ export async function getCreativeCards(
     if (lead.creative_id) bucket(lead.creative_id).crmLeads += 1;
   }
 
-  // Пробное занятие — середина воронки: между обращением и покупкой.
+  // Пробное занятие — середина воронки: между обращением и покупкой. Считаем
+  // по признаку «урок состоялся», а не по одному статусу: занятие, после
+  // которого клиент купил или отказался, тоже состоялось.
   for (const trial of ofDepartment(trials ?? [])) {
     const creativeId = trial.lead_id ? creativeOfLead.get(trial.lead_id) : null;
-    if (creativeId && trial.status === 'completed') bucket(creativeId).trials += 1;
+    if (creativeId && wasHeld(trial.status)) bucket(creativeId).trials += 1;
   }
 
   for (const sale of ofDepartment(sales ?? [])) {

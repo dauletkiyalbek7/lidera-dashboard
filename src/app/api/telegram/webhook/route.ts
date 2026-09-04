@@ -33,6 +33,7 @@ import { createAdminSupabase, isAdminConfigured } from '@/lib/supabase/admin';
 import {
   leadCard,
   statusButtons,
+  trialOutcomeButtons,
   bookingDayButtons,
   bookingTimeButtons,
   bookingSellerButtons,
@@ -730,10 +731,16 @@ async function handleCallback(query: TelegramCallbackQuery) {
 }
 
 /**
- * Исход пробного занятия, отмеченный продажником.
+ * Исход урока, отмеченный продажником.
  *
  * Продажник ведёт своё занятие, а не чужой лид, поэтому право проверяем по
- * записи на пробное: занятие должно быть закреплено именно за ним.
+ * записи на урок: занятие должно быть закреплено именно за ним.
+ *
+ * Отметка — не конец работы, а развилка, ровно как у менеджера. Урок проведён —
+ * спрашиваем, чем кончилось решение клиента. Клиент думает или банк не дал
+ * рассрочку — спрашиваем, когда вернуться: клиент остался в работе. Не вышел
+ * на связь — когда пробовать снова. Куда при этом переезжает сам лид, решает
+ * справочник статусов, а не эта функция: то же правило работает и в кабинете.
  */
 async function applyTrial(
   query: TelegramCallbackQuery,
@@ -754,27 +761,38 @@ async function applyTrial(
 
   if (!trial) return answerCallback(query.id, 'Это занятие не за вами.');
 
+  if (!isTrialStatus(outcome) || outcome === 'scheduled') {
+    return answerCallback(query.id, 'Неизвестный исход урока.');
+  }
+
+  const meta = TRIAL_STATUS[outcome];
+
   const { data: lead } = trial.lead_id
     ? await supabase.from('leads').select('name').eq('id', trial.lead_id).maybeSingle()
     : { data: null };
 
   const name = escapeHtml(lead?.name || 'Клиент');
 
-  if (!isTrialStatus(outcome) || outcome === 'scheduled') {
-    return answerCallback(query.id, 'Неизвестный исход урока.');
-  }
-
   await supabase.from('trials').update({ status: outcome }).eq('id', trial.id);
 
-  // Купил курс — двигаем и лид: продажа считается по нему, и от него же
-  // уходит событие в Meta.
-  if (outcome === 'sale' && trial.lead_id) {
+  // Лид идёт следом за уроком: выручка, воронка и событие в Meta считаются по
+  // нему. Иначе продажник отмечает урок в чате, а в разделе «Лиды» человек
+  // так и висит записанным на занятие, которое давно прошло.
+  if (meta.leadStatus && trial.lead_id) {
     await supabase
       .from('leads')
-      .update({ status: 'sale' })
+      .update({ status: meta.leadStatus })
       .eq('id', trial.lead_id)
       .eq('company_id', employee.company_id);
+  }
 
+  // Прежнее обещание больше не про этот статус: закрываем до того, как
+  // спросим новое, иначе придут два напоминания об одном клиенте.
+  if (trial.lead_id && meta.followUp !== 'outcome') {
+    await closeOpenTouches(supabase, trial.lead_id);
+  }
+
+  if (outcome === 'sale' && trial.lead_id) {
     // Сумму спрашиваем сразу: без неё продажа не попадёт ни в выручку, ни в
     // Meta, а возвращаться за ней потом никто не будет.
     await supabase
@@ -794,21 +812,35 @@ async function applyTrial(
     );
   }
 
-  // Не одобрил — урок отработан, покупки не будет: лид закрываем отказом,
-  // иначе он навсегда останется висеть на шаге «Пробный».
-  if (outcome === 'rejected' && trial.lead_id) {
-    await supabase
-      .from('leads')
-      .update({ status: 'rejected' })
-      .eq('id', trial.lead_id)
-      .eq('company_id', employee.company_id);
+  await answerCallback(query.id, meta.label);
 
-    await closeOpenTouches(supabase, trial.lead_id);
+  // Урок провели — решение клиента отдельным вопросом: между занятием и
+  // оплатой обычно проходит день-два.
+  if (meta.followUp === 'outcome') {
+    return sendMessage(
+      chatId,
+      `✅ Урок с <b>${name}</b> проведён.\nЧем закончилось?`,
+      { inline: trialOutcomeButtons(trial.id) },
+    );
   }
 
-  const label = TRIAL_STATUS[outcome].label;
-  await answerCallback(query.id, label);
-  return sendMessage(chatId, `✅ <b>${name}</b> — ${label.toLowerCase()}.`);
+  if (meta.followUp && trial.lead_id) {
+    const callback = meta.followUp === 'callback';
+    return sendMessage(
+      chatId,
+      `<b>${name}</b> — ${meta.label.toLowerCase()}.\n` +
+        (callback ? 'Когда попробовать снова?' : 'Когда вернуться к клиенту?'),
+      {
+        inline: touchButtons(
+          trial.lead_id,
+          callback ? NO_ANSWER_TOUCHES : THINKING_TOUCHES,
+          '🚫 Не напоминать',
+        ),
+      },
+    );
+  }
+
+  return sendMessage(chatId, `✅ <b>${name}</b> — ${meta.label.toLowerCase()}.`);
 }
 
 
@@ -897,7 +929,7 @@ async function applyStatus(
       return sendMessage(
         chatId,
         `🎓 <b>${name}</b> — записываем на урок.\nНа какой день?`,
-        { inline: bookingDayButtons(trialId) },
+        { inline: bookingDayButtons(trialId, company?.timezone ?? 'Asia/Almaty') },
       );
     }
   }
@@ -930,9 +962,10 @@ async function applyTouch(
   preset: string,
 ) {
   const supabase = createAdminSupabase();
-  const lead = await ownLead(employee, leadId);
-  if (!lead) return answerCallback(query.id, 'Этот клиент уже не за вами.');
+  const reach = await reachableLead(employee, leadId);
+  if (!reach) return answerCallback(query.id, 'Этот клиент уже не за вами.');
 
+  const { lead, own } = reach;
   const name = escapeHtml(lead.name || 'Клиент');
 
   // «Не напоминать» — не отказ клиента, а отказ от будильника. Лид остаётся
@@ -941,9 +974,11 @@ async function applyTouch(
     await answerCallback(query.id, 'Без напоминания');
     await sendMessage(
       chatId,
-      `<b>${name}</b> — без напоминания. Найдёте его в «📵 Недозвон».`,
+      own
+        ? `<b>${name}</b> — без напоминания. Найдёте его в «📵 Недозвон».`
+        : `<b>${name}</b> — без напоминания.`,
     );
-    return listLeads(chatId, employee);
+    return own ? listLeads(chatId, employee) : undefined;
   }
 
   if (!isTouchPreset(preset)) return answerCallback(query.id, 'Неизвестный срок.');
@@ -964,7 +999,9 @@ async function applyTouch(
   await answerCallback(query.id, touchPreset(preset).label);
   await sendMessage(chatId, `⏰ <b>${name}</b> — напомню ${untilLabel(remindAt)}.`);
 
-  return listLeads(chatId, employee);
+  // Очередь «Мои лиды» — работа менеджера. Продажнику после урока показывать
+  // чужую пачку незачем: у него свой список занятий.
+  return own ? listLeads(chatId, employee) : undefined;
 }
 
 /**
@@ -1212,8 +1249,21 @@ async function pickDay(
   const company = await companyOf(employee.company_id);
   const timeZone = company?.timezone ?? 'Asia/Almaty';
 
-  const day = new Date(Date.now() + (Number(offset) || 0) * 24 * 60 * 60 * 1000);
+  const offsetDays = Number(offset) || 0;
+  const day = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
   const date = localDate(timeZone, day);
+
+  // Сегодняшние часы, которые уже прошли, не предлагаем: урок в прошлом —
+  // это урок, о котором никто не напомнит.
+  const after = offsetDays === 0 ? nowInZone(timeZone) : undefined;
+  const times = bookingTimeButtons(trialId, { after });
+
+  if (times.length === 0) {
+    await answerCallback(query.id, 'На сегодня время вышло');
+    return sendMessage(chatId, '🌙 На сегодня свободных часов не осталось. Выберите другой день.', {
+      inline: bookingDayButtons(trialId, timeZone),
+    });
+  }
 
   const { error } = await supabase
     .from('trials')
@@ -1224,8 +1274,16 @@ async function pickDay(
   if (error) return answerCallback(query.id, 'Не удалось сохранить день.');
 
   await answerCallback(query.id, date);
-  return sendMessage(chatId, `📅 ${date}. Во сколько урок?`, {
-    inline: bookingTimeButtons(trialId),
+  return sendMessage(chatId, `📅 ${formatDay(date)}. Во сколько урок?`, { inline: times });
+}
+
+/** «17:30» по времени компании — чтобы отсечь часы, которые уже прошли. */
+function nowInZone(timeZone: string): string {
+  return new Date().toLocaleTimeString('ru-RU', {
+    timeZone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
   });
 }
 
@@ -1255,6 +1313,15 @@ async function pickTime(
 
   const startsAt = instantInZone(trial.date, time, timeZone);
   if (!startsAt) return answerCallback(query.id, 'Не удалось разобрать время.');
+
+  // Кнопки могли повисеть в чате, пока менеджер говорил с клиентом. Урок в
+  // прошлом принимать нельзя: напоминание о нём уже не придёт.
+  if (startsAt.getTime() <= Date.now()) {
+    await answerCallback(query.id, 'Это время уже прошло');
+    return sendMessage(chatId, '⏰ Это время уже прошло. Выберите день заново.', {
+      inline: bookingDayButtons(trialId, timeZone),
+    });
+  }
 
   await supabase
     .from('trials')
@@ -1371,6 +1438,44 @@ async function ownLead(employee: Employee, leadId: string): Promise<OwnLead | nu
     .eq('assigned_to', employee.id)
     .maybeSingle();
   return data ?? null;
+}
+
+/**
+ * Клиент, с которым сотруднику можно работать.
+ *
+ * У менеджера это его заявка. У продажника заявка чужая — она закреплена за
+ * менеджером, который её дозвонил, — но урок ведёт он, и обещание «вернусь к
+ * нему в четверг» после урока даёт тоже он. Тот же круг доступа описан
+ * правилом чтения заявок в самой базе, здесь оно повторено для бота: у него
+ * пользовательской сессии нет, он ходит сервисным ключом.
+ */
+async function reachableLead(
+  employee: Employee,
+  leadId: string,
+): Promise<{ lead: OwnLead; own: boolean } | null> {
+  const own = await ownLead(employee, leadId);
+  if (own) return { lead: own, own: true };
+
+  const supabase = createAdminSupabase();
+
+  const { data: trial } = await supabase
+    .from('trials')
+    .select('id')
+    .eq('company_id', employee.company_id)
+    .eq('lead_id', leadId)
+    .eq('assigned_to', employee.id)
+    .maybeSingle();
+
+  if (!trial) return null;
+
+  const { data } = await supabase
+    .from('leads')
+    .select('id, name, status, touch_count')
+    .eq('id', leadId)
+    .eq('company_id', employee.company_id)
+    .maybeSingle();
+
+  return data ? { lead: data, own: false } : null;
 }
 
 // -----------------------------------------------------------------------------

@@ -1058,6 +1058,11 @@ async function saveSaleAmount(chatId: number, employee: Employee, text: string) 
       amount: converted.amount,
       status: 'paid',
       sale_date: saleDate,
+      // Продавец записывается в саму продажу и дальше не меняется: заявку
+      // могут передать другому, а карточку — удалить, но выручка обязана
+      // остаться за тем, кто её сделал.
+      seller_id: employee.id,
+      seller_name: employee.full_name,
     })
     .select('id')
     .maybeSingle();

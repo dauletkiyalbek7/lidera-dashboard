@@ -106,10 +106,10 @@ async function assignedLeads(
 /**
  * Деньги сотрудника за период.
  *
- * У продажи нет своего продавца — она привязана к клиенту, а клиент к
- * сотруднику. Поэтому берём чеки компании за период и оставляем те, чей
- * клиент закреплён за ним. Двух запросов достаточно: чеков за неделю у одного
- * отдела десятки, а не тысячи.
+ * Продавец записан в самой продаже — по нему и считаем. Старые продажи, в
+ * которых его нет, добираем прежним способом: через клиента, за кем он
+ * закреплён. Двух запросов достаточно: чеков за неделю у одного отдела
+ * десятки, а не тысячи.
  */
 async function ownSales(
   supabase: Admin,
@@ -119,26 +119,37 @@ async function ownSales(
 ): Promise<{ count: number; total: number }> {
   const { data: sales } = await supabase
     .from('sales')
-    .select('amount, lead_id')
+    .select('amount, lead_id, seller_id')
     .eq('company_id', input.companyId)
     .eq('status', 'paid')
     .gte('sale_date', from)
     .lte('sale_date', to);
 
-  const leadIds = [...new Set((sales ?? []).map((sale) => sale.lead_id).filter(isId))];
-  if (leadIds.length === 0) return { count: 0, total: 0 };
+  const rows = sales ?? [];
+  if (rows.length === 0) return { count: 0, total: 0 };
 
-  const { data: mine } = await supabase
-    .from('leads')
-    .select('id')
-    .eq('company_id', input.companyId)
-    .eq('assigned_to', input.employeeId)
-    .in('id', leadIds);
+  const mineBySeller = rows.filter((sale) => sale.seller_id === input.employeeId);
 
-  const own = new Set((mine ?? []).map((lead) => lead.id));
-  const counted = (sales ?? []).filter(
-    (sale) => sale.lead_id !== null && own.has(sale.lead_id),
-  );
+  // Продажи без продавца — те, что записаны до появления этого поля.
+  const legacy = rows.filter((sale) => sale.seller_id === null);
+  const leadIds = [...new Set(legacy.map((sale) => sale.lead_id).filter(isId))];
+
+  const own = new Set<string>();
+  if (leadIds.length > 0) {
+    const { data: mine } = await supabase
+      .from('leads')
+      .select('id')
+      .eq('company_id', input.companyId)
+      .eq('assigned_to', input.employeeId)
+      .in('id', leadIds);
+
+    for (const lead of mine ?? []) own.add(lead.id);
+  }
+
+  const counted = [
+    ...mineBySeller,
+    ...legacy.filter((sale) => sale.lead_id !== null && own.has(sale.lead_id)),
+  ];
 
   return {
     count: counted.length,

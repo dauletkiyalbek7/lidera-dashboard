@@ -475,6 +475,10 @@ export type SaleRow = Timestamps & {
   amount: number;
   status: SaleStatus;
   sale_date: string;
+  /** Кто закрыл продажу. Обнуляется вместе с карточкой сотрудника… */
+  seller_id: string | null;
+  /** …а имя остаётся: отчёт за прошлый год не должен обезличиваться. */
+  seller_name: string | null;
 }
 
 /**

@@ -1711,7 +1711,7 @@ export async function getTeam(
     ),
     supabase
       .from('sales')
-      .select('amount, lead_id')
+      .select('amount, lead_id, seller_id')
       .eq('company_id', companyId)
       .eq('status', 'paid')
       .gte('sale_date', from)
@@ -1727,8 +1727,8 @@ export async function getTeam(
     (openShifts ?? []).map((shift) => [shift.employee_id, shift.started_at]),
   );
 
-  // Продажа привязана к лиду, а лид — к сотруднику: выручка идёт тому,
-  // кто вёл клиента, даже если продажу занесли позже.
+  // Выручка идёт тому, кто записан продавцом в самой продаже. Старые продажи,
+  // где его нет, считаем по-прежнему — через клиента.
   const leadOwner = new Map(leadRows.map((lead) => [lead.id, lead.assigned_to]));
 
   const stats = new Map<string, TeamStats>();
@@ -1750,7 +1750,8 @@ export async function getTeam(
   }
 
   for (const sale of sales ?? []) {
-    const ownerId = sale.lead_id ? leadOwner.get(sale.lead_id) : null;
+    const ownerId =
+      sale.seller_id ?? (sale.lead_id ? leadOwner.get(sale.lead_id) : null);
     if (ownerId) bucket(ownerId).revenue += Number(sale.amount);
   }
 

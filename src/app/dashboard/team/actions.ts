@@ -72,6 +72,9 @@ export async function createEmployee(
  * Увольнение мягкое: строка остаётся, лиды и продажи прошлых периодов
  * продолжают считаться за этим человеком. Открытые лиды освобождаются —
  * иначе они зависнут на том, кто уже не работает.
+ *
+ * Закрытые заявки — пробные, продажи, отказы — не трогаем совсем: это его
+ * работа, и в отчёте за прошлый месяц она обязана остаться за ним.
  */
 export async function fireEmployee(employeeId: string): Promise<TeamState> {
   const { company, readOnly } = await requireCompanySession();
@@ -90,9 +93,12 @@ export async function fireEmployee(employeeId: string): Promise<TeamState> {
 
   if (error) return { error: 'Не удалось уволить сотрудника.' };
 
+  // Дату выдачи оставляем как есть: заявка уже была посчитана в тот день,
+  // когда пришла, и новому менеджеру она достаётся как переданная, а не как
+  // сегодняшняя. Иначе один и тот же клиент попал бы в отчёты дважды.
   await supabase
     .from('leads')
-    .update({ assigned_to: null, assigned_at: null })
+    .update({ assigned_to: null })
     .eq('company_id', company.id)
     .eq('assigned_to', parsed.data)
     .in('status', ['new', 'no_answer', 'contacted', 'in_progress', 'thinking']);

@@ -203,6 +203,11 @@ export async function registerSale(
   const supabase = await createServerSupabase();
   const leadId = parsed.data.leadId || null;
 
+  // Продавца записываем в саму продажу — того, за кем клиент числится сейчас.
+  // Дальше он не меняется: передадут заявку другому или удалят карточку, а
+  // выручка останется за тем, кто её сделал.
+  const seller = leadId ? await sellerOfLead(supabase, company.id, leadId) : null;
+
   const { error } = await supabase
     .from('sales')
     .insert({
@@ -212,6 +217,8 @@ export async function registerSale(
       amount: parsed.data.amount,
       sale_date: parsed.data.saleDate,
       status: parsed.data.status,
+      seller_id: seller?.id ?? null,
+      seller_name: seller?.name ?? null,
     })
     .select('id')
     .maybeSingle();
@@ -436,4 +443,35 @@ function allowsStatus(funnelType: string, status: LeadStatus): boolean {
 function emptyToUndefined(value: FormDataEntryValue | null): string | undefined {
   const text = typeof value === 'string' ? value.trim() : '';
   return text === '' ? undefined : text;
+}
+
+/**
+ * Кто ведёт этого клиента — на момент продажи.
+ *
+ * Спрашиваем один раз и кладём в продажу снимком: связь «продажа → клиент →
+ * сотрудник» живёт ровно до первой передачи заявки, а отчёт по выручке
+ * человека обязан пережить и передачу, и увольнение.
+ */
+async function sellerOfLead(
+  supabase: Awaited<ReturnType<typeof createServerSupabase>>,
+  companyId: string,
+  leadId: string,
+): Promise<{ id: string; name: string } | null> {
+  const { data: lead } = await supabase
+    .from('leads')
+    .select('assigned_to')
+    .eq('company_id', companyId)
+    .eq('id', leadId)
+    .maybeSingle();
+
+  if (!lead?.assigned_to) return null;
+
+  const { data: employee } = await supabase
+    .from('employees')
+    .select('id, full_name')
+    .eq('company_id', companyId)
+    .eq('id', lead.assigned_to)
+    .maybeSingle();
+
+  return employee ? { id: employee.id, name: employee.full_name } : null;
 }

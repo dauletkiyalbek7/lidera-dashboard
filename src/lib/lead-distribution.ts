@@ -222,7 +222,7 @@ function startOfToday(timeZone: string): string {
 async function distributeQueue(supabase: Admin, company: CompanySettings) {
   const { data: queue } = await supabase
     .from('leads')
-    .select('id, name, phone, source, platform, status, creative_id, touch_count')
+    .select('id, name, phone, source, platform, status, creative_id, touch_count, assigned_at')
     .eq('company_id', company.id)
     .is('assigned_to', null)
     .in('status', ACTIVE_STATUSES)
@@ -337,6 +337,8 @@ async function assignTo(
     status: string;
     creativeLabel: string | null;
     touch_count?: number;
+    /** Когда заявку выдали в первый раз, если это уже не первая выдача. */
+    assigned_at?: string | null;
   },
   manager: Candidate,
   reason: 'auto' | 'manual',
@@ -345,12 +347,18 @@ async function assignTo(
 ): Promise<boolean> {
   const now = new Date().toISOString();
 
+  // Дата выдачи — это «когда заявка впервые попала в работу», и при передаче
+  // она не обновляется. Иначе заявка, освободившаяся после увольнения, ушла
+  // бы новому менеджеру как сегодняшняя и вторично попала в его отчёт, хотя
+  // посчитана она была ещё в тот день, когда пришла.
+  const assignedAt = lead.assigned_at ?? now;
+
   // Условие assigned_to is null защищает от гонки: если лид успели забрать
   // параллельным запуском, обновление просто ничего не затронет — один номер
   // физически не может достаться двум менеджерам.
   const { data: updated } = await supabase
     .from('leads')
-    .update({ assigned_to: manager.id, assigned_at: now })
+    .update({ assigned_to: manager.id, assigned_at: assignedAt })
     .eq('id', lead.id)
     .eq('company_id', company.id)
     .is('assigned_to', null)
@@ -358,6 +366,8 @@ async function assignTo(
 
   if (!updated || updated.length === 0) return false;
 
+  // В журнале передач — настоящее время события: он и отвечает на вопрос
+  // «когда именно заявка перешла к этому человеку».
   await supabase.from('lead_assignments').insert({
     company_id: company.id,
     lead_id: lead.id,

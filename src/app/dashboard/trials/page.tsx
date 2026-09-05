@@ -181,6 +181,9 @@ export default async function TrialsPage({
                 <tr key={trial.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
                     {trial.leadName ?? 'Без имени'}
+                    <span className="mt-1 block text-[12.5px] font-normal lg:hidden">
+                      <PhoneCell phone={trial.leadPhone} />
+                    </span>
                   </Td>
                   <Td showFrom="lg" className="tabular text-ink-soft">
                     <PhoneCell phone={trial.leadPhone} />
@@ -229,6 +232,10 @@ export default async function TrialsPage({
                 <tr key={trial.id} className="transition-colors hover:bg-surface-2/60">
                   <Td first className="font-medium text-ink">
                     {trial.leadName ?? 'Без имени'}
+                    {/* На телефоне номер прячется в колонке — выносим под имя. */}
+                    <span className="mt-1 block text-[12.5px] font-normal lg:hidden">
+                      <PhoneCell phone={trial.leadPhone} />
+                    </span>
                   </Td>
                   <Td showFrom="lg" className="tabular text-ink-soft">
                     <PhoneCell phone={trial.leadPhone} />

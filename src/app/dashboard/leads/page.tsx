@@ -258,6 +258,15 @@ export default async function LeadsPage({
                         className="font-medium text-ink"
                       >
                         {lead.name || 'Без имени'}
+                        {/*
+                          На телефоне колонка с номером не помещается, а звонить
+                          и писать менеджер будет именно с телефона. Поэтому там
+                          номер идёт второй строкой под именем — и сразу ссылкой
+                          в WhatsApp, а не текстом, который надо копировать.
+                        */}
+                        <span className="mt-1 block text-[12.5px] font-normal lg:hidden">
+                          <PhoneCell phone={lead.phone} />
+                        </span>
                       </Td>
                       <Td showFrom="lg" className="tabular text-ink-soft">
                         <PhoneCell phone={lead.phone} />

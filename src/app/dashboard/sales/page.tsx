@@ -151,6 +151,9 @@ export default async function SalesPage({
                     className="font-medium text-ink"
                   >
                     {sale.leadName ?? 'Без привязки'}
+                    <span className="tabular mt-1 block text-[12.5px] font-normal text-ink-soft lg:hidden">
+                      {sale.leadPhone ?? '—'}
+                    </span>
                   </Td>
                   <Td showFrom="lg" className="tabular text-ink-soft">
                     {sale.leadPhone ?? '—'}

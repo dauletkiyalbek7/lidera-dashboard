@@ -29,12 +29,20 @@ export const metadata: Metadata = { title: 'Продажи' };
  * Колонка с роликом — то, ради чего вся платформа и строилась: здесь видно не
  * «продали на столько-то», а «эта реклама принесла этого покупателя».
  */
-function columnsFor(own: boolean, canEdit: boolean): TableColumn[] {
+function columnsFor(
+  own: boolean,
+  canEdit: boolean,
+  showDepartment: boolean,
+): TableColumn[] {
   return [
     { key: 'lead', label: 'Клиент' },
     { key: 'phone', label: 'Телефон', showFrom: 'lg' },
     { key: 'creative', label: 'Пришёл с ролика', showFrom: 'lg' },
-    { key: 'department', label: 'Отдел', showFrom: 'xl' },
+    // Отдел появляется вместе с отделами продаж: пока он один, колонка стояла
+    // бы пустой.
+    ...(showDepartment
+      ? [{ key: 'department', label: 'Отдел', showFrom: 'xl' as const }]
+      : []),
     // Кто закрыл — первый вопрос руководителя к списку продаж. Себе человек
     // эту колонку не показывает: там всюду стояло бы его собственное имя.
     ...(own ? [] : [{ key: 'seller', label: 'Продавец', showFrom: 'md' as const }]),
@@ -91,6 +99,7 @@ export default async function SalesPage({
   ]);
 
   const activeDepartments = departments.filter((row) => row.status === 'active');
+  const showDepartment = activeDepartments.length > 0;
 
   // Подпись лида в выпадающем списке: по имени и телефону его легко узнать.
   const leadOptions = leadPage.items.map((lead) => ({
@@ -141,7 +150,10 @@ export default async function SalesPage({
               />
             </div>
           ) : (
-            <TableShell columns={columnsFor(own, canEdit)} minWidth={TABLE_MIN_WIDTH}>
+            <TableShell
+              columns={columnsFor(own, canEdit, showDepartment)}
+              minWidth={TABLE_MIN_WIDTH}
+            >
               {sales.map((sale) => (
                 <tr key={sale.id} className="transition-colors hover:bg-surface-2/60">
                   <Td
@@ -175,9 +187,11 @@ export default async function SalesPage({
                       '—'
                     )}
                   </Td>
-                  <Td showFrom="xl" className="text-ink-soft">
-                    {sale.departmentName ?? '—'}
-                  </Td>
+                  {showDepartment ? (
+                    <Td showFrom="xl" className="text-ink-soft">
+                      {sale.departmentName ?? '—'}
+                    </Td>
+                  ) : null}
                   {own ? null : (
                     <Td showFrom="md" truncate="sm" className="text-ink-soft">
                       {sale.sellerName ?? '—'}

@@ -12,19 +12,24 @@ import { requireFullAccess } from '@/lib/auth';
 import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
 import { safeDivide } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
-import { getFunnelChannels } from '@/lib/queries';
+import { getDepartments, getFunnelChannels } from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Воронки' };
 
-const COLUMNS: TableColumn[] = [
-  { key: 'name', label: 'Канал' },
-  { key: 'kind', label: 'Тип', showFrom: 'md' },
-  { key: 'detail', label: 'Номер или площадка', showFrom: 'lg' },
-  { key: 'department', label: 'Отдел', showFrom: 'xl' },
-  { key: 'last', label: 'Последняя заявка', showFrom: 'lg' },
-  { key: 'ads', label: 'С рекламы', align: 'right' as const, showFrom: 'md' },
-  { key: 'leads', label: 'Заявок', align: 'right' as const },
-];
+/** Отдел показываем, только когда отделы продаж вообще заведены. */
+function columnsFor(showDepartment: boolean): TableColumn[] {
+  return [
+    { key: 'name', label: 'Канал' },
+    { key: 'kind', label: 'Тип', showFrom: 'md' },
+    { key: 'detail', label: 'Номер или площадка', showFrom: 'lg' },
+    ...(showDepartment
+      ? [{ key: 'department', label: 'Отдел', showFrom: 'xl' as const }]
+      : []),
+    { key: 'last', label: 'Последняя заявка', showFrom: 'lg' },
+    { key: 'ads', label: 'С рекламы', align: 'right' as const, showFrom: 'md' },
+    { key: 'leads', label: 'Заявок', align: 'right' as const },
+  ];
+}
 
 const TABLE_MIN_WIDTH = { base: 380, md: 720, lg: 1040, xl: 1200 };
 
@@ -42,12 +47,12 @@ export default async function FunnelsPage({
 }) {
   const { company } = await requireFullAccess();
   const range = await currentRange(await searchParams, company.timezone);
-  const channels = await getFunnelChannels(
-    company.id,
-    range.from,
-    range.to,
-    company.timezone,
-  );
+  const [channels, departments] = await Promise.all([
+    getFunnelChannels(company.id, range.from, range.to, company.timezone),
+    getDepartments(company.id),
+  ]);
+
+  const showDepartment = departments.some((row) => row.status === 'active');
 
   const total = channels.reduce((sum, row) => sum + row.leads, 0);
   const fromAds = channels.reduce((sum, row) => sum + row.fromAds, 0);
@@ -88,7 +93,7 @@ export default async function FunnelsPage({
               />
             </div>
           ) : (
-            <TableShell columns={COLUMNS} minWidth={TABLE_MIN_WIDTH}>
+            <TableShell columns={columnsFor(showDepartment)} minWidth={TABLE_MIN_WIDTH}>
               {channels.map((row) => (
                 <tr
                   key={`${row.kind}:${row.id}`}
@@ -108,9 +113,11 @@ export default async function FunnelsPage({
                   <Td showFrom="lg" className="tabular text-ink-soft">
                     {row.detail ?? '—'}
                   </Td>
-                  <Td showFrom="xl" className="text-ink-soft">
-                    {row.departmentName ?? '—'}
-                  </Td>
+                  {showDepartment ? (
+                    <Td showFrom="xl" className="text-ink-soft">
+                      {row.departmentName ?? '—'}
+                    </Td>
+                  ) : null}
                   <Td showFrom="lg" className="tabular text-ink-soft">
                     {row.lastLeadAt ? (
                       formatDateTime(row.lastLeadAt, company.timezone)

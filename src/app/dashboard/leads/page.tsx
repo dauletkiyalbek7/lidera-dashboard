@@ -51,18 +51,26 @@ export const metadata: Metadata = { title: 'Лиды' };
  * Кто ведёт лид и на каком он этапе — главное в этом списке, поэтому четыре
  * ключевые колонки видны всегда, а справочные подключаются по мере ширины
  * экрана. Иначе на ноутбуке «Ответственный» уезжает за правый край.
+ *
+ * Колонка отдела появляется вместе с отделами продаж. Пока отдел в компании
+ * один и безымянный, она стоит пустая во всю высоту списка — место занимает,
+ * а не отвечает ни на один вопрос.
  */
-const COLUMNS: TableColumn[] = [
-  { key: 'name', label: 'Лид' },
-  { key: 'phone', label: 'Телефон', showFrom: 'lg' },
-  { key: 'source', label: 'Источник', showFrom: 'md' },
-  { key: 'department', label: 'Отдел', showFrom: 'xl' },
-  { key: 'creative', label: 'Креатив', showFrom: 'xl' },
-  { key: 'owner', label: 'Ответственный' },
-  { key: 'created', label: 'Получен', showFrom: 'md' },
-  { key: 'status', label: 'Статус' },
-  { key: 'actions', label: 'Действия', align: 'right' as const },
-];
+function columnsFor(showDepartment: boolean): TableColumn[] {
+  return [
+    { key: 'name', label: 'Лид' },
+    { key: 'phone', label: 'Телефон', showFrom: 'lg' },
+    { key: 'source', label: 'Источник', showFrom: 'md' },
+    ...(showDepartment
+      ? [{ key: 'department', label: 'Отдел', showFrom: 'xl' as const }]
+      : []),
+    { key: 'creative', label: 'Креатив', showFrom: 'xl' },
+    { key: 'owner', label: 'Ответственный' },
+    { key: 'created', label: 'Получен', showFrom: 'md' },
+    { key: 'status', label: 'Статус' },
+    { key: 'actions', label: 'Действия', align: 'right' as const },
+  ];
+}
 
 /**
  * Колонки для воронки с уроком: у заявки два хозяина и два исхода.
@@ -71,11 +79,13 @@ const COLUMNS: TableColumn[] = [
  * до урока и после. Свести их в одну колонку значит потерять, кто и на каком
  * шаге так решил, поэтому исход урока стоит своим столбцом рядом.
  */
-const TRIAL_COLUMNS: TableColumn[] = COLUMNS.flatMap((column) =>
-  column.key === 'status'
-    ? [column, { key: 'trial', label: 'Урок', showFrom: 'lg' as const }]
-    : [column],
-);
+function trialColumnsFor(showDepartment: boolean): TableColumn[] {
+  return columnsFor(showDepartment).flatMap((column) =>
+    column.key === 'status'
+      ? [column, { key: 'trial', label: 'Урок', showFrom: 'lg' as const }]
+      : [column],
+  );
+}
 
 /** Ширина таблицы для каждого набора видимых колонок. */
 const TABLE_MIN_WIDTH = { base: 520, md: 820, lg: 1040, xl: 1400 };
@@ -127,6 +137,7 @@ export default async function LeadsPage({
   ]);
 
   const activeDepartments = departments.filter((row) => row.status === 'active');
+  const showDepartment = activeDepartments.length > 0;
   const leads = leadPage.items;
 
   // Лиды раздаются менеджерам: РОП руководит, продажник подключается на пробном.
@@ -244,7 +255,11 @@ export default async function LeadsPage({
                 </div>
               ) : (
                 <TableShell
-                  columns={funnelType === 'trial' ? TRIAL_COLUMNS : COLUMNS}
+                  columns={
+                    funnelType === 'trial'
+                      ? trialColumnsFor(showDepartment)
+                      : columnsFor(showDepartment)
+                  }
                   minWidth={
                     funnelType === 'trial' ? TRIAL_TABLE_MIN_WIDTH : TABLE_MIN_WIDTH
                   }
@@ -276,9 +291,11 @@ export default async function LeadsPage({
                           ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
                           : (lead.source ?? '—')}
                       </Td>
-                      <Td showFrom="xl" className="text-ink-soft">
-                        {lead.departmentName ?? '—'}
-                      </Td>
+                      {showDepartment ? (
+                        <Td showFrom="xl" className="text-ink-soft">
+                          {lead.departmentName ?? '—'}
+                        </Td>
+                      ) : null}
                       <Td
                         showFrom="xl"
                         truncate="sm"

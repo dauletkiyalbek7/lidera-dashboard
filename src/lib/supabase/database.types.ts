@@ -53,6 +53,8 @@ export type CompanyRow = Timestamps & {
   report_code: string | null;
   /** Настройки авто-раздачи лидов. */
   auto_assign: boolean;
+  /** Заявки старше этого момента авто-раздаче не подлежат. null — раздавать все. */
+  distribute_from: string | null;
   /** Режим смены и геолокация офиса. */
   shift_mode: ShiftMode;
   office_lat: number | null;

@@ -60,7 +60,7 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
   const { data: company } = await supabase
     .from('companies')
     .select(
-      'id, funnel_type, trial_term, auto_assign, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
+      'id, funnel_type, trial_term, auto_assign, distribute_from, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -96,6 +96,8 @@ export async function runDistributionForAll(): Promise<
 type CompanySettings = {
   id: string;
   funnel_type: string;
+  /** Заявки старше этого момента не раздаются. null — раздавать все. */
+  distribute_from: string | null;
   /** Как компания зовёт промежуточный шаг: пробный урок или вебинар. */
   trial_term: string;
   shift_mode: string;
@@ -127,16 +129,24 @@ async function eligibleManagers(
   supabase: Admin,
   company: CompanySettings,
 ): Promise<Candidate[]> {
-  const { data: employees } = await supabase
+  const { data: staff } = await supabase
     .from('employees')
     .select(
-      'id, full_name, telegram_user_id, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
+      'id, full_name, role, telegram_user_id, shift_mode, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('company_id', company.id)
-    .eq('role', 'manager')
+    .in('role', ['manager', 'rop'])
     .eq('status', 'active');
 
-  if (!employees || employees.length === 0) return [];
+  // Пока менеджеров нет, заявки принимает руководитель отдела: иначе они
+  // лежат без ответственного, пока он набирает команду. Появился первый
+  // менеджер — заявки идут ему, и правило само перестаёт действовать.
+  const managers = (staff ?? []).filter((row) => row.role === 'manager');
+  const employees = managers.length > 0
+    ? managers
+    : (staff ?? []).filter((row) => row.role === 'rop');
+
+  if (employees.length === 0) return [];
 
   const ids = employees.map((employee) => employee.id);
 
@@ -214,12 +224,20 @@ function startOfToday(timeZone: string): string {
 
 /** Раздать всё, что лежит без ответственного. Порядок — от самых старых. */
 async function distributeQueue(supabase: Admin, company: CompanySettings) {
-  const { data: queue } = await supabase
+  let pending = supabase
     .from('leads')
     .select('id, name, phone, source, platform, status, creative_id, touch_count, assigned_at')
     .eq('company_id', company.id)
     .is('assigned_to', null)
-    .in('status', ACTIVE_STATUSES)
+    .in('status', ACTIVE_STATUSES);
+
+  // Хвост старых заявок раздавать нельзя: их отработали до платформы, а
+  // человеку, открывшему смену, они упадут все разом как новая работа.
+  if (company.distribute_from) {
+    pending = pending.gte('created_at', company.distribute_from);
+  }
+
+  const { data: queue } = await pending
     .order('created_at', { ascending: true })
     .limit(100);
 

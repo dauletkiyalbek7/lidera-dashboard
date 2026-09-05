@@ -1816,7 +1816,9 @@ async function bookingGate(
   employee: Employee,
   notify: () => Promise<unknown>,
 ): Promise<boolean> {
-  if (employee.role !== 'manager') return false;
+  // Записывает тот, кто ведёт заявку: обычно менеджер, но пока их нет —
+  // руководитель отдела. Продажника это не касается: он урок проводит.
+  if (employee.role === 'salesperson') return false;
 
   const pending = await pendingBooking(employee);
   if (!pending) return false;

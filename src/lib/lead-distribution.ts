@@ -138,14 +138,7 @@ async function eligibleManagers(
     .in('role', ['manager', 'rop'])
     .eq('status', 'active');
 
-  // Пока менеджеров нет, заявки принимает руководитель отдела: иначе они
-  // лежат без ответственного, пока он набирает команду. Появился первый
-  // менеджер — заявки идут ему, и правило само перестаёт действовать.
-  const managers = (staff ?? []).filter((row) => row.role === 'manager');
-  const employees = managers.length > 0
-    ? managers
-    : (staff ?? []).filter((row) => row.role === 'rop');
-
+  const employees = staff ?? [];
   if (employees.length === 0) return [];
 
   const ids = employees.map((employee) => employee.id);
@@ -188,12 +181,21 @@ async function eligibleManagers(
 
   // Режим считается по каждому отдельно: в одной компании уживаются офисные
   // менеджеры со сменами и удалённые, которым отмечаться не нужно.
-  return employees
-    .filter(
-      (employee) =>
-        resolveShiftRules(employee, company).mode === 'always' ||
-        shiftStart.has(employee.id),
-    )
+  const available = employees.filter(
+    (employee) =>
+      resolveShiftRules(employee, company).mode === 'always' ||
+      shiftStart.has(employee.id),
+  );
+
+  // Заявки — работа менеджеров. Руководитель принимает их только тогда, когда
+  // принять больше некому: команда ещё не набрана или никто из неё не на
+  // смене. Считаем это по тем, кто доступен сейчас, а не по списку в базе:
+  // иначе один заведённый менеджер, ушедший со смены, останавливал бы раздачу
+  // на весь день — руководитель в очереди есть, но правило его не видит.
+  const managers = available.filter((row) => row.role === 'manager');
+  const queue = managers.length > 0 ? managers : available.filter((row) => row.role === 'rop');
+
+  return queue
     .map((employee) => ({
       id: employee.id,
       full_name: employee.full_name,

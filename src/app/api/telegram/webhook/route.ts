@@ -584,10 +584,37 @@ async function closeShift(chatId: number, employee: Employee) {
     Math.round((endedAt.getTime() - new Date(shift.started_at).getTime()) / 60000),
   );
   const hours = Math.floor(minutes / 60);
+  const worked = `Смена закрыта. Отработано: <b>${hours ? `${hours} ч ` : ''}${minutes % 60} мин</b>.`;
+
+  // Итог дня прикладываем сразу к закрытию смены.
+  //
+  // Раньше человек закрывал смену и уходил, а свои цифры смотрел отдельной
+  // кнопкой — то есть почти никогда. Руководителю он при этом писал в группу
+  // «всё сделал». Готовое сообщение с итогом решает обе задачи: сотрудник
+  // видит свой день, а переслать его в чат отдела — одно движение.
+  const company = await companyOf(employee.company_id);
+  const timeZone = company?.timezone ?? 'Asia/Almaty';
+  const today = localDate(timeZone);
+
+  const stats = await employeeStats(supabase, {
+    companyId: employee.company_id,
+    employeeId: employee.id,
+    timezone: timeZone,
+    from: today,
+    to: today,
+    label: 'за сегодня',
+  });
+
+  const summary = statsMessage(stats, {
+    title: `${worked}\n\n📊 <b>Итог дня</b> · ${formatDay(today)}`,
+    currency: company?.sales_currency ?? 'KZT',
+    trialTerm: company?.trial_term,
+    funnelType: company?.funnel_type === 'direct' ? 'direct' : 'trial',
+  });
 
   return sendMessage(
     chatId,
-    `Смена закрыта. Отработано: <b>${hours ? `${hours} ч ` : ''}${minutes % 60} мин</b>.`,
+    `${summary}\n\n<i>Перешлите этот итог в группу отдела продаж.</i>`,
     { keyboard: keyboardFor(employee.role, false) },
   );
 }

@@ -46,7 +46,7 @@ export default async function CreativePage({
   const [cards, accountCurrency, buyers] = await Promise.all([
     getCreativeCards(company.id, range.from, range.to, company.timezone),
     getAdSpendCurrency(company.id),
-    getCreativeBuyers(company.id, id, range.from, range.to, company.timezone),
+    getCreativeBuyers(company.id, id, range.from, range.to),
   ]);
 
   const bought = buyers.reduce((total, buyer) => total + buyer.amount, 0);

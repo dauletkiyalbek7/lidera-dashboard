@@ -612,7 +612,7 @@ export async function getCreativeCards(
       selectAll((start, end) => {
         let query = supabase
           .from('leads')
-          .select('id, creative_id')
+          .select('id, creative_id, department_id')
           .eq('company_id', companyId)
           .not('creative_id', 'is', null)
           .gte('created_at', day.startsAt)
@@ -637,12 +637,63 @@ export async function getCreativeCards(
         .lte('date', to),
     ]);
 
-  const creativeOfLead = new Map(leadRows.map((lead) => [lead.id, lead.creative_id]));
+  /**
+   * Чей ролик привёл клиента — по самой заявке, а не по периоду.
+   *
+   * Деньги приходят позже обращения: человек оставил заявку 29 августа, а
+   * оплатил 1 сентября. Пока связку искали только среди заявок выбранного
+   * периода, такой чек терялся целиком — за 1 сентября раздел показывал два
+   * чека вместо четырёх. Поэтому для продаж и занятий доспрашиваем заявки по
+   * их id, сколько бы месяцев назад они ни пришли.
+   */
+  const leadInfo = new Map<string, { creativeId: string | null; departmentId: string | null }>(
+    leadRows.map((lead) => [
+      lead.id,
+      { creativeId: lead.creative_id, departmentId: lead.department_id ?? null },
+    ]),
+  );
 
-  // Срез отдела: продажи и занятия считаем только по его заявкам.
-  const ownLeads = new Set(leadRows.map((lead) => lead.id));
+  const missing = Array.from(
+    new Set(
+      [...(sales ?? []), ...(trials ?? [])]
+        .map((row) => row.lead_id)
+        .filter((id): id is string => Boolean(id) && !leadInfo.has(id as string)),
+    ),
+  );
+
+  if (missing.length > 0) {
+    const olderLeads = await selectAll<{
+      id: string;
+      creative_id: string | null;
+      department_id: string | null;
+    }>((start, end) =>
+      supabase
+        .from('leads')
+        .select('id, creative_id, department_id')
+        .eq('company_id', companyId)
+        .in('id', missing)
+        .range(start, end),
+    );
+
+    for (const lead of olderLeads) {
+      leadInfo.set(lead.id, {
+        creativeId: lead.creative_id,
+        departmentId: lead.department_id ?? null,
+      });
+    }
+  }
+
+  const creativeOfLead = new Map(
+    Array.from(leadInfo, ([id, info]) => [id, info.creativeId] as const),
+  );
+
+  // Срез отдела: продажи и занятия считаем по отделу самой заявки.
   const ofDepartment = <T extends { lead_id: string | null }>(rows: T[]) =>
-    departmentId ? rows.filter((row) => row.lead_id && ownLeads.has(row.lead_id)) : rows;
+    departmentId
+      ? rows.filter(
+          (row) => row.lead_id && leadInfo.get(row.lead_id)?.departmentId === departmentId,
+        )
+      : rows;
 
   const campaignRows = await selectAll<{
     id: string;
@@ -2078,47 +2129,48 @@ export async function getCreativeBuyers(
   creativeId: string,
   from: string,
   to: string,
-  timeZone: string,
 ): Promise<CreativeBuyer[]> {
   const supabase = await createServerSupabase();
-  const day = zonedDayWindow(from, to, timeZone);
 
-  const leads = await selectAll<{
+  // Идём от чеков, а не от заявок. Покупка случается позже обращения, и часть
+  // сентябрьских денег принесли августовские клиенты: если начинать со списка
+  // заявок периода, такой покупатель в список ролика не попадёт вовсе.
+  const sales = await selectAll<{
     id: string;
-    name: string;
-    phone: string | null;
-    created_at: string;
+    lead_id: string | null;
+    amount: number;
+    sale_date: string;
   }>((start, end) =>
     supabase
-      .from('leads')
-      .select('id, name, phone, created_at')
+      .from('sales')
+      .select('id, lead_id, amount, sale_date')
       .eq('company_id', companyId)
-      .eq('creative_id', creativeId)
-      .gte('created_at', day.startsAt)
-      .lt('created_at', day.endsBefore)
+      .eq('status', 'paid')
+      .not('lead_id', 'is', null)
+      .gte('sale_date', from)
+      .lte('sale_date', to)
       .range(start, end),
   );
 
-  if (leads.length === 0) return [];
+  if (sales.length === 0) return [];
+
+  const leads = await inChunks(
+    Array.from(new Set(sales.map((sale) => sale.lead_id as string))),
+    (chunk) =>
+      supabase
+        .from('leads')
+        .select('id, name, phone, created_at')
+        .eq('company_id', companyId)
+        .eq('creative_id', creativeId)
+        .in('id', chunk),
+  );
 
   const leadById = new Map(leads.map((lead) => [lead.id, lead]));
 
-  const sales = await inChunks(
-    leads.map((lead) => lead.id),
-    (chunk) =>
-      supabase
-        .from('sales')
-        .select('id, lead_id, amount, sale_date')
-        .eq('company_id', companyId)
-        .eq('status', 'paid')
-        .gte('sale_date', from)
-        .lte('sale_date', to)
-        .in('lead_id', chunk),
-  );
-
   return sales
+    .filter((sale) => sale.lead_id && leadById.has(sale.lead_id))
     .map((sale) => {
-      const lead = sale.lead_id ? leadById.get(sale.lead_id) : undefined;
+      const lead = leadById.get(sale.lead_id as string);
 
       return {
         saleId: sale.id,

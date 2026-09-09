@@ -682,17 +682,19 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   // последнего остаётся зазор, который в чате виден как обрыв.
   while (lines.at(-1) === '') lines.pop();
 
-  if (has('ads') && input.adsFreshness && input.adsFreshness.state !== 'none') {
+  // Про свежий расход не пишем ничего. Отчёт пришёл сейчас — значит и цифры
+  // сейчашние, а приписка «на 21:40» читается наоборот: будто день ещё не
+  // закрыт и итог будет другим. Говорим только тогда, когда спросить кабинет
+  // не вышло: вот об этом знать нужно, иначе расхождение спишут на платформу.
+  if (has('ads') && input.adsFreshness?.state === 'stale') {
     const at = input.adsFreshness.syncedAt;
     const stamp = at ? clock(at, input.timezone) : null;
 
     lines.push(
       '',
-      input.adsFreshness.state === 'fresh'
-        ? `<i>Расход из кабинета на ${stamp}</i>`
-        : stamp
-          ? `<i>Расход на ${stamp}: обновить сейчас не вышло</i>`
-          : '<i>Расход с прошлой синхронизации: обновить сейчас не вышло</i>',
+      stamp
+        ? `<i>Расход на ${stamp}: обновить сейчас не вышло</i>`
+        : '<i>Расход с прошлой синхронизации: обновить сейчас не вышло</i>',
     );
   }
 

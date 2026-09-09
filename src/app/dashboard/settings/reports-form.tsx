@@ -7,7 +7,9 @@ import { FormMessage } from '@/components/auth/field';
 import { Button } from '@/components/ui/button';
 import {
   addReportSchedule,
+  createReportCode,
   removeReportChat,
+  removeReportCode,
   removeReportSchedule,
   sendReportNowAction,
   type SettingsState,
@@ -28,9 +30,18 @@ const SECTIONS = [
   { value: 'creatives', label: 'Ролики', checked: false },
   { value: 'leads', label: 'Заявки и статусы', checked: false },
   { value: 'sales', label: 'Продажи и выручка', checked: false },
+  { value: 'employees', label: 'Кто сколько сделал', checked: false },
 ];
 
-export type ReportChat = { id: string; title: string | null; chatId: number };
+export type ReportChat = {
+  id: string;
+  title: string | null;
+  chatId: number;
+  /** К чему привязана группа: к этому проекту или к сводному коду. */
+  target: string;
+};
+
+export type ReportCode = { id: string; name: string; code: string; companies: string[] };
 
 export type ReportSchedule = {
   id: string;
@@ -53,12 +64,18 @@ export function ReportsForm({
   code,
   chats,
   schedules,
+  codes,
+  companies,
+  currentCompanyId,
   botName,
   disabled,
 }: {
   code: string | null;
   chats: ReportChat[];
   schedules: ReportSchedule[];
+  codes: ReportCode[];
+  companies: { id: string; name: string }[];
+  currentCompanyId: string;
   botName: string | null;
   disabled: boolean;
 }) {
@@ -94,7 +111,9 @@ export function ReportsForm({
                 <span className="block truncate text-[13.5px] text-ink">
                   {chat.title || 'Группа без названия'}
                 </span>
-                <span className="tabular block text-[12px] text-faint">{chat.chatId}</span>
+                <span className="tabular block text-[12px] text-faint">
+                  {chat.chatId} · {chat.target}
+                </span>
               </span>
               {disabled ? null : (
                 <RowForm action={removeReportChat} id={chat.id} label="Отвязать" />
@@ -140,10 +159,114 @@ export function ReportsForm({
         <AddForm chats={chats} />
       )}
 
+      <CombinedCodes
+        codes={codes}
+        companies={companies}
+        currentCompanyId={currentCompanyId}
+        disabled={disabled}
+      />
+
       {disabled ? (
         <p className="text-[12.5px] text-faint">Расписание меняет директор компании.</p>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Сводные коды: один код в группе — отчёт сразу по нескольким проектам.
+ *
+ * Показываем блок только тем, у кого проектов больше одного: остальным он
+ * ничего не объясняет, а место в настройках занимает.
+ */
+function CombinedCodes({
+  codes,
+  companies,
+  currentCompanyId,
+  disabled,
+}: {
+  codes: ReportCode[];
+  companies: { id: string; name: string }[];
+  currentCompanyId: string;
+  disabled: boolean;
+}) {
+  if (companies.length < 2 && codes.length === 0) return null;
+
+  return (
+    <div className="space-y-3 border-t border-line pt-4">
+      <div>
+        <p className="text-[13.5px] font-medium text-ink">Сводный отчёт по нескольким проектам</p>
+        <p className="text-[12.5px] text-muted">
+          Один код на группу — в чат приходит отчёт сразу по выбранным проектам, с общей строкой.
+        </p>
+      </div>
+
+      {codes.map((item) => (
+        <div
+          key={item.id}
+          className="flex flex-wrap items-center justify-between gap-2 rounded-control border border-line bg-surface px-3.5 py-2.5"
+        >
+          <span className="min-w-0 text-[13.5px] text-ink">
+            <span className="font-medium">{item.name}</span>
+            <span className="mt-0.5 block text-[12px] text-faint">
+              {item.companies.join(' · ')}
+            </span>
+            <code className="mt-1 inline-block rounded bg-surface-2 px-1.5 py-0.5 text-[13px] text-ink">
+              /отчёт {item.code}
+            </code>
+          </span>
+          {disabled ? null : <RowForm action={removeReportCode} id={item.id} label="Удалить" />}
+        </div>
+      ))}
+
+      {disabled || companies.length < 2 ? null : (
+        <NewCodeForm companies={companies} currentCompanyId={currentCompanyId} />
+      )}
+    </div>
+  );
+}
+
+function NewCodeForm({
+  companies,
+  currentCompanyId,
+}: {
+  companies: { id: string; name: string }[];
+  currentCompanyId: string;
+}) {
+  const [state, formAction] = useActionState(createReportCode, {} as SettingsState);
+
+  return (
+    <form action={formAction} className="space-y-3">
+      <div className="flex flex-wrap items-end gap-2.5">
+        <label className="min-w-[200px] flex-1 space-y-1">
+          <span className="block text-[12.5px] text-muted">Название</span>
+          <input
+            name="name"
+            required
+            placeholder="Маркетинг"
+            className="h-10 w-full rounded-control border border-line bg-surface-2 px-3 text-[13.5px] text-ink"
+          />
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-x-4 gap-y-2">
+        {companies.map((item) => (
+          <label key={item.id} className="flex items-center gap-2 text-[13px] text-ink-soft">
+            <input
+              type="checkbox"
+              name="companies"
+              value={item.id}
+              defaultChecked={item.id === currentCompanyId}
+              className="size-4 rounded border-line-strong bg-surface-2 accent-lime"
+            />
+            {item.name}
+          </label>
+        ))}
+      </div>
+
+      <FormMessage error={state.error} success={state.success} />
+      <SubmitButton label="Создать код" />
+    </form>
   );
 }
 
@@ -187,7 +310,7 @@ function AddForm({ chats }: { chats: ReportChat[] }) {
           >
             {chats.map((chat) => (
               <option key={chat.id} value={chat.id}>
-                {chat.title || `Группа ${chat.chatId}`}
+                {chat.title || `Группа ${chat.chatId}`} — {chat.target}
               </option>
             ))}
           </select>
@@ -215,12 +338,12 @@ function AddForm({ chats }: { chats: ReportChat[] }) {
   );
 }
 
-function SubmitButton() {
+function SubmitButton({ label = 'Добавить отправку' }: { label?: string }) {
   const { pending } = useFormStatus();
 
   return (
     <Button type="submit" size="sm" disabled={pending}>
-      {pending ? 'Сохраняю…' : 'Добавить отправку'}
+      {pending ? 'Сохраняю…' : label}
     </Button>
   );
 }

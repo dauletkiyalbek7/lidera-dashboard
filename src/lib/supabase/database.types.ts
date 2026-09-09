@@ -587,10 +587,31 @@ export type DayReportRow = {
   sent_at: string;
 }
 
+/**
+ * Сводный код: один код в группе — отчёт сразу по нескольким проектам.
+ * У владельца двух курсов вопрос всегда общий: сколько всего потратили и
+ * сколько всего продали.
+ */
+export type ReportCodeRow = {
+  id: string;
+  name: string;
+  code: string;
+  created_at: string;
+};
+
+/** Проекты, входящие в сводный код. */
+export type ReportCodeCompanyRow = {
+  code_id: string;
+  company_id: string;
+};
+
 /** Группа Telegram, в которую платформа шлёт отчёты по расписанию. */
 export type ReportChatRow = {
   id: string;
-  company_id: string;
+  /** Пусто у группы, привязанной сводным кодом. */
+  company_id: string | null;
+  /** Пусто у группы, привязанной кодом одного проекта. */
+  code_id: string | null;
   chat_id: number;
   title: string | null;
   /** Кто привязал группу — для разбора, если чат окажется не тем. */
@@ -601,7 +622,9 @@ export type ReportChatRow = {
 /** Одна строка расписания: во сколько, куда и за какой период. */
 export type ReportScheduleRow = {
   id: string;
-  company_id: string;
+  /** Ровно одно из двух заполнено: проект или сводный код. */
+  company_id: string | null;
+  code_id: string | null;
   chat_id: string;
   /** Время по часовому поясу компании, «HH:MM:SS». */
   send_at: string;
@@ -676,8 +699,10 @@ export type Database = {
       integrations: TableDef<IntegrationRow, 'company_id' | 'platform'>;
       form_submissions: TableDef<FormSubmissionRow, 'status'>;
       audit_logs: TableDef<AuditLogRow, 'action'>;
-      report_chats: TableDef<ReportChatRow, 'company_id' | 'chat_id'>;
-      report_schedules: TableDef<ReportScheduleRow, 'company_id' | 'chat_id' | 'send_at'>;
+      report_codes: TableDef<ReportCodeRow, 'name'>;
+      report_code_companies: TableDef<ReportCodeCompanyRow, 'code_id' | 'company_id'>;
+      report_chats: TableDef<ReportChatRow, 'chat_id'>;
+      report_schedules: TableDef<ReportScheduleRow, 'chat_id' | 'send_at'>;
       report_deliveries: TableDef<ReportDeliveryRow, 'schedule_id' | 'date'>;
     };
     Views: Record<never, never>;

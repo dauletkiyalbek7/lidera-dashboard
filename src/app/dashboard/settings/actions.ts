@@ -235,8 +235,21 @@ export async function addReportSchedule(
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const supabase = await createServerSupabase();
+
+  // К чему привязана группа, решает не форма, а сама группа: код проекта дал
+  // один отчёт, сводный код — другой. Читаем под RLS: чужую группу тут не
+  // найдёт даже подставленный id.
+  const { data: chat } = await supabase
+    .from('report_chats')
+    .select('id, company_id, code_id')
+    .eq('id', parsed.data.chatId)
+    .maybeSingle();
+
+  if (!chat) return { error: 'Группа не найдена.' };
+
   const { error } = await supabase.from('report_schedules').insert({
-    company_id: company.id,
+    company_id: chat.code_id ? null : (chat.company_id ?? company.id),
+    code_id: chat.code_id,
     chat_id: parsed.data.chatId,
     send_at: `${parsed.data.sendAt}:00`,
     period: parsed.data.period,
@@ -315,4 +328,80 @@ export async function removeReportChat(
 
   revalidatePath('/dashboard/settings');
   return { success: 'Группа отвязана.' };
+}
+
+const codeSchema = z.object({
+  name: z.string().trim().min(2, 'Назовите отчёт').max(60),
+  companies: z.array(z.string().uuid()).min(2, 'Выберите хотя бы два проекта'),
+});
+
+/**
+ * Завести сводный код: один код в группе — отчёт сразу по нескольким проектам.
+ *
+ * Проекты берём только из тех, куда у этого входа есть доступ, и то же самое
+ * ещё раз проверяет политика: сводный отчёт складывает деньги, и код на чужой
+ * проект был бы дырой в изоляции.
+ */
+export async function createReportCode(
+  _prevState: SettingsState,
+  formData: FormData,
+): Promise<SettingsState> {
+  const { companies, readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+
+  const parsed = codeSchema.safeParse({
+    name: formData.get('name'),
+    companies: formData.getAll('companies').map(String),
+  });
+
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
+
+  const allowed = new Set(companies.map((row) => row.id));
+  if (parsed.data.companies.some((id) => !allowed.has(id))) {
+    return { error: 'Среди выбранных проектов есть чужой.' };
+  }
+
+  const supabase = await createServerSupabase();
+
+  // Id придумываем здесь: свежий код ещё без проектов, и прочитать его
+  // обратно политика не даст — ей нечего проверять.
+  const id = crypto.randomUUID();
+
+  const { error } = await supabase
+    .from('report_codes')
+    .insert({ id, name: parsed.data.name });
+
+  if (error) return { error: 'Не удалось создать код.' };
+
+  const { error: linkError } = await supabase
+    .from('report_code_companies')
+    .insert(parsed.data.companies.map((companyId) => ({ code_id: id, company_id: companyId })));
+
+  if (linkError) {
+    await supabase.from('report_codes').delete().eq('id', id);
+    return { error: 'Не удалось привязать проекты к коду.' };
+  }
+
+  revalidatePath('/dashboard/settings');
+  return { success: 'Код создан. Отправьте его в группу.' };
+}
+
+/** Убрать сводный код: вместе с ним уходят его группы и расписания. */
+export async function removeReportCode(
+  _prevState: SettingsState,
+  formData: FormData,
+): Promise<SettingsState> {
+  const { readOnly } = await requireCompanySession();
+  if (readOnly) return { error: VIEW_ONLY_ERROR };
+
+  const id = String(formData.get('id') ?? '');
+  if (!id) return { error: 'Не указан код.' };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.from('report_codes').delete().eq('id', id);
+
+  if (error) return { error: 'Не удалось удалить код.' };
+
+  revalidatePath('/dashboard/settings');
+  return { success: 'Код удалён.' };
 }

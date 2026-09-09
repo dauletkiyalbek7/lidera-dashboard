@@ -10,6 +10,7 @@ import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
 import { sendMessage } from '@/lib/telegram';
 import { escapeHtml } from '@/lib/telegram-lead-card';
+import { wasHeld } from '@/lib/trial-status';
 
 /**
  * Отчёт в группу Telegram по расписанию.
@@ -29,13 +30,21 @@ type Admin = SupabaseClient<Database>;
 export type ReportPeriod = 'today' | 'yesterday' | 'week' | 'month';
 
 /** Блоки отчёта: набор выбирается на каждое расписание отдельно. */
-export const REPORT_SECTIONS = ['leads', 'ads', 'sales', 'breakdown', 'creatives'] as const;
+export const REPORT_SECTIONS = [
+  'leads',
+  'ads',
+  'sales',
+  'employees',
+  'breakdown',
+  'creatives',
+] as const;
 export type ReportSection = (typeof REPORT_SECTIONS)[number];
 
 export const SECTION_LABELS: Record<ReportSection, string> = {
   leads: 'Заявки и статусы',
   ads: 'Расход и показатели рекламы',
   sales: 'Продажи и выручка',
+  employees: 'Кто сколько сделал',
   breakdown: 'Отделы',
   creatives: 'Ролики',
 };
@@ -61,6 +70,15 @@ const TOP_CREATIVES = 5;
 
 export type ReportResult = { sent: number };
 
+/** Проект в отчёте: всё, что нужно, чтобы собрать по нему цифры. */
+type ReportCompany = {
+  id: string;
+  name: string;
+  timezone: string | null;
+  currency: string | null;
+  sales_currency: string | null;
+};
+
 /**
  * Пройтись по расписаниям и отправить те, чьё время наступило.
  *
@@ -72,21 +90,34 @@ export async function runGroupReports(): Promise<ReportResult> {
 
   const { data: schedules } = await supabase
     .from('report_schedules')
-    .select('id, company_id, chat_id, send_at, period, sections, status, created_at')
+    .select('id, company_id, code_id, chat_id, send_at, period, sections, status, created_at')
     .eq('status', 'active');
 
   if (!schedules || schedules.length === 0) return { sent: 0 };
 
-  const { data: chats } = await supabase
-    .from('report_chats')
-    .select('id, chat_id, company_id');
-
-  const { data: companies } = await supabase
-    .from('companies')
-    .select('id, name, timezone, currency, sales_currency');
+  const [{ data: chats }, { data: companies }, { data: codes }, { data: codeCompanies }] =
+    await Promise.all([
+      supabase.from('report_chats').select('id, chat_id, company_id, code_id'),
+      supabase.from('companies').select('id, name, timezone, currency, sales_currency'),
+      supabase.from('report_codes').select('id, name'),
+      supabase.from('report_code_companies').select('code_id, company_id'),
+    ]);
 
   const chatById = new Map((chats ?? []).map((row) => [row.id, row]));
   const companyById = new Map((companies ?? []).map((row) => [row.id, row]));
+  const codeById = new Map((codes ?? []).map((row) => [row.id, row]));
+
+  // Порядок проектов в сводном отчёте — по названию: он не должен меняться от
+  // отчёта к отчёту, иначе читающий каждый раз ищет свой проект заново.
+  const companiesOfCode = new Map<string, ReportCompany[]>();
+  for (const link of codeCompanies ?? []) {
+    const company = companyById.get(link.company_id);
+    if (!company) continue;
+    const list = companiesOfCode.get(link.code_id) ?? [];
+    list.push(company);
+    companiesOfCode.set(link.code_id, list);
+  }
+  for (const list of companiesOfCode.values()) list.sort((a, b) => a.name.localeCompare(b.name));
 
   let sent = 0;
 
@@ -95,11 +126,22 @@ export async function runGroupReports(): Promise<ReportResult> {
   const refreshed = new Map<string, AdsFreshness>();
 
   for (const schedule of schedules) {
-    const company = companyById.get(schedule.company_id);
     const chat = chatById.get(schedule.chat_id);
-    if (!company || !chat) continue;
+    if (!chat) continue;
 
-    const timezone = company.timezone ?? 'Asia/Almaty';
+    // Расписание смотрит либо на один проект, либо на сводный код: у кода
+    // проектов несколько, и отчёт по ним уходит одним сообщением.
+    const single = schedule.company_id ? companyById.get(schedule.company_id) : undefined;
+    const targets: ReportCompany[] = schedule.code_id
+      ? (companiesOfCode.get(schedule.code_id) ?? [])
+      : single
+        ? [single]
+        : [];
+
+    if (targets.length === 0) continue;
+
+    const title = schedule.code_id ? (codeById.get(schedule.code_id)?.name ?? null) : null;
+    const timezone = targets[0].timezone ?? 'Asia/Almaty';
     const now = new Date();
     const today = zonedIsoDate(now, timezone);
 
@@ -121,30 +163,39 @@ export async function runGroupReports(): Promise<ReportResult> {
     if (error) continue;
     if (late) continue;
 
-    // Расход берём не тот, что лежит с прошлой синхронизации, а спрашиваем
-    // кабинет заново: отчёт отправляют по часам и сверяют с Ads Manager, и
-    // расхождение в пару часов читается как ошибка платформы.
-    // Если минуты уже почти не осталось, отчёт уходит с тем, что есть:
-    // непришедший отчёт хуже отчёта с цифрами двухчасовой давности.
-    const freshness =
-      refreshed.get(company.id) ??
-      (Date.now() - startedAt > REFRESH_BUDGET_MS
-        ? ({ state: 'stale', syncedAt: null } as AdsFreshness)
-        : await refreshCompanyAds(company.id));
-    refreshed.set(company.id, freshness);
+    const blocks: ReportBlock[] = [];
 
-    const text = await buildReport(supabase, {
-      companyId: company.id,
-      companyName: company.name,
-      timezone,
-      currency: company.currency ?? 'USD',
-      salesCurrency: company.sales_currency ?? 'KZT',
-      period: schedule.period as ReportPeriod,
-      sections: schedule.sections as ReportSection[],
-      adsFreshness: freshness,
-    });
+    for (const company of targets) {
+      // Расход берём не тот, что лежит с прошлой синхронизации, а спрашиваем
+      // кабинет заново: отчёт отправляют по часам и сверяют с Ads Manager, и
+      // расхождение в пару часов читается как ошибка платформы.
+      // Если минуты уже почти не осталось, отчёт уходит с тем, что есть:
+      // непришедший отчёт хуже отчёта с цифрами двухчасовой давности.
+      const freshness =
+        refreshed.get(company.id) ??
+        (Date.now() - startedAt > REFRESH_BUDGET_MS
+          ? ({ state: 'stale', syncedAt: null } as AdsFreshness)
+          : await refreshCompanyAds(company.id));
+      refreshed.set(company.id, freshness);
 
-    await sendMessage(chat.chat_id, text);
+      blocks.push(
+        await buildReport(supabase, {
+          companyId: company.id,
+          companyName: company.name,
+          timezone: company.timezone ?? timezone,
+          currency: company.currency ?? 'USD',
+          salesCurrency: company.sales_currency ?? 'KZT',
+          period: schedule.period as ReportPeriod,
+          sections: schedule.sections as ReportSection[],
+          adsFreshness: freshness,
+        }),
+      );
+    }
+
+    for (const message of reportMessages(blocks, title, schedule.sections as ReportSection[])) {
+      await sendMessage(chat.chat_id, message);
+    }
+
     sent += 1;
   }
 
@@ -157,39 +208,143 @@ export async function sendReportNow(scheduleId: string): Promise<boolean> {
 
   const { data: schedule } = await supabase
     .from('report_schedules')
-    .select('id, company_id, chat_id, period, sections')
+    .select('id, company_id, code_id, chat_id, period, sections')
     .eq('id', scheduleId)
     .maybeSingle();
 
   if (!schedule) return false;
 
-  const [{ data: chat }, { data: company }] = await Promise.all([
-    supabase.from('report_chats').select('chat_id').eq('id', schedule.chat_id).maybeSingle(),
-    supabase
+  const { data: chat } = await supabase
+    .from('report_chats')
+    .select('chat_id')
+    .eq('id', schedule.chat_id)
+    .maybeSingle();
+
+  if (!chat) return false;
+
+  let title: string | null = null;
+  let targets: ReportCompany[] = [];
+
+  if (schedule.code_id) {
+    const [{ data: code }, { data: links }] = await Promise.all([
+      supabase.from('report_codes').select('name').eq('id', schedule.code_id).maybeSingle(),
+      supabase
+        .from('report_code_companies')
+        .select('company_id')
+        .eq('code_id', schedule.code_id),
+    ]);
+
+    title = code?.name ?? null;
+    const ids = (links ?? []).map((row) => row.company_id);
+
+    if (ids.length > 0) {
+      const { data } = await supabase
+        .from('companies')
+        .select('id, name, timezone, currency, sales_currency')
+        .in('id', ids)
+        .order('name');
+      targets = data ?? [];
+    }
+  } else if (schedule.company_id) {
+    const { data } = await supabase
       .from('companies')
       .select('id, name, timezone, currency, sales_currency')
       .eq('id', schedule.company_id)
-      .maybeSingle(),
-  ]);
+      .maybeSingle();
+    targets = data ? [data] : [];
+  }
 
-  if (!chat || !company) return false;
+  if (targets.length === 0) return false;
 
-  // Кнопкой проверяют именно точность цифр — значит и здесь сначала кабинет.
-  const freshness = await refreshCompanyAds(company.id);
+  const blocks: ReportBlock[] = [];
 
-  const text = await buildReport(supabase, {
-    companyId: company.id,
-    companyName: company.name,
-    timezone: company.timezone ?? 'Asia/Almaty',
-    currency: company.currency ?? 'USD',
-    salesCurrency: company.sales_currency ?? 'KZT',
-    period: schedule.period as ReportPeriod,
-    sections: schedule.sections as ReportSection[],
-    adsFreshness: freshness,
-  });
+  for (const company of targets) {
+    // Кнопкой проверяют именно точность цифр — значит и здесь сначала кабинет.
+    const freshness = await refreshCompanyAds(company.id);
 
-  await sendMessage(chat.chat_id, text);
+    blocks.push(
+      await buildReport(supabase, {
+        companyId: company.id,
+        companyName: company.name,
+        timezone: company.timezone ?? 'Asia/Almaty',
+        currency: company.currency ?? 'USD',
+        salesCurrency: company.sales_currency ?? 'KZT',
+        period: schedule.period as ReportPeriod,
+        sections: schedule.sections as ReportSection[],
+        adsFreshness: freshness,
+      }),
+    );
+  }
+
+  for (const message of reportMessages(blocks, title, schedule.sections as ReportSection[])) {
+    await sendMessage(chat.chat_id, message);
+  }
+
   return true;
+}
+
+/** Сколько символов помещается в одно сообщение Telegram. */
+const TELEGRAM_LIMIT = 4096;
+
+/**
+ * Сложить блоки проектов в сообщения.
+ *
+ * Сводный отчёт хотят видеть одним сообщением — вместе с общей строкой, ради
+ * которой его и заводят. Но у Telegram есть предел длины, и если проектов
+ * много, лучше разослать их подряд, чем потерять хвост.
+ */
+export function reportMessages(
+  blocks: ReportBlock[],
+  title: string | null,
+  sections: ReportSection[],
+): string[] {
+  if (blocks.length === 0) return [];
+  if (blocks.length === 1 && !title) return [blocks[0].text];
+
+  const head = [`🗂 <b>${escapeHtml(title ?? 'Сводный отчёт')}</b>`, totalsLine(blocks, sections)]
+    .filter(Boolean)
+    .join('\n');
+
+  const whole = [head, ...blocks.map((block) => block.text)].join('\n\n———\n\n');
+  if (whole.length <= TELEGRAM_LIMIT) return [whole];
+
+  return [head, ...blocks.map((block) => block.text)];
+}
+
+/**
+ * Общая строка сводного отчёта: то, ради чего проекты и складывают вместе.
+ *
+ * Валюты у проектов могут не совпадать — складывать доллары с тенге нельзя,
+ * поэтому такую строку просто не показываем: лучше её отсутствие, чем сумма,
+ * которой не существует.
+ */
+function totalsLine(blocks: ReportBlock[], sections: ReportSection[]): string {
+  const parts: string[] = [];
+
+  if (sections.includes('ads')) {
+    const currency = blocks[0].currency;
+    if (blocks.every((block) => block.currency === currency)) {
+      const spend = sum(blocks, (block) => block.spend);
+      const leads = sum(blocks, (block) => block.leads);
+      parts.push(`расход <b>${money(spend, 2)} ${currencySymbol(currency)}</b>`);
+      parts.push(`заявок <b>${count(leads)}</b>`);
+      if (spend && leads) {
+        parts.push(`заявка <b>${money(spend / leads, 2)} ${currencySymbol(currency)}</b>`);
+      }
+    }
+  }
+
+  if (sections.includes('sales')) {
+    const currency = blocks[0].salesCurrency;
+    if (blocks.every((block) => block.salesCurrency === currency)) {
+      parts.push(
+        `продаж <b>${count(sum(blocks, (block) => block.salesCount))}</b>` +
+          ` на <b>${money(sum(blocks, (block) => block.revenue))} ${currencySymbol(currency)}</b>`,
+      );
+    }
+  }
+
+  return parts.length > 0 ? `<i>Вместе: ${parts.join(' · ')}</i>` : '';
 }
 
 type ReportInput = {
@@ -206,8 +361,24 @@ type ReportInput = {
   adsFreshness?: AdsFreshness;
 };
 
-/** Собрать текст отчёта. Отдельно от отправки — чтобы можно было проверить. */
-export async function buildReport(supabase: Admin, input: ReportInput): Promise<string> {
+/**
+ * Готовый отчёт по одному проекту: текст для чата и те же числа отдельно.
+ *
+ * Числа нужны сводному отчёту: сложить два текста нельзя, а «вместе потратили
+ * столько-то» — это первая строка, которую в такой группе читают.
+ */
+export type ReportBlock = {
+  text: string;
+  spend: number;
+  leads: number;
+  salesCount: number;
+  revenue: number;
+  currency: string;
+  salesCurrency: string;
+};
+
+/** Собрать отчёт по проекту. Отдельно от отправки — чтобы можно было проверить. */
+export async function buildReport(supabase: Admin, input: ReportInput): Promise<ReportBlock> {
   const { from, to } = periodRange(input.period, input.timezone);
   const day = zonedDayWindow(from, to, input.timezone);
   const has = (section: ReportSection) => input.sections.includes(section);
@@ -223,20 +394,25 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
           .lte('date', to)
           .range(start, end),
     ),
-    readAll<{ id: string; status: string; department_id: string | null; creative_id: string | null }>(
-      (start, end) =>
+    readAll<{
+      id: string;
+      status: string;
+      department_id: string | null;
+      creative_id: string | null;
+      assigned_to: string | null;
+    }>((start, end) =>
         supabase
           .from('leads')
-          .select('id, status, department_id, creative_id')
+          .select('id, status, department_id, creative_id, assigned_to')
           .eq('company_id', input.companyId)
           .gte('created_at', day.startsAt)
           .lt('created_at', day.endsBefore)
           .range(start, end),
     ),
-    readAll<{ amount: number; lead_id: string | null }>((start, end) =>
+    readAll<{ amount: number; lead_id: string | null; seller_id: string | null }>((start, end) =>
       supabase
         .from('sales')
-        .select('amount, lead_id')
+        .select('amount, lead_id, seller_id')
         .eq('company_id', input.companyId)
         .eq('status', 'paid')
         .gte('sale_date', from)
@@ -352,6 +528,84 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
     lines.push('');
   }
 
+  if (has('employees')) {
+    // Группе отдела продаж нужен не расход, а свои же цифры: кто сколько взял
+    // заявок, кто провёл уроки, кто закрыл. Это единственный блок, который
+    // называет людей по именам, поэтому и включают его только там, где сидят
+    // сами продавцы.
+    const [{ data: staff }, trials] = await Promise.all([
+      supabase
+        .from('employees')
+        .select('id, full_name, role')
+        .eq('company_id', input.companyId)
+        .eq('status', 'active')
+        .order('full_name'),
+      readAll<{ status: string; assigned_to: string | null }>((start, end) =>
+        supabase
+          .from('trials')
+          .select('status, assigned_to')
+          .eq('company_id', input.companyId)
+          .gte('date', from)
+          .lte('date', to)
+          .range(start, end),
+      ),
+    ]);
+
+    const rows = (staff ?? []).map((person) => {
+      const own = leads.filter((row) => row.assigned_to === person.id);
+      const sold = sales.filter((row) => row.seller_id === person.id);
+
+      return {
+        name: person.full_name,
+        leads: own.length,
+        reached: own.filter((row) => REACHED.has(row.status)).length,
+        trials: trials.filter((row) => row.assigned_to === person.id && wasHeld(row.status)).length,
+        sales: sold.length,
+        revenue: sum(sold, (row) => Number(row.amount)),
+      };
+    });
+
+    const active = rows
+      .filter((row) => row.leads > 0 || row.trials > 0 || row.sales > 0)
+      .sort((left, right) => right.revenue - left.revenue || right.leads - left.leads);
+
+    if (rows.length > 0) {
+      lines.push('<b>Кто сколько сделал</b>');
+
+      for (const row of active) {
+        const parts: string[] = [];
+        if (row.leads > 0) {
+          parts.push(
+            `${count(row.leads)} ${plural(row.leads, 'заявка', 'заявки', 'заявок')}` +
+              (row.reached ? ` · дозвон ${count(row.reached)}` : ''),
+          );
+        }
+        if (row.trials > 0) {
+          parts.push(`${count(row.trials)} ${plural(row.trials, 'урок', 'урока', 'уроков')}`);
+        }
+        if (row.sales > 0) {
+          parts.push(
+            `${count(row.sales)} ${plural(row.sales, 'продажа', 'продажи', 'продаж')}` +
+              ` на ${money(row.revenue)} ${salesSign}`,
+          );
+        }
+        lines.push(`• ${escapeHtml(row.name)}: ${parts.join(' · ')}`);
+      }
+
+      // Кто за период не сделал ничего — одной строкой. Отдельная строка на
+      // каждого превратила бы отчёт в список из четырнадцати нулей, а знать,
+      // кто выпал из работы, всё равно нужно.
+      const idle = rows.filter((row) => !active.includes(row));
+      if (idle.length > 0) {
+        lines.push(
+          `<i>Без движения: ${idle.map((row) => escapeHtml(row.name)).join(', ')}</i>`,
+        );
+      }
+
+      lines.push('');
+    }
+  }
+
   if (has('breakdown')) {
     const rows = (departments.data ?? []).map((department) => {
         const own = counted.filter(
@@ -442,7 +696,15 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
     );
   }
 
-  return lines.join('\n').trim();
+  return {
+    text: lines.join('\n').trim(),
+    spend: shownSpend,
+    leads: shownLeads,
+    salesCount: sales.length,
+    revenue,
+    currency: input.currency,
+    salesCurrency: input.salesCurrency,
+  };
 }
 
 /** Время по часам компании: «23:41». */

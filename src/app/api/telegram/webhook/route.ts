@@ -173,13 +173,14 @@ async function handleGroupCommand(message: TelegramMessage, text: string) {
   const supabase = createAdminSupabase();
   const code = argument.split(/\s+/)[0].toLowerCase();
 
-  const { data: company } = await supabase
-    .from('companies')
-    .select('id, name')
-    .eq('report_code', code)
-    .maybeSingle();
+  // Код бывает двух видов: код проекта и сводный код на несколько проектов.
+  // В чате их не различают — человек просто присылает то, что ему дали.
+  const [{ data: company }, { data: combined }] = await Promise.all([
+    supabase.from('companies').select('id, name').eq('report_code', code).maybeSingle(),
+    supabase.from('report_codes').select('id, name').eq('code', code).maybeSingle(),
+  ]);
 
-  if (!company) {
+  if (!company && !combined) {
     return sendMessage(
       chatId,
       'Такого кода нет. Проверьте его в кабинете: «Настройки» → «Отчёты в Telegram».',
@@ -190,11 +191,13 @@ async function handleGroupCommand(message: TelegramMessage, text: string) {
     ? `@${message.from.username}`
     : (message.from?.first_name ?? null);
 
-  // Одна группа — один проект: повторная команда с другим кодом переносит
-  // группу, а не заводит вторую привязку.
+  // Одна группа — один отчёт: повторная команда с другим кодом переносит
+  // группу, а не заводит вторую привязку. Поэтому вторая колонка обнуляется
+  // явно — иначе группа осталась бы привязана и к прошлому проекту.
   const { error } = await supabase.from('report_chats').upsert(
     {
-      company_id: company.id,
+      company_id: combined ? null : (company?.id ?? null),
+      code_id: combined?.id ?? null,
       chat_id: chatId,
       title: message.chat.title ?? null,
       linked_by: who,
@@ -207,9 +210,13 @@ async function handleGroupCommand(message: TelegramMessage, text: string) {
     return sendMessage(chatId, 'Не получилось привязать группу. Попробуйте ещё раз.');
   }
 
+  const label = combined
+    ? `отчёту <b>${escapeHtml(combined.name)}</b>`
+    : `проекту <b>${escapeHtml(company?.name ?? '')}</b>`;
+
   return sendMessage(
     chatId,
-    `Готово: группа привязана к проекту <b>${escapeHtml(company.name)}</b>.\n\n` +
+    `Готово: группа привязана к ${label}.\n\n` +
       'Отчёты будут приходить сюда по расписанию из кабинета. ' +
       'Чтобы отключить — отправьте <code>/отвязать</code>.',
   );

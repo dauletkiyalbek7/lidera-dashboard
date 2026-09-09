@@ -16,7 +16,7 @@ import { ShiftForm } from './shift-form';
 export const metadata: Metadata = { title: 'Настройки' };
 
 export default async function SettingsPage() {
-  const { company, profile, email } = await requireFullAccess();
+  const { company, profile, email, companies } = await requireFullAccess();
   const [subscription, reports] = await Promise.all([
     getSubscription(company.id),
     getReportSettings(company.id, company.timezone),
@@ -96,6 +96,9 @@ export default async function SettingsPage() {
                 code={company.report_code}
                 chats={reports.chats}
                 schedules={reports.schedules}
+                codes={reports.codes}
+                companies={companies}
+                currentCompanyId={company.id}
                 botName={process.env.NEXT_PUBLIC_TELEGRAM_BOT_USERNAME ?? null}
                 disabled={profile.role !== 'DIRECTOR'}
               />

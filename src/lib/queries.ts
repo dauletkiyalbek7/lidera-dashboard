@@ -2414,7 +2414,7 @@ export async function getIntegrations(companyId: string) {
 /** Отдел продаж компании. */
 /** Группа Telegram и её расписание отчётов — для настроек проекта. */
 export type ReportSettings = {
-  chats: { id: string; title: string | null; chatId: number }[];
+  chats: { id: string; title: string | null; chatId: number; target: string }[];
   schedules: {
     id: string;
     chatId: string;
@@ -2424,6 +2424,8 @@ export type ReportSettings = {
     sections: string[];
     sentToday: boolean;
   }[];
+  /** Сводные коды, в которые входит этот проект. */
+  codes: { id: string; name: string; code: string; companies: string[] }[];
 };
 
 export async function getReportSettings(
@@ -2432,23 +2434,77 @@ export async function getReportSettings(
 ): Promise<ReportSettings> {
   const supabase = await createServerSupabase();
 
-  const [{ data: chats }, { data: schedules }] = await Promise.all([
-    supabase
-      .from('report_chats')
-      .select('id, title, chat_id')
-      .eq('company_id', companyId)
-      .order('created_at'),
-    supabase
-      .from('report_schedules')
-      .select('id, chat_id, send_at, period, sections')
-      .eq('company_id', companyId)
-      .order('send_at'),
-  ]);
+  // Сводные коды видит только тот, у кого есть вход во все их проекты, —
+  // это решает политика, а не запрос. Здесь остаётся отобрать те, где есть
+  // текущий проект: настройки всё-таки его.
+  const { data: links } = await supabase
+    .from('report_code_companies')
+    .select('code_id, company_id');
+
+  const mine = new Set(
+    (links ?? []).filter((row) => row.company_id === companyId).map((row) => row.code_id),
+  );
+
+  const { data: codeRows } = mine.size
+    ? await supabase.from('report_codes').select('id, name, code').in('id', [...mine]).order('name')
+    : { data: [] };
+
+  const companyIds = [...new Set((links ?? []).map((row) => row.company_id))];
+  const { data: companyNames } = companyIds.length
+    ? await supabase.from('companies').select('id, name').in('id', companyIds)
+    : { data: [] };
+
+  const nameOf = new Map((companyNames ?? []).map((row) => [row.id, row.name]));
+
+  const codes = (codeRows ?? []).map((code) => ({
+    id: code.id,
+    name: code.name,
+    code: code.code,
+    companies: (links ?? [])
+      .filter((row) => row.code_id === code.id)
+      .map((row) => nameOf.get(row.company_id) ?? '—')
+      .sort(),
+  }));
+
+  const codeIds = codes.map((code) => code.id);
+
+  const [{ data: ownChats }, { data: codeChats }, { data: ownSchedules }, { data: codeSchedules }] =
+    await Promise.all([
+      supabase
+        .from('report_chats')
+        .select('id, title, chat_id, code_id')
+        .eq('company_id', companyId)
+        .order('created_at'),
+      codeIds.length
+        ? supabase
+            .from('report_chats')
+            .select('id, title, chat_id, code_id')
+            .in('code_id', codeIds)
+            .order('created_at')
+        : Promise.resolve({ data: [] }),
+      supabase
+        .from('report_schedules')
+        .select('id, chat_id, send_at, period, sections')
+        .eq('company_id', companyId)
+        .order('send_at'),
+      codeIds.length
+        ? supabase
+            .from('report_schedules')
+            .select('id, chat_id, send_at, period, sections')
+            .in('code_id', codeIds)
+            .order('send_at')
+        : Promise.resolve({ data: [] }),
+    ]);
+
+  const chats = [...(ownChats ?? []), ...(codeChats ?? [])];
+  const schedules = [...(ownSchedules ?? []), ...(codeSchedules ?? [])].sort((left, right) =>
+    left.send_at.localeCompare(right.send_at),
+  );
 
   // Отметка «сегодня уже отправлен» — чтобы было видно, что расписание живое,
   // а не просто записано.
   const today = zonedIsoDate(new Date(), timeZone);
-  const ids = (schedules ?? []).map((row) => row.id);
+  const ids = schedules.map((row) => row.id);
 
   const { data: deliveries } = ids.length
     ? await supabase
@@ -2459,17 +2515,18 @@ export async function getReportSettings(
     : { data: [] };
 
   const sent = new Set((deliveries ?? []).map((row) => row.schedule_id));
-  const titles = new Map(
-    (chats ?? []).map((row) => [row.id, row.title || `Группа ${row.chat_id}`]),
-  );
+  const titles = new Map(chats.map((row) => [row.id, row.title || `Группа ${row.chat_id}`]));
+  const codeName = new Map(codes.map((code) => [code.id, code.name]));
 
   return {
-    chats: (chats ?? []).map((row) => ({
+    codes,
+    chats: chats.map((row) => ({
       id: row.id,
       title: row.title,
       chatId: row.chat_id,
+      target: row.code_id ? (codeName.get(row.code_id) ?? 'Сводный отчёт') : 'Этот проект',
     })),
-    schedules: (schedules ?? []).map((row) => ({
+    schedules: schedules.map((row) => ({
       id: row.id,
       chatId: row.chat_id,
       chatTitle: titles.get(row.chat_id) ?? 'Группа',

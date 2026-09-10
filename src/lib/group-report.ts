@@ -501,6 +501,18 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
         `CTR: <b>${totals.ctr.toFixed(2).replace('.', ',')}%</b> · CPC: <b>${money(totals.cpc, 2)} ${sign}</b>` +
           ` · CPM: <b>${money(totals.cpm, 2)} ${sign}</b>`,
       );
+
+      // Клики по ссылке — отдельной строкой, а не вместо обычных. «Клики
+      // (все)» считают и лайк, и разворот текста; по ссылке ушёл только тот,
+      // кто действительно пошёл смотреть. Цену клика в кабинете сверяют
+      // именно по ней, поэтому она и стоит рядом.
+      if (totals.linkClicks > 0) {
+        lines.push(
+          `По ссылке: <b>${count(totals.linkClicks)}</b>` +
+            ` · CTR по ссылке: <b>${totals.linkCtr.toFixed(2).replace('.', ',')}%</b>` +
+            ` · цена клика: <b>${money(totals.costPerLinkClick, 2)} ${sign}</b>`,
+        );
+      }
     }
 
     lines.push('');

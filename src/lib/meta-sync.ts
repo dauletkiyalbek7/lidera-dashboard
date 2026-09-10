@@ -510,6 +510,10 @@ export type AdTotals = {
   ctr: number;
   cpc: number;
   cpm: number;
+  /** Клики по самой ссылке: их и считают рекламой, а не касанием экрана. */
+  linkClicks: number;
+  linkCtr: number;
+  costPerLinkClick: number;
   spend: number;
   /** Результаты по счёту кабинета. */
   leads: number;
@@ -567,6 +571,7 @@ export async function adAccountTotals(
     impressions: 0,
     reach: 0,
     clicks: 0,
+    linkClicks: 0,
     spend: 0,
     leads: 0,
     campaigns: [] as { externalId: string; spend: number; leads: number }[],
@@ -612,9 +617,15 @@ export async function adAccountTotals(
             campaignScope(ids) +
             `&limit=200&access_token=${token}`,
         ),
-        graph<{ impressions?: string; reach?: string; clicks?: string; spend?: string }>(
+        graph<{
+          impressions?: string;
+          reach?: string;
+          clicks?: string;
+          inline_link_clicks?: string;
+          spend?: string;
+        }>(
           `${GRAPH}/${actId}/insights?level=account` +
-            `&fields=impressions,reach,clicks,spend` +
+            `&fields=impressions,reach,clicks,inline_link_clicks,spend` +
             `&time_range=${window}` +
             campaignScope(ids) +
             `&limit=100&access_token=${token}`,
@@ -635,6 +646,7 @@ export async function adAccountTotals(
         total.impressions += Number(row.impressions ?? 0);
         total.reach += Number(row.reach ?? 0);
         total.clicks += Number(row.clicks ?? 0);
+        total.linkClicks += Number(row.inline_link_clicks ?? 0);
         total.spend += Number(row.spend ?? 0);
       }
 
@@ -653,6 +665,8 @@ export async function adAccountTotals(
     ctr: (total.clicks / total.impressions) * 100,
     cpc: total.clicks ? total.spend / total.clicks : 0,
     cpm: (total.spend / total.impressions) * 1000,
+    linkCtr: (total.linkClicks / total.impressions) * 100,
+    costPerLinkClick: total.linkClicks ? total.spend / total.linkClicks : 0,
   };
 }
 

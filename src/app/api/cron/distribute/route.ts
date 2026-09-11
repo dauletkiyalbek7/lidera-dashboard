@@ -26,6 +26,10 @@ export const dynamic = 'force-dynamic';
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  // С этой секунды и до шестидесятой у функции есть время. Отчёты в группы
+  // идут последними и должны знать, сколько его осталось: отправка, начатая
+  // на пятьдесят девятой секунде, не доходит никуда.
+  const startedAt = Date.now();
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!serviceKey) {
@@ -50,7 +54,7 @@ export async function POST(request: Request) {
 
   // Отчёты в группы — по своему расписанию, а не по концу рабочего дня:
   // руководителю нужна и утренняя сводка за вчера, и вечерняя за сегодня.
-  const group = await runGroupReports();
+  const group = await runGroupReports(startedAt);
 
   return NextResponse.json({
     ok: true,

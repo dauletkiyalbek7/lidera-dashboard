@@ -57,13 +57,20 @@ export const PERIOD_LABELS: Record<ReportPeriod, string> = {
 };
 
 /**
- * Сколько времени готовы потратить на обновление цифр перед отправкой.
+ * Сколько живёт один заход планировщика: на 60-й секунде функцию обрывают.
  *
- * Планировщик ходит раз в минуту и делает не только отчёты, поэтому запас
- * оставляем на всё остальное: ходить в Meta дольше — значит рисковать тем, что
- * функцию оборвут посреди отправки.
+ * Считаем от начала всего запроса, а не от начала отчётов: раздача лидов,
+ * напоминания и сводка дня идут раньше и съедают бо́льшую часть минуты. Раньше
+ * запас считался от начала отчётов — и выходило, что платформа бралась ходить
+ * в Meta, имея в распоряжении пару секунд.
  */
-const REFRESH_BUDGET_MS = 25_000;
+const REQUEST_BUDGET_MS = 55_000;
+
+/** Сколько нужно, чтобы собрать отчёт и отправить его, не ходя в кабинет. */
+const SEND_RESERVE_MS = 12_000;
+
+/** Меньше этого запаса — за свежим расходом в Meta уже не идём. */
+const REFRESH_RESERVE_MS = 30_000;
 
 /** Сколько роликов показываем в разборе: длинный список в чате не читают. */
 const TOP_CREATIVES = 5;
@@ -84,9 +91,11 @@ type ReportCompany = {
  *
  * Вызывается из планировщика раз в минуту вместе с раздачей лидов.
  */
-export async function runGroupReports(): Promise<ReportResult> {
+export async function runGroupReports(requestStartedAt = Date.now()): Promise<ReportResult> {
   const supabase = createAdminSupabase();
-  const startedAt = Date.now();
+
+  /** Сколько миллисекунд осталось до того, как функцию оборвут. */
+  const timeLeft = () => REQUEST_BUDGET_MS - (Date.now() - requestStartedAt);
 
   const { data: schedules } = await supabase
     .from('report_schedules')
@@ -126,6 +135,12 @@ export async function runGroupReports(): Promise<ReportResult> {
   const refreshed = new Map<string, AdsFreshness>();
 
   for (const schedule of schedules) {
+    // Не берёмся за то, что не успеем закончить. Отметка об отправке ставится
+    // до самой отправки, и если функцию оборвут посередине, отметка останется,
+    // а группа не получит ничего — до завтра. Лучше отдать эту минуту
+    // следующему заходу: он начнётся с чистого запаса.
+    if (timeLeft() < SEND_RESERVE_MS) break;
+
     const chat = chatById.get(schedule.chat_id);
     if (!chat) continue;
 
@@ -169,12 +184,14 @@ export async function runGroupReports(): Promise<ReportResult> {
       // Расход берём не тот, что лежит с прошлой синхронизации, а спрашиваем
       // кабинет заново: отчёт отправляют по часам и сверяют с Ads Manager, и
       // расхождение в пару часов читается как ошибка платформы.
-      // Если минуты уже почти не осталось, отчёт уходит с тем, что есть:
-      // непришедший отчёт хуже отчёта с цифрами двухчасовой давности.
+      //
+      // Если времени почти не осталось — не идём: сами цифры отчёт всё равно
+      // спрашивает у Meta напрямую, а эта синхронизация нужна кабинету
+      // платформы. Отправленный отчёт важнее обновлённой таблицы.
       const freshness =
         refreshed.get(company.id) ??
-        (Date.now() - startedAt > REFRESH_BUDGET_MS
-          ? ({ state: 'stale', syncedAt: null } as AdsFreshness)
+        (timeLeft() < REFRESH_RESERVE_MS
+          ? ({ state: 'none', syncedAt: null } as AdsFreshness)
           : await refreshCompanyAds(company.id));
       refreshed.set(company.id, freshness);
 

@@ -4,7 +4,6 @@ import { NextResponse } from 'next/server';
 
 import { runDistributionForAll } from '@/lib/lead-distribution';
 import { runDayReports } from '@/lib/day-report';
-import { runGroupReports } from '@/lib/group-report';
 import { runTouchReminders } from '@/lib/touch-runner';
 
 /**
@@ -21,15 +20,12 @@ import { runTouchReminders } from '@/lib/touch-runner';
  */
 
 export const dynamic = 'force-dynamic';
-// Перед отчётом в группу платформа успевает сходить в Meta за свежим расходом:
-// минуты по умолчанию на это не хватает.
+// Раздача, напоминания и сводка дня ходят в базу помногу раз: минуты по
+// умолчанию на это не хватает. Отчёты в группы живут в своём заходе —
+// api/cron/reports, — чтобы не делить с ними эту минуту.
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
-  // С этой секунды и до шестидесятой у функции есть время. Отчёты в группы
-  // идут последними и должны знать, сколько его осталось: отправка, начатая
-  // на пятьдесят девятой секунде, не доходит никуда.
-  const startedAt = Date.now();
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!serviceKey) {
@@ -52,15 +48,10 @@ export async function POST(request: Request) {
   // за минуту, уже записано, и цифры в нём сходятся с кабинетом.
   const day = await runDayReports();
 
-  // Отчёты в группы — по своему расписанию, а не по концу рабочего дня:
-  // руководителю нужна и утренняя сводка за вчера, и вечерняя за сегодня.
-  const group = await runGroupReports(startedAt);
-
   return NextResponse.json({
     ok: true,
     ...distribution,
     ...touches,
     ...day,
-    groupReports: group.sent,
   });
 }

@@ -126,8 +126,15 @@ export async function POST(
     return NextResponse.json({ ok: true });
   }
 
+  // Отказ отвечаем кодом 200, и это не небрежность.
+  //
+  // Tilda отключает вебхук, получив ошибку, и больше не шлёт ничего — пока
+  // человек не заметит и не включит руками. 12 сентября так и вышло: один
+  // запрос с чужим ключом получил 404, форму заблокировали, и заявки с сайта
+  // не приходили почти двое суток. Цена отказа несравнима: неверный ключ мы
+  // видим в журнале заявок сами, а потерянные полсотни заявок не вернуть.
   if (!/^[0-9a-f]{16,64}$/i.test(key)) {
-    return NextResponse.json({ error: 'неверный ключ' }, { status: 404 });
+    return NextResponse.json({ ok: false, error: 'неверный ключ' });
   }
 
   const supabase = createAdminSupabase();
@@ -135,13 +142,15 @@ export async function POST(
   const company = source?.company ?? null;
 
   // Заявку по чужому ключу тоже записываем, без компании: так видно, что
-  // какая-то форма стучится не туда, а не просто «лидов нет».
+  // какая-то форма стучится не туда, а не просто «лидов нет». Ключ пишем
+  // рядом: без него непонятно, какая из форм на сайте зовёт старый адрес, —
+  // а заявка при этом теряется живая.
   if (!company) {
     await logSubmission(supabase, null, payload, {
       status: 'rejected',
-      reason: 'вебхук вызван с неизвестным ключом',
+      reason: `вебхук вызван с неизвестным ключом: ${key}`,
     });
-    return NextResponse.json({ error: 'неверный ключ' }, { status: 404 });
+    return NextResponse.json({ ok: false, error: 'неверный ключ' });
   }
 
   if (source?.status === 'disabled') {
@@ -149,7 +158,7 @@ export async function POST(
       status: 'rejected',
       reason: 'поток заявок отключён',
     });
-    return NextResponse.json({ error: 'поток отключён' }, { status: 403 });
+    return NextResponse.json({ ok: false, error: 'поток отключён' });
   }
 
   if (company.status === 'inactive') {
@@ -157,7 +166,7 @@ export async function POST(
       status: 'rejected',
       reason: 'компания отключена',
     });
-    return NextResponse.json({ error: 'компания отключена' }, { status: 403 });
+    return NextResponse.json({ ok: false, error: 'компания отключена' });
   }
 
   const name = pick(payload, NAME_KEYS) ?? '';
@@ -184,10 +193,7 @@ export async function POST(
       status: 'rejected',
       reason: 'не нашли ни телефона, ни почты',
     });
-    return NextResponse.json(
-      { error: 'в заявке нет ни телефона, ни почты' },
-      { status: 422 },
-    );
+    return NextResponse.json({ ok: false, error: 'в заявке нет ни телефона, ни почты' });
   }
 
   const row = await leadFromPayload(supabase, company.id, source, payload, {

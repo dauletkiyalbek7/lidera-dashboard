@@ -259,6 +259,7 @@ export async function leadFromPayload(
   const fbclid = pick(payload, ['fbclid']);
   const fbc =
     pick(payload, ['fbc', '_fbc']) ??
+    cookie(payload, '_fbc') ??
     (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
 
   const utmContent = pick(payload, ['utm_content']) ?? null;
@@ -298,7 +299,7 @@ export async function leadFromPayload(
     utm_content: utmContent ?? adExternalId,
     utm_term: pick(payload, ['utm_term']) ?? null,
     fbc,
-    fbp: pick(payload, ['fbp', '_fbp']) ?? null,
+    fbp: pick(payload, ['fbp', '_fbp']) ?? cookie(payload, '_fbp') ?? null,
     external_id: pick(payload, ['tranid', 'transaction_id', 'external_id']) ?? null,
     status: 'new' as const,
     // Выгрузку заливают и задним числом — дата из неё честнее даты загрузки.
@@ -429,6 +430,28 @@ function flatten(json: Record<string, unknown>): Record<string, string> {
 }
 
 /** Первое непустое значение среди возможных названий поля, без учёта регистра. */
+/**
+ * Метка пикселя из куки лендинга.
+ *
+ * Tilda не присылает `_fbc` и `_fbp` отдельными полями — весь набор куки
+ * приходит одной строкой в `COOKIES`, и до сих пор мы её не разбирали. Без
+ * этих меток Meta сопоставляет покупку только по хешу телефона: часть продаж
+ * не привязывается к объявлению вовсе, и реклама учится на неполной картине.
+ */
+function cookie(payload: Record<string, string>, name: string): string | null {
+  const jar = pick(payload, ['cookies']);
+  if (!jar) return null;
+
+  for (const part of jar.split(';')) {
+    const crumb = part.trim();
+    if (!crumb.startsWith(`${name}=`)) continue;
+    const value = crumb.slice(name.length + 1).trim();
+    return value || null;
+  }
+
+  return null;
+}
+
 function pick(payload: Record<string, string>, keys: string[]): string | null {
   for (const [field, value] of Object.entries(payload)) {
     if (!value?.trim()) continue;

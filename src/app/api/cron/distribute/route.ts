@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { NextResponse } from 'next/server';
 
+import { reportPendingSales } from '@/lib/capi';
 import { runDistributionForAll } from '@/lib/lead-distribution';
 import { runDayReports } from '@/lib/day-report';
 import { runTouchReminders } from '@/lib/touch-runner';
@@ -48,10 +49,15 @@ export async function POST(request: Request) {
   // за минуту, уже записано, и цифры в нём сходятся с кабинетом.
   const day = await runDayReports();
 
+  // Покупки, которые ждали оценку продажника и не дождались. Обычно здесь
+  // пусто: горячие уходят сразу, из бота.
+  const capi = await reportPendingSales();
+
   return NextResponse.json({
     ok: true,
     ...distribution,
     ...touches,
     ...day,
+    ...capi,
   });
 }

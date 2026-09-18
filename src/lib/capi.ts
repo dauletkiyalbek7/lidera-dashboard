@@ -31,6 +31,18 @@ const API_VERSION = process.env.META_API_VERSION || 'v23.0';
 /** Meta привязывает покупку к объявлению, если та случилась в этот срок. */
 const ATTRIBUTION_DAYS = 7;
 
+/** Молчаливый отказ: набора данных у компании нет, и это не поломка. */
+const NOT_CONFIGURED = 'CAPI для компании не настроен';
+
+/** Сколько ждём оценку продажника, прежде чем отправить покупку без неё. */
+const QUALITY_GRACE_MS = 2 * 60 * 60 * 1000;
+
+/** Не отправилось трижды — значит дело не в сети, и долбить площадку незачем. */
+const MAX_ATTEMPTS = 3;
+
+/** Между попытками по одной продаже. */
+const RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
+
 export type PurchaseEvent = {
   saleId: string;
   value: number;
@@ -91,7 +103,7 @@ export async function sendPurchase(
     .maybeSingle();
 
   if (!settings || !settings.enabled) {
-    return { ok: false, error: 'CAPI для компании не настроен' };
+    return { ok: false, error: NOT_CONFIGURED };
   }
 
   const eventId = eventIdOf(event.saleId);
@@ -446,4 +458,105 @@ async function messagingRoute(
     ctwaClid: click.ctwa_clid,
     clickedAt: new Date(click.clicked_at),
   };
+}
+
+/**
+ * Сообщить площадке о покупке, не мешая тому, кто её записал.
+ *
+ * Отправка — дело рекламы, а не продажи: набор данных может быть не настроен,
+ * Meta может ответить отказом, сеть — отвалиться. Продавец, который только что
+ * провёл чек, к этому отношения не имеет и видеть ошибку не должен.
+ */
+export async function reportSale(companyId: string, saleId: string): Promise<CapiResult> {
+  try {
+    const result = await sendPurchaseForSale(companyId, saleId);
+
+    if (!result.ok && result.error !== NOT_CONFIGURED) {
+      console.warn(`capi: продажа ${saleId} не ушла — ${result.error}`);
+    }
+
+    return result;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'неизвестная ошибка';
+    console.warn(`capi: продажа ${saleId} не ушла — ${message}`);
+    return { ok: false, error: message };
+  }
+}
+
+/**
+ * Досылка покупок, о которых никто не вспомнил.
+ *
+ * Когда продажник отмечает клиента горячим, покупка уходит сразу. Но кнопку
+ * жмут не всегда: чек заводят в кабинете, продажник отвлекается на следующего
+ * клиента, отметку ставят через день. Ждать её вечно нельзя — Meta принимает
+ * событие семь дней, и чем свежее покупка, тем она полезнее для обучения.
+ * Поэтому через два часа отправляем и без оценки: не отправляем только тех,
+ * кого прямо назвали холодным.
+ *
+ * Неудачу повторяем, но не бесконечно: три попытки с перерывом в шесть часов.
+ * Дальше молчим — «Invalid parameter» от повторов не исправится, а журнал
+ * забивать нечем.
+ */
+export async function reportPendingSales(): Promise<{ purchases: number }> {
+  const supabase = createAdminSupabase();
+
+  const since = new Date(Date.now() - ATTRIBUTION_DAYS * 24 * 60 * 60 * 1000)
+    .toISOString()
+    .slice(0, 10);
+
+  const { data: sales } = await supabase
+    .from('sales')
+    .select('id, company_id, lead_id')
+    .eq('status', 'paid')
+    .gte('sale_date', since)
+    .lte('created_at', new Date(Date.now() - QUALITY_GRACE_MS).toISOString())
+    .limit(100);
+
+  if (!sales || sales.length === 0) return { purchases: 0 };
+
+  const saleIds = sales.map((sale) => sale.id);
+
+  const { data: attempts } = await supabase
+    .from('capi_events')
+    .select('sale_id, status, created_at')
+    .in('sale_id', saleIds);
+
+  const done = new Set<string>();
+  const tries = new Map<string, number>();
+  const lastTry = new Map<string, number>();
+
+  for (const row of attempts ?? []) {
+    if (!row.sale_id) continue;
+    if (row.status === 'sent') done.add(row.sale_id);
+    tries.set(row.sale_id, (tries.get(row.sale_id) ?? 0) + 1);
+    lastTry.set(row.sale_id, Math.max(lastTry.get(row.sale_id) ?? 0, Date.parse(row.created_at)));
+  }
+
+  const leadIds = sales
+    .map((sale) => sale.lead_id)
+    .filter((id): id is string => Boolean(id));
+
+  const { data: leads } = leadIds.length
+    ? await supabase.from('leads').select('id, quality').in('id', leadIds)
+    : { data: [] as { id: string; quality: string | null }[] };
+
+  const cold = new Set(
+    (leads ?? []).filter((lead) => lead.quality === 'cold').map((lead) => lead.id),
+  );
+
+  let purchases = 0;
+
+  for (const sale of sales) {
+    if (done.has(sale.id)) continue;
+    if (sale.lead_id && cold.has(sale.lead_id)) continue;
+    if ((tries.get(sale.id) ?? 0) >= MAX_ATTEMPTS) continue;
+
+    const previous = lastTry.get(sale.id);
+    if (previous && Date.now() - previous < RETRY_AFTER_MS) continue;
+
+    const result = await reportSale(sale.company_id, sale.id);
+    if (result.ok) purchases += 1;
+  }
+
+  return { purchases };
 }

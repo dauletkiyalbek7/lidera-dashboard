@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache';
 import { z } from 'zod';
 
 import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
+import { reportSale } from '@/lib/capi';
 import { runDistribution } from '@/lib/lead-distribution';
 import { LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
 import { LEAD_STATUS_ORDER, type LeadStatus } from '@/lib/lead-status';
@@ -214,7 +215,7 @@ export async function registerSale(
   // выручка останется за тем, кто её сделал.
   const seller = leadId ? await sellerOfLead(supabase, company.id, leadId) : null;
 
-  const { error } = await supabase
+  const { data: created, error } = await supabase
     .from('sales')
     .insert({
       company_id: company.id,
@@ -251,6 +252,12 @@ export async function registerSale(
       .eq('company_id', company.id);
   }
 
+  // Клиента назвали целевым — покупку отправляем сразу. Без оценки ждём два
+  // часа: вдруг её всё-таки поставят, а холодного отправлять не надо. Этим
+  // занимается досылка в планировщике.
+  if (created && parsed.data.status === 'paid' && parsed.data.quality === 'hot') {
+    await reportSale(company.id, created.id);
+  }
 
   revalidateCabinet();
   return { success: 'Продажа записана.' };
@@ -277,6 +284,8 @@ export async function updateSaleStatus(saleId: string, status: string): Promise<
   if (error) return { error: 'Не удалось изменить статус.' };
 
   // Оплату сообщаем рекламной площадке: именно на покупателях она учится.
+  // Не отсюда — досылка в планировщике заберёт её сама, вместе с оценкой
+  // клиента, если её успеют поставить.
 
   revalidateCabinet();
   return { success: 'Статус обновлён.' };

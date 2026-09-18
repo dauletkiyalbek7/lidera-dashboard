@@ -19,6 +19,7 @@ import {
   weekdayInZone,
   type ShiftRules,
 } from '@/lib/attendance';
+import { reportSale } from '@/lib/capi';
 import { createRateLookup } from '@/lib/currency';
 import { zonedDayWindow } from '@/lib/period';
 import { distanceMeters, formatDistance } from '@/lib/geo';
@@ -1781,6 +1782,22 @@ async function applyQuality(
   if (!lead) return answerCallback(query.id, 'Клиент не найден.');
 
   await answerCallback(query.id, LEAD_QUALITY[value].label);
+
+  // Горячий — тот, на ком рекламу учить стоит, и ждать нечего: чем свежее
+  // покупка, тем она полезнее алгоритму. Холодного не отправляем вовсе, и
+  // досылка его тоже обойдёт.
+  if (value === 'hot') {
+    const { data: sale } = await supabase
+      .from('sales')
+      .select('id')
+      .eq('company_id', employee.company_id)
+      .eq('lead_id', leadId)
+      .eq('status', 'paid')
+      .maybeSingle();
+
+    if (sale) await reportSale(employee.company_id, sale.id);
+  }
+
   return show(
     screen,
     `${qualityBadge(value)} — <b>${escapeHtml(lead.name || 'клиент')}</b>.\n${LEAD_QUALITY[value].hint}.`,

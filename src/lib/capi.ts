@@ -31,6 +31,21 @@ const API_VERSION = process.env.META_API_VERSION || 'v23.0';
 /** Meta привязывает покупку к объявлению, если та случилась в этот срок. */
 const ATTRIBUTION_DAYS = 7;
 
+/**
+ * Покупку старше недели Meta принимает только как офлайновую.
+ *
+ * Событию с сайта она отвечает «устаревшая метка времени» и отбрасывает его —
+ * проверено на боевом наборе данных. Но курс и правда оплачивают офлайн:
+ * переводом, в рассрочку, через неделю после разговора. Отправленная так
+ * покупка к объявлению уже не привяжется, зато попадёт в набор данных: из неё
+ * собирают похожие аудитории и на ней потом учится реклама. Потерять её
+ * насовсем — хуже.
+ */
+const OFFLINE_SOURCE = 'physical_store';
+
+/** Дальше этого срока не принимают и офлайновые. */
+const OFFLINE_DAYS = 60;
+
 /** Молчаливый отказ: набора данных у компании нет, и это не поломка. */
 const NOT_CONFIGURED = 'CAPI для компании не настроен';
 
@@ -70,6 +85,11 @@ function normalizePhone(phone: string): string | null {
   // Казахстанские номера часто пишут через 8 — приводим к 7.
   if (digits.length === 11 && digits.startsWith('8')) digits = `7${digits.slice(1)}`;
   return digits;
+}
+
+/** Покупка, которую Meta уже не примет как онлайновую. */
+function isStale(eventTime: Date): boolean {
+  return Date.now() - eventTime.getTime() > ATTRIBUTION_DAYS * 24 * 60 * 60 * 1000;
 }
 
 /** Один идентификатор на продажу: повторная отправка не задвоит покупку. */
@@ -138,7 +158,7 @@ export async function sendPurchase(
         event_name: 'Purchase',
         event_time: Math.floor(event.eventTime.getTime() / 1000),
         event_id: eventId,
-        action_source: 'system_generated',
+        action_source: isStale(event.eventTime) ? OFFLINE_SOURCE : 'system_generated',
         user_data: userData,
         custom_data: { value: event.value, currency: event.currency },
       },
@@ -276,10 +296,19 @@ async function post(
 
     const payload = (await result.json()) as {
       events_received?: number;
-      error?: { message: string };
+      error?: { message: string; error_user_title?: string; error_user_msg?: string };
     };
 
-    if (payload.error) return { ok: false, message: payload.error.message };
+    // Meta кладёт в message одно на все случаи — «Invalid parameter». Настоящая
+    // причина лежит рядом, в error_user_title: по ней сразу видно, чинить это
+    // нам или объяснять человеку.
+    if (payload.error) {
+      const { error } = payload;
+      return {
+        ok: false,
+        message: error.error_user_title ?? error.error_user_msg ?? error.message,
+      };
+    }
     return { ok: true, message: `принято событий: ${payload.events_received ?? 0}` };
   } catch (error) {
     return { ok: false, message: error instanceof Error ? error.message : 'сеть недоступна' };
@@ -500,7 +529,24 @@ export async function reportSale(companyId: string, saleId: string): Promise<Cap
 export async function reportPendingSales(): Promise<{ purchases: number }> {
   const supabase = createAdminSupabase();
 
-  const since = new Date(Date.now() - ATTRIBUTION_DAYS * 24 * 60 * 60 * 1000)
+  // Компании без набора данных пропускаем сразу. Иначе досылка каждую минуту
+  // перебирала бы их продажи впустую: у агентства проектов много, а кабинет
+  // подключён не у всех.
+  const [{ data: site }, { data: messaging }] = await Promise.all([
+    supabase.from('capi_settings').select('company_id').eq('enabled', true),
+    supabase.from('whatsapp_numbers').select('company_id').not('dataset_id', 'is', null),
+  ]);
+
+  const connected = [
+    ...new Set([
+      ...(site ?? []).map((row) => row.company_id),
+      ...(messaging ?? []).map((row) => row.company_id),
+    ]),
+  ];
+
+  if (connected.length === 0) return { purchases: 0 };
+
+  const since = new Date(Date.now() - OFFLINE_DAYS * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
 
@@ -508,6 +554,7 @@ export async function reportPendingSales(): Promise<{ purchases: number }> {
     .from('sales')
     .select('id, company_id, lead_id')
     .eq('status', 'paid')
+    .in('company_id', connected)
     .gte('sale_date', since)
     .lte('created_at', new Date(Date.now() - QUALITY_GRACE_MS).toISOString())
     .limit(100);

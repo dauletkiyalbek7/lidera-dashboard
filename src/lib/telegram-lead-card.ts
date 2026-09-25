@@ -1,6 +1,7 @@
 import { leadStatusFor, type LeadStatus } from '@/lib/lead-status';
 import type { FunnelType } from '@/lib/metrics';
 import { LEAD_QUALITY, LEAD_QUALITY_ORDER } from '@/lib/lead-quality';
+import { originLabel } from '@/lib/lead-origin';
 import type { InlineButton } from '@/lib/telegram';
 
 /**
@@ -14,6 +15,11 @@ export type LeadCardData = {
   phone: string | null;
   source: string | null;
   platform: string | null;
+  /**
+   * Метка ссылки: по ней Instagram отличается от YouTube внутри кабинета.
+   * Имя поля как в базе — карточке отдают строку лида целиком, без разбора.
+   */
+  utm_source?: string | null;
   status: string;
   /** Объявление, с которого пришёл лид, — с ним понятно, о чём говорить. */
   creativeLabel?: string | null;
@@ -35,22 +41,19 @@ export function leadCard(lead: LeadCardData, title?: string, trialTerm?: string)
     // ссылкой на звонок, а не куском текста.
     lead.phone ? `📞 ${escapeHtml(lead.phone)}` : null,
     lead.creativeLabel ? `🎬 ${escapeHtml(lead.creativeLabel)}` : null,
-    lead.platform || lead.source
-      ? `Источник: ${escapeHtml(sourceLabel(lead))}`
+    lead.platform || lead.source || lead.utm_source
+      ? `Источник: ${escapeHtml(
+          originLabel({
+            platform: lead.platform,
+            source: lead.source,
+            utmSource: lead.utm_source,
+          }),
+        )}`
       : null,
     `Статус: ${leadStatusFor(lead.status, trialTerm).label}`,
     lead.trialNote ? `🎓 Урок: ${escapeHtml(lead.trialNote)}` : null,
   ];
   return rows.filter(Boolean).join('\n');
-}
-
-function sourceLabel(lead: LeadCardData): string {
-  const source = lead.platform ?? lead.source ?? '';
-  if (source === 'meta') return 'Meta';
-  if (source === 'tiktok') return 'TikTok';
-  if (source === 'site') return 'Сайт';
-  if (source === 'whatsapp') return 'WhatsApp';
-  return source;
 }
 
 /**

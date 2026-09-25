@@ -4,6 +4,7 @@ import { EmptyState } from '@/components/ui/empty-state';
 import { IconLeads } from '@/components/ui/icons';
 import { formatDate, formatDateTime, formatMoney, formatTime } from '@/lib/format';
 import { leadStatusFor } from '@/lib/lead-status';
+import { originLabel } from '@/lib/lead-origin';
 import { SEARCH_LIMIT, type ClientMatch } from '@/lib/queries';
 import type { ReactNode } from 'react';
 import { trialStatusMeta } from '@/lib/trial-status';
@@ -120,7 +121,11 @@ export function ClientSearchResults({
                 <Fact label="Пришёл" value={formatDateTime(match.createdAt, timeZone)} />
                 <Fact
                   label="Источник"
-                  value={[match.platform, match.source].filter(Boolean).join(' · ') || null}
+                  value={originLabel({
+                    platform: match.platform,
+                    source: match.source,
+                    utmSource: match.utmSource,
+                  })}
                 />
                 <Fact
                   label="Объявление"

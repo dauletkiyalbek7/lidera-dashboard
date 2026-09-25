@@ -14,7 +14,7 @@ import { StatTile } from '@/components/ui/stat-tile';
 import { requireCompanySession } from '@/lib/auth';
 import { takesLeads, type EmployeeRole } from '@/lib/employee-role';
 import { formatDateTime, formatNumber, formatPercent } from '@/lib/format';
-import { PLATFORM_LABELS } from '@/lib/labels';
+import { originLabel } from '@/lib/lead-origin';
 import type { FunnelType } from '@/lib/metrics';
 import { currentRange } from '@/lib/period-preference';
 import { trialStatusMeta } from '@/lib/trial-status';
@@ -287,9 +287,11 @@ export default async function LeadsPage({
                         <PhoneCell phone={lead.phone} />
                       </Td>
                       <Td showFrom="md" className="text-ink-soft">
-                        {lead.platform
-                          ? (PLATFORM_LABELS[lead.platform] ?? lead.platform)
-                          : (lead.source ?? '—')}
+                        {originLabel({
+                          platform: lead.platform,
+                          source: lead.source,
+                          utmSource: lead.utmSource,
+                        })}
                       </Td>
                       {showDepartment ? (
                         <Td showFrom="xl" className="text-ink-soft">

@@ -849,7 +849,7 @@ async function listLeads(
   let query = supabase
     .from('leads')
     .select(
-      'id, name, phone, source, platform, status, creative_id, created_at, last_touch_at',
+      'id, name, phone, source, platform, utm_source, status, creative_id, created_at, last_touch_at',
       { count: 'exact' },
     )
     .eq('company_id', employee.company_id)
@@ -1170,7 +1170,7 @@ async function listTrials(
   const { data: lead } = trial.lead_id
     ? await supabase
         .from('leads')
-        .select('name, phone, source, platform, status, creative_id')
+        .select('name, phone, source, platform, utm_source, status, creative_id')
         .eq('id', trial.lead_id)
         .maybeSingle()
     : { data: null };

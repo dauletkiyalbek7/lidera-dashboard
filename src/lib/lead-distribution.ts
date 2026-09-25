@@ -228,7 +228,7 @@ function startOfToday(timeZone: string): string {
 async function distributeQueue(supabase: Admin, company: CompanySettings) {
   let pending = supabase
     .from('leads')
-    .select('id, name, phone, source, platform, status, creative_id, touch_count, assigned_at')
+    .select('id, name, phone, source, platform, utm_source, status, creative_id, touch_count, assigned_at')
     .eq('company_id', company.id)
     .is('assigned_to', null)
     .in('status', ACTIVE_STATUSES);
@@ -348,6 +348,7 @@ async function assignTo(
     phone: string | null;
     source: string | null;
     platform: string | null;
+    utm_source?: string | null;
     status: string;
     creativeLabel: string | null;
     touch_count?: number;

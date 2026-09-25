@@ -1263,6 +1263,8 @@ export type LeadListItem = {
   phone: string | null;
   source: string | null;
   platform: string | null;
+  /** Метка ссылки: различает Instagram, YouTube и Facebook внутри кабинета. */
+  utmSource: string | null;
   status: string;
   created_at: string;
   creativeName: string | null;
@@ -1402,7 +1404,7 @@ export async function getLeads(
   let leadQuery = supabase
     .from('leads')
     .select(
-      'id, name, phone, source, platform, status, created_at, creative_id, assigned_to, department_id',
+      'id, name, phone, source, platform, utm_source, status, created_at, creative_id, assigned_to, department_id',
     )
     .eq('company_id', companyId)
     .gte('created_at', day.startsAt)
@@ -1473,6 +1475,7 @@ export async function getLeads(
     phone: lead.phone,
     source: lead.source,
     platform: lead.platform,
+    utmSource: lead.utm_source,
     status: lead.status,
     created_at: lead.created_at,
     creativeName: lead.creative_id ? (creativeNames.get(lead.creative_id) ?? null) : null,
@@ -1508,6 +1511,8 @@ export type ClientMatch = {
   createdAt: string;
   source: string | null;
   platform: string | null;
+  /** Метка ссылки: различает Instagram, YouTube и Facebook внутри кабинета. */
+  utmSource: string | null;
   creativeName: string | null;
   assignedName: string | null;
   departmentName: string | null;
@@ -1570,7 +1575,7 @@ export async function searchClients(
   const { data: leads } = await supabase
     .from('leads')
     .select(
-      'id, name, phone, email, source, platform, status, created_at, creative_id, assigned_to, department_id, touch_count, last_touch_at, next_touch_at',
+      'id, name, phone, email, source, platform, utm_source, status, created_at, creative_id, assigned_to, department_id, touch_count, last_touch_at, next_touch_at',
     )
     .eq('company_id', companyId)
     .or([byPhone, byName].filter(Boolean).join(','))
@@ -1645,6 +1650,7 @@ export async function searchClients(
       createdAt: lead.created_at,
       source: lead.source,
       platform: lead.platform,
+      utmSource: lead.utm_source,
       creativeName: lead.creative_id ? (creativeNames.get(lead.creative_id) ?? null) : null,
       assignedName: lead.assigned_to ? (employeeNames.get(lead.assigned_to) ?? null) : null,
       departmentName: lead.department_id

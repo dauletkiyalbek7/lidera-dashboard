@@ -100,7 +100,7 @@ async function remindAboutLessons(supabase: Admin): Promise<number> {
     const [{ data: lead }, { data: company }] = await Promise.all([
       supabase
         .from('leads')
-        .select('name, phone, source, platform, status, creative_id')
+        .select('name, phone, source, platform, utm_source, status, creative_id')
         .eq('id', lesson.lead_id)
         .maybeSingle(),
       supabase

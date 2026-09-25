@@ -138,7 +138,7 @@ export async function notifyTrialBooked(
       .maybeSingle(),
     supabase
       .from('leads')
-      .select('name, phone, source, platform, status, creative_id')
+      .select('name, phone, source, platform, utm_source, status, creative_id')
       .eq('id', leadId)
       .eq('company_id', companyId)
       .maybeSingle(),

@@ -293,6 +293,8 @@ export type LeadRow = Timestamps & {
   /** Метки клика по рекламе — нужны событиям CAPI. */
   fbc: string | null;
   fbp: string | null;
+  /** То же для Google Ads: без номера клика покупку туда не вернуть. */
+  gclid: string | null;
   /** Номер отправки формы: защита от повторной заявки. */
   external_id: string | null;
   status: LeadStatus;

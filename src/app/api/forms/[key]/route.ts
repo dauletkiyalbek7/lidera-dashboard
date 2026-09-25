@@ -50,6 +50,9 @@ const SERVICE_KEYS = [
   'fbp',
   '_fbc',
   '_fbp',
+  'gclid',
+  'wbraid',
+  'gbraid',
   'referer',
   'referrer',
   'cookies',
@@ -262,6 +265,11 @@ export async function leadFromPayload(
     cookie(payload, '_fbc') ??
     (fbclid ? `fb.1.${Date.now()}.${fbclid}` : null);
 
+  // Метка клика Google. Кабинет ставит её сам при включённой автопометке, но
+  // до нас она доезжает только через скрытое поле формы — из адреса страницы
+  // её никто, кроме браузера, не видит.
+  const gclid = pick(payload, ['gclid', 'wbraid', 'gbraid']) ?? gclidFromCookie(payload);
+
   const utmContent = pick(payload, ['utm_content']) ?? null;
 
   // Выгрузка моментальной формы приносит номер объявления прямым полем, а
@@ -282,7 +290,9 @@ export async function leadFromPayload(
     email: contact.email,
     // Поток знает, откуда пришла заявка, и это надёжнее догадки по меткам.
     source: source?.platform ?? 'site',
-    platform: adPlatform(source?.platform) ?? (fbc ? 'meta' : null),
+    platform:
+      adPlatform(source?.platform) ??
+      guessedPlatform({ gclid, fbc, utmSource: pick(payload, ['utm_source']) }),
     department_id: source?.department_id ?? null,
     lead_source_id: source?.id ?? null,
     leadgen_id: idValue(pick(payload, LEADGEN_KEYS)),
@@ -299,6 +309,7 @@ export async function leadFromPayload(
     utm_content: utmContent ?? adExternalId,
     utm_term: pick(payload, ['utm_term']) ?? null,
     fbc,
+    gclid,
     fbp: pick(payload, ['fbp', '_fbp']) ?? cookie(payload, '_fbp') ?? null,
     external_id: pick(payload, ['tranid', 'transaction_id', 'external_id']) ?? null,
     status: 'new' as const,
@@ -346,6 +357,41 @@ async function sourceByKey(
 function adPlatform(value: string | undefined): 'meta' | 'tiktok' | 'google' | null {
   if (value === 'meta' || value === 'tiktok' || value === 'google') return value;
   return null;
+}
+
+/**
+ * Кабинет заявки, когда поток его не назвал: сайт принимает рекламу всех
+ * площадок сразу, и один поток на всех о площадке ничего не знает.
+ *
+ * Метка клика надёжнее метки в адресе: её ставит сам кабинет, а `utm_source`
+ * пишет человек руками и может ошибиться. Поэтому сначала метки, потом адрес.
+ */
+function guessedPlatform(marks: {
+  gclid: string | null;
+  fbc: string | null;
+  utmSource: string | null;
+}): 'meta' | 'tiktok' | 'google' | null {
+  if (marks.gclid) return 'google';
+  if (marks.fbc) return 'meta';
+
+  switch (marks.utmSource?.trim().toLowerCase()) {
+    case 'youtube':
+    case 'yt':
+    case 'google':
+      return 'google';
+    case 'tiktok':
+    case 'tt':
+      return 'tiktok';
+    case 'ig':
+    case 'insta':
+    case 'instagram':
+    case 'fb':
+    case 'facebook':
+    case 'meta':
+      return 'meta';
+    default:
+      return null;
+  }
 }
 
 /**
@@ -450,6 +496,22 @@ function cookie(payload: Record<string, string>, name: string): string | null {
   }
 
   return null;
+}
+
+/**
+ * Метка клика Google из куки — запасной путь, когда скрытого поля в форме нет.
+ *
+ * Google кладёт её не как есть, а с приставкой: `GCL.<время>.<метка>`. Кабинет
+ * принимает обратно только саму метку, поэтому приставку снимаем здесь, а не
+ * потом, при отправке покупки.
+ */
+function gclidFromCookie(payload: Record<string, string>): string | null {
+  const raw = cookie(payload, '_gcl_aw');
+  if (!raw) return null;
+
+  const parts = raw.split('.');
+  if (parts[0] !== 'GCL' || parts.length < 3) return raw;
+  return parts.slice(2).join('.') || null;
 }
 
 function pick(payload: Record<string, string>, keys: string[]): string | null {

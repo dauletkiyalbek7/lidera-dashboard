@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 
 import { PageBody, PageHeader } from '@/components/app/page-header';
+import { PLATFORM_TAB_LABELS, PlatformTabs } from '@/components/app/platform-tabs';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
@@ -74,17 +75,25 @@ const CAMPAIGN_STATUS: Record<string, { label: string; tone: 'positive' | 'neutr
 export default async function AdsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ period?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    period?: string;
+    from?: string;
+    to?: string;
+    platform?: string;
+  }>;
 }) {
   const { company, profile } = await requireAdsAccess();
   // Выручка и прибыль — деньги компании, они всегда в валюте продаж.
   const currency = company.sales_currency;
-  const range = await currentRange(await searchParams, company.timezone);
+  const params = await searchParams;
+  const range = await currentRange(params, company.timezone);
+  // Вкладка площадки: Meta и TikTok смотрят порознь.
+  const platform = params.platform ?? null;
 
   const [accounts, anyCampaign, breakdown, currencyNote] = await Promise.all([
     getAdAccounts(company.id),
     hasCampaigns(company.id),
-    getAdBreakdown(company.id, range.from, range.to),
+    getAdBreakdown(company.id, range.from, range.to, platform),
     getCurrencyNote(company.id, currency),
   ]);
 
@@ -139,7 +148,14 @@ export default async function AdsPage({
       />
 
       <PageBody>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <PlatformTabs
+          platforms={Array.from(new Set(accounts.map((account) => account.platform))).map(
+            (key) => ({ key, label: PLATFORM_TAB_LABELS[key] ?? key }),
+          )}
+          selected={platform}
+        />
+
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           <StatTile
             label="Расход"
             value={formatMoney(adSpend, { currency: adCurrency })}

@@ -6,6 +6,7 @@ import Link from 'next/link';
 import { PageBody, PageHeader } from '@/components/app/page-header';
 import { DateRangePicker } from '@/components/app/date-range-picker';
 import { DepartmentFilter } from '@/components/app/department-filter';
+import { PLATFORM_TAB_LABELS, PlatformTabs } from '@/components/app/platform-tabs';
 import { Td, TableShell } from '@/components/app/table';
 import { Badge } from '@/components/ui/badge';
 import { ButtonLink } from '@/components/ui/button';
@@ -77,6 +78,7 @@ export default async function CreativesPage({
     from?: string;
     to?: string;
     department?: string;
+    platform?: string;
   }>;
 }) {
   const { company } = await requireAdsAccess();
@@ -88,6 +90,8 @@ export default async function CreativesPage({
 
   // Отдел из адреса: ролики у отделов разные, и смотреть их надо порознь.
   const departmentId = params.department ?? null;
+  // Площадка из адреса — вкладка «Meta» или «TikTok».
+  const platform = params.platform ?? null;
 
   const [cards, accountCurrency, departments, accountNames] = await Promise.all([
     getCreativeCards(company.id, range.from, range.to, company.timezone, departmentId),
@@ -100,7 +104,8 @@ export default async function CreativesPage({
 
   // Показываем только то, что за период работало: тратило бюджет или приводило
   // людей. Креатив, который не крутился, в отчёте за этот период не при чём.
-  const shown = cards.filter((card) => card.spend > 0 || card.conversions > 0);
+  const working = cards.filter((card) => card.spend > 0 || card.conversions > 0);
+  const shown = platform ? working.filter((card) => card.platform === platform) : working;
 
   const conversions = shown.reduce((total, card) => total + card.conversions, 0);
   const cheapest = [...shown]
@@ -133,9 +138,9 @@ export default async function CreativesPage({
   // Кабинет подключён, а роликов нет — такое бывает, пока не прошла первая
   // синхронизация. Молчать об этом нельзя: расход площадки уже виден в
   // отчёте, и пустое место рядом читается как поломка платформы.
-  const awaiting = Array.from(accountNames.keys()).filter(
-    (platform) => !groups.some((group) => group.platform === platform),
-  );
+  const awaiting = Array.from(accountNames.keys())
+    .filter((key) => !platform || key === platform)
+    .filter((key) => !groups.some((group) => group.platform === key));
 
   return (
     <>
@@ -146,7 +151,16 @@ export default async function CreativesPage({
       />
 
       <PageBody>
-        <DepartmentFilter departments={activeDepartments} selected={departmentId} />
+        <div className="flex flex-wrap items-center gap-2">
+          <PlatformTabs
+            platforms={Array.from(accountNames.keys()).map((key) => ({
+              key,
+              label: PLATFORM_TAB_LABELS[key] ?? key,
+            }))}
+            selected={platform}
+          />
+          <DepartmentFilter departments={activeDepartments} selected={departmentId} />
+        </div>
 
         {shown.length === 0 ? (
           <EmptyState
@@ -165,7 +179,11 @@ export default async function CreativesPage({
               <StatTile
                 label="Креативов работало"
                 value={formatNumber(shown.length)}
-                hint={`Всего в кабинете: ${formatNumber(cards.length)}`}
+                hint={`Всего в кабинете: ${formatNumber(
+                  platform
+                    ? cards.filter((card) => card.platform === platform).length
+                    : cards.length,
+                )}`}
               />
               <StatTile
                 label="Расход за период"

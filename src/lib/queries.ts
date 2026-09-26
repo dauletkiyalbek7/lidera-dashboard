@@ -1045,18 +1045,25 @@ export async function getAdBreakdown(
   companyId: string,
   from: string,
   to: string,
+  /** Вкладка площадки: null — все сразу. */
+  platform?: string | null,
 ): Promise<AdBreakdown> {
   const supabase = await createServerSupabase();
 
-  const metrics = await selectAll((start, end) =>
-    supabase
+  const metrics = await selectAll((start, end) => {
+    let query = supabase
       .from('ad_metrics')
       .select('campaign_id, date, spend, impressions, clicks, leads, conversations, currency')
       .eq('company_id', companyId)
       .gte('date', from)
       .lte('date', to)
-      .range(start, end),
-  );
+      .range(start, end);
+
+    // Фильтруем по цифрам, а не по кампаниям: расход и так лежит с пометкой
+    // площадки, и второй источник правды здесь только разошёлся бы с первым.
+    if (platform) query = query.eq('platform', platform);
+    return query;
+  });
 
   // Кампании берём только те, что встретились в цифрах.
   //

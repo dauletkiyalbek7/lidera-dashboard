@@ -4,6 +4,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 
 import { creativeLabel } from '@/lib/creative-label';
 import { currencySymbol } from '@/lib/format';
+import { createRateLookup } from '@/lib/currency';
 import { adAccountTotals, refreshCompanyAds, type AdsFreshness } from '@/lib/meta-sync';
 import { zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
@@ -417,6 +418,8 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
       campaign_id: string | null;
       creative_id: string | null;
       platform: string | null;
+      currency: string | null;
+      date: string;
       spend: number;
       leads: number;
       conversations: number;
@@ -424,7 +427,7 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
       (start, end) =>
         supabase
           .from('ad_metrics')
-          .select('campaign_id, creative_id, platform, spend, leads, conversations')
+          .select('campaign_id, creative_id, platform, currency, date, spend, leads, conversations')
           .eq('company_id', input.companyId)
           .gte('date', from)
           .lte('date', to)
@@ -502,7 +505,23 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   // кабинету, и цифры заводят руками. В ответе Meta их нет, поэтому к её
   // расходу они прибавляются отдельно — иначе YouTube не виден в отчёте вовсе.
   const handEntered = counted.filter((row) => row.platform && row.platform !== 'meta');
-  const handSpend = sum(handEntered, (row) => Number(row.spend));
+
+  // Кабинет TikTok считает в тенге, а проект — в долларах. Расход лежит в
+  // валюте кабинета, поэтому складывать его с чужой валютой напрямую нельзя:
+  // без пересчёта одиннадцать тысяч тенге встали бы в отчёт долларами.
+  const foreign = handEntered.some((row) => row.currency && row.currency !== input.currency);
+  const rates = foreign
+    ? createRateLookup(
+        (await supabase.from('exchange_rates').select('date, code, kzt_per_unit')).data ?? [],
+      )
+    : null;
+
+  const spendOf = (row: { spend: number; currency: string | null; date: string }) =>
+    rates && row.currency && row.currency !== input.currency
+      ? rates.convert(Number(row.spend), row.currency, input.currency, row.date)
+      : Number(row.spend);
+
+  const handSpend = sum(handEntered, spendOf);
 
   const cabinetSpend =
     totals?.spend ??
@@ -562,10 +581,7 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
         lines.push(
           platformLine(
             PLATFORM_LINE[name] ?? name,
-            sum(
-              handEntered.filter((row) => row.platform === name),
-              (row) => Number(row.spend),
-            ),
+            sum(handEntered.filter((row) => row.platform === name), spendOf),
             handLeads.filter((lead) => lead.platform === name).length,
           ),
         );

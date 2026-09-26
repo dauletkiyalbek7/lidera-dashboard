@@ -27,6 +27,9 @@ const DEFAULT_WINDOW_DAYS = 30;
 /** Страница списка: больше тысячи TikTok за раз не отдаёт. */
 const PAGE_SIZE = 1000;
 
+/** За раз TikTok рассказывает не больше шестидесяти роликов. */
+const VIDEO_BATCH = 60;
+
 /** Отчёт с разбивкой по дням ограничен месяцем — это правило самого TikTok. */
 const MAX_REPORT_DAYS = 30;
 
@@ -88,6 +91,60 @@ async function call<T>(
   }
 
   return rows;
+}
+
+
+/**
+ * Обложки и ссылки на сами ролики.
+ *
+ * Отдельным запросом, потому что объявление знает только номер видео. Ссылки
+ * живут несколько часов и протухают — поэтому обновляем их каждую
+ * синхронизацию, а не записываем один раз навсегда.
+ *
+ * Сбой здесь не должен ронять весь кабинет: без обложки таблица креативов
+ * работает, без расхода — нет.
+ */
+async function videoInfo(
+  token: string,
+  advertiserId: string,
+  videoIds: string[],
+): Promise<Map<string, { cover: string | null; preview: string | null }>> {
+  const found = new Map<string, { cover: string | null; preview: string | null }>();
+
+  for (let start = 0; start < videoIds.length; start += VIDEO_BATCH) {
+    const chunk = videoIds.slice(start, start + VIDEO_BATCH);
+    const query = new URLSearchParams({
+      advertiser_id: advertiserId,
+      video_ids: JSON.stringify(chunk),
+    });
+
+    try {
+      const response = await fetch(`${API}/file/video/ad/info/?${query.toString()}`, {
+        headers: { 'Access-Token': token },
+        cache: 'no-store',
+      });
+
+      const answer = (await response.json()) as TikTokAnswer<{
+        video_id?: string;
+        video_cover_url?: string;
+        preview_url?: string;
+      }>;
+
+      if (answer.code !== 0) continue;
+
+      for (const row of answer.data?.list ?? []) {
+        if (!row.video_id) continue;
+        found.set(row.video_id, {
+          cover: row.video_cover_url ?? null,
+          preview: row.preview_url ?? null,
+        });
+      }
+    } catch {
+      // Молча: обложки — украшение таблицы, а не её смысл.
+    }
+  }
+
+  return found;
 }
 
 /** Статус кампании и объявления одним словарём: TikTok называет их одинаково. */
@@ -328,6 +385,12 @@ async function syncAccount(
   const creativeIdByAd = new Map<string, string>();
 
   if (ads.length > 0) {
+    const videos = await videoInfo(
+      token,
+      account.account_id,
+      Array.from(new Set(ads.map((ad) => ad.video_id).filter(Boolean) as string[])),
+    );
+
     const { data: savedCreatives } = await supabase
       .from('creatives')
       .upsert(
@@ -340,6 +403,8 @@ async function syncAccount(
           format: ad.video_id ? ('video' as const) : ('image' as const),
           video_id: ad.video_id ?? null,
           body: ad.ad_text ?? null,
+          thumbnail_url: ad.video_id ? (videos.get(ad.video_id)?.cover ?? null) : null,
+          preview_url: ad.video_id ? (videos.get(ad.video_id)?.preview ?? null) : null,
         })) as never,
         { onConflict: 'company_id,platform,external_id' },
       )

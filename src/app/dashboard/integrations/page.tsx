@@ -115,6 +115,15 @@ export default async function IntegrationsPage() {
                         Открыть «Рекламу»
                       </ButtonLink>
                     ) : null}
+                    {item.platform === 'tiktok' ? (
+                      <ButtonLink
+                        href="/dashboard/integrations/tiktok"
+                        variant="secondary"
+                        size="sm"
+                      >
+                        {record?.account_id ? 'Настроить' : 'Подключить'}
+                      </ButtonLink>
+                    ) : null}
                   </div>
 
                   {syncError(record) ? (

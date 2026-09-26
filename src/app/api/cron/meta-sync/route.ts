@@ -3,9 +3,14 @@ import { createHash } from 'node:crypto';
 import { NextResponse } from 'next/server';
 
 import { isMetaConfigured, syncAllMetaAccounts } from '@/lib/meta-sync';
+import { isTikTokConfigured, syncAllTikTokAccounts } from '@/lib/tiktok-sync';
 
 /**
- * Синхронизация с Meta Ads: каждые два часа, глубокая — раз в сутки.
+ * Синхронизация рекламных кабинетов: каждые два часа, глубокая — раз в сутки.
+ *
+ * Кабинетов два вида — Meta и TikTok, — и ходим в оба одним запуском: у них
+ * общая модель данных и общий смысл «свежие цифры к ближайшему отчёту».
+ * Отказ одного не должен уносить второй, поэтому TikTok идёт своей веткой.
  *
  * Кабинет уточняет вчерашние цифры ещё пару дней, поэтому раз в сутки окно
  * перезабирается целиком, все тридцать дней. Но делать это каждые два часа
@@ -41,23 +46,35 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 });
   }
 
-  if (!isMetaConfigured()) {
+  const deep = new Date().getUTCHours() === 0;
+  const windowDays = deep ? undefined : LIGHT_WINDOW_DAYS;
+
+  const meta = isMetaConfigured()
+    ? await syncAllMetaAccounts(deep ? undefined : { windowDays: LIGHT_WINDOW_DAYS })
+    : null;
+
+  // TikTok считаем отдельно: у него свой токен, и отсутствие одного из двух
+  // кабинетов — обычное дело, а не повод отменить весь запуск.
+  const tiktok = (await isTikTokConfigured())
+    ? await syncAllTikTokAccounts(windowDays ? { windowDays } : undefined)
+    : null;
+
+  if (!meta && !tiktok) {
     return NextResponse.json(
-      { error: 'META_ACCESS_TOKEN не задан — синхронизация выключена' },
+      { error: 'ни один рекламный кабинет не подключён' },
       { status: 503 },
     );
   }
 
-  const deep = new Date().getUTCHours() === 0;
-  const result = await syncAllMetaAccounts(
-    deep ? undefined : { windowDays: LIGHT_WINDOW_DAYS },
-  );
-
   // Отложенный кабинет — не успех: данные по нему остались вчерашними.
   // Следующий запуск начнёт именно с него.
   return NextResponse.json({
-    ok: result.errors.length === 0 && result.skipped.length === 0,
+    ok:
+      (meta?.errors.length ?? 0) === 0 &&
+      (meta?.skipped.length ?? 0) === 0 &&
+      (tiktok?.errors.length ?? 0) === 0,
     window: deep ? 'full' : `${LIGHT_WINDOW_DAYS}d`,
-    ...result,
+    ...(meta ?? {}),
+    ...(tiktok ? { tiktok } : {}),
   });
 }

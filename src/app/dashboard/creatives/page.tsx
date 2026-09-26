@@ -23,10 +23,31 @@ import {
 } from '@/lib/format';
 import { moneyView } from '@/lib/money-view';
 import { currentRange } from '@/lib/period-preference';
-import { getAdSpendCurrency, getCreativeCards, getDepartments } from '@/lib/queries';
+import {
+  getAdAccountNames,
+  getAdSpendCurrency,
+  getCreativeCards,
+  getDepartments,
+} from '@/lib/queries';
 
 export const metadata: Metadata = { title: 'Креативы' };
 
+
+/**
+ * Площадки идут отдельными таблицами, а не одним списком с колонкой.
+ *
+ * Ролики Meta и TikTok сравнивать между собой бессмысленно: разные аукционы,
+ * разная цена показа, разная длина видео. Рядом в одной таблице они только
+ * сбивают — кажется, что одна площадка «дороже», хотя сравнивать надо внутри.
+ */
+const PLATFORM_TITLES: Record<string, string> = {
+  meta: 'Meta — Facebook и Instagram',
+  tiktok: 'TikTok',
+  google: 'YouTube',
+  other: 'Другие площадки',
+};
+
+const PLATFORM_ORDER = ['meta', 'tiktok', 'google', 'other'];
 
 /** Валюта живёт в шапке колонки: расход в одной, выручка в другой. */
 const baseColumns = (ad: string, own: string, middle: string) => [
@@ -68,10 +89,11 @@ export default async function CreativesPage({
   // Отдел из адреса: ролики у отделов разные, и смотреть их надо порознь.
   const departmentId = params.department ?? null;
 
-  const [cards, accountCurrency, departments] = await Promise.all([
+  const [cards, accountCurrency, departments, accountNames] = await Promise.all([
     getCreativeCards(company.id, range.from, range.to, company.timezone, departmentId),
     getAdSpendCurrency(company.id),
     getDepartments(company.id),
+    getAdAccountNames(company.id),
   ]);
 
   const activeDepartments = departments.filter((row) => row.status === 'active');
@@ -92,6 +114,21 @@ export default async function CreativesPage({
 
   const adSpend = shown.reduce((total, card) => total + adMoney(card), 0);
   const otherSpend = shown.reduce((total, card) => total + view.otherSpendOf(card), 0);
+
+  // Каждая площадка — своя таблица. Порядок задан, а незнакомая площадка
+  // встаёт в конец: она всё равно должна быть видна, пусть и без подписи.
+  const groups = Array.from(new Set(shown.map((card) => card.platform)))
+    .sort((a, b) => {
+      const left = PLATFORM_ORDER.indexOf(a);
+      const right = PLATFORM_ORDER.indexOf(b);
+      return (left === -1 ? 99 : left) - (right === -1 ? 99 : right);
+    })
+    .map((platform) => ({
+      platform,
+      title: PLATFORM_TITLES[platform] ?? platform,
+      account: accountNames.get(platform) ?? null,
+      rows: shown.filter((card) => card.platform === platform),
+    }));
 
   return (
     <>
@@ -146,10 +183,20 @@ export default async function CreativesPage({
               />
             </div>
 
-            <Card className="mt-4">
+            {groups.map((group) => (
+            <Card key={group.platform} className="mt-4">
               <CardHeader
-                title="Список креативов"
-                subtitle={`Отсортированы по расходу за ${range.label}. Нажмите строку — откроется ролик`}
+                title={group.title}
+                subtitle={
+                  group.account
+                    ? `Кабинет: ${group.account} · по расходу за ${range.label}`
+                    : `Отсортированы по расходу за ${range.label}`
+                }
+                action={
+                  <span className="text-[12.5px] text-faint">
+                    роликов: {formatNumber(group.rows.length)}
+                  </span>
+                }
               />
               <TableShell columns={columnsFor(
                   company.funnel_type,
@@ -157,7 +204,7 @@ export default async function CreativesPage({
                   currencySymbol(currency),
                   company.trial_term,
                 )} minWidth={1080}>
-                {shown.map((card) => {
+                {group.rows.map((card) => {
                   const href = `/dashboard/creatives/${card.id}?${new URLSearchParams({
                     period: range.preset ?? '',
                     from: range.from,
@@ -239,6 +286,7 @@ export default async function CreativesPage({
                 })}
               </TableShell>
             </Card>
+            ))}
           </>
         )}
       </PageBody>

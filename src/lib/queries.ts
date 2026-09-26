@@ -525,6 +525,32 @@ export async function hasCampaigns(companyId: string): Promise<boolean> {
  */
 
 
+/**
+ * Названия рекламных кабинетов по площадкам.
+ *
+ * Аналитика креативов разложена по площадкам, и над каждой таблицей нужно имя
+ * кабинета: у одной компании их бывает несколько, и «TikTok» без имени не
+ * отвечает на вопрос, чьи это деньги.
+ */
+export async function getAdAccountNames(
+  companyId: string,
+): Promise<Map<string, string>> {
+  const supabase = await createServerSupabase();
+  const { data } = await supabase
+    .from('ad_accounts')
+    .select('platform, account_name')
+    .eq('company_id', companyId)
+    .order('account_name');
+
+  const names = new Map<string, string>();
+  for (const row of data ?? []) {
+    const current = names.get(row.platform);
+    names.set(row.platform, current ? `${current}, ${row.account_name}` : row.account_name);
+  }
+
+  return names;
+}
+
 export type CreativeCard = {
   id: string;
   name: string;

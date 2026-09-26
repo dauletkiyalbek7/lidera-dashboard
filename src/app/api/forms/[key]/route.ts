@@ -28,7 +28,16 @@ const NAME_KEYS = ['name', 'имя', 'fio', 'фио', 'fullname', 'full_name', '
 const PHONE_KEYS = ['phone', 'телефон', 'tel', 'phone_number', 'номер'];
 const EMAIL_KEYS = ['email', 'почта', 'e-mail', 'mail'];
 /** Номер заявки в моментальной форме Meta — ключ сопоставления для CAPI. */
-const LEADGEN_KEYS = ['leadgen_id', 'lead_id', 'leadid', 'id'];
+const LEADGEN_KEYS = [
+  'leadgen_id',
+  'lead_id',
+  'leadid',
+  'id',
+  // TikTok зовёт тот же номер по-своему, а защита от повторной заливки
+  // держится именно на нём: без него та же выгрузка создаёт вторых людей.
+  'tiktok_lead_id',
+  'tiktok lead id',
+];
 /** Номер объявления: по нему заявка находит свой креатив и кампанию. */
 const AD_KEYS = ['ad_id', 'adid', 'utm_content'];
 
@@ -65,6 +74,12 @@ const SERVICE_KEYS = [
   'adset_id',
   'campaign_id',
   'created_time',
+  'tiktok_lead_id',
+  'tiktok lead id',
+  // Время заявки в выгрузке TikTok — десять цифр, ровно как телефон. Без
+  // этой строки заявка без номера звонила бы в 1790262664.
+  'time',
+  'timestamp',
 ];
 
 /**
@@ -116,6 +131,30 @@ function arrivedAt(raw: string | null): string | null {
   return parsed.toISOString();
 }
 
+/**
+ * Заголовки ответа. Форму на своём сайте пишут руками, и её запрос идёт с
+ * чужого домена — без разрешения браузер не покажет ей ответ, а человек за
+ * кодом решит, что заявка не ушла, и начнёт чинить работающее.
+ *
+ * Разрешаем всем: ключ и так стоит в коде страницы, а сделать этим можно
+ * ровно одно — создать заявку. Прочитать нельзя ничего.
+ */
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type',
+  'Access-Control-Max-Age': '86400',
+};
+
+function answer(body: Record<string, unknown>, status = 200) {
+  return NextResponse.json(body, { status, headers: CORS });
+}
+
+/** Браузер спрашивает разрешение до отправки формы с чужого домена. */
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: CORS });
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ key: string }> },
@@ -126,7 +165,7 @@ export async function POST(
   // Tilda при сохранении вебхука шлёт проверочный запрос: на него нужно
   // ответить успехом, иначе она не даст подключить форму.
   if (payload.test !== undefined && Object.keys(payload).length <= 2) {
-    return NextResponse.json({ ok: true });
+    return answer({ ok: true });
   }
 
   // Отказ отвечаем кодом 200, и это не небрежность.
@@ -137,7 +176,7 @@ export async function POST(
   // не приходили почти двое суток. Цена отказа несравнима: неверный ключ мы
   // видим в журнале заявок сами, а потерянные полсотни заявок не вернуть.
   if (!/^[0-9a-f]{16,64}$/i.test(key)) {
-    return NextResponse.json({ ok: false, error: 'неверный ключ' });
+    return answer({ ok: false, error: 'неверный ключ' });
   }
 
   const supabase = createAdminSupabase();
@@ -153,7 +192,7 @@ export async function POST(
       status: 'rejected',
       reason: `вебхук вызван с неизвестным ключом: ${key}`,
     });
-    return NextResponse.json({ ok: false, error: 'неверный ключ' });
+    return answer({ ok: false, error: 'неверный ключ' });
   }
 
   if (source?.status === 'disabled') {
@@ -161,7 +200,7 @@ export async function POST(
       status: 'rejected',
       reason: 'поток заявок отключён',
     });
-    return NextResponse.json({ ok: false, error: 'поток отключён' });
+    return answer({ ok: false, error: 'поток отключён' });
   }
 
   if (company.status === 'inactive') {
@@ -169,7 +208,7 @@ export async function POST(
       status: 'rejected',
       reason: 'компания отключена',
     });
-    return NextResponse.json({ ok: false, error: 'компания отключена' });
+    return answer({ ok: false, error: 'компания отключена' });
   }
 
   const name = pick(payload, NAME_KEYS) ?? '';
@@ -186,7 +225,7 @@ export async function POST(
       status: 'rejected',
       reason: 'проверочная заявка Meta',
     });
-    return NextResponse.json({ ok: true, test: true });
+    return answer({ ok: true, test: true });
   }
 
   // Заявка без единого контакта бесполезна: звонить и писать некуда. Но в
@@ -196,7 +235,7 @@ export async function POST(
       status: 'rejected',
       reason: 'не нашли ни телефона, ни почты',
     });
-    return NextResponse.json({ ok: false, error: 'в заявке нет ни телефона, ни почты' });
+    return answer({ ok: false, error: 'в заявке нет ни телефона, ни почты' });
   }
 
   const row = await leadFromPayload(supabase, company.id, source, payload, {
@@ -219,8 +258,8 @@ export async function POST(
       reason: duplicate ? 'такая заявка уже сохранена' : error.message,
     });
 
-    if (duplicate) return NextResponse.json({ ok: true, duplicate: true });
-    return NextResponse.json({ error: 'не удалось сохранить заявку' }, { status: 500 });
+    if (duplicate) return answer({ ok: true, duplicate: true });
+    return answer({ error: 'не удалось сохранить заявку' }, 500);
   }
 
   await logSubmission(supabase, company.id, payload, {
@@ -228,7 +267,7 @@ export async function POST(
     leadId: created?.id ?? null,
   });
 
-  return NextResponse.json({ ok: true });
+  return answer({ ok: true });
 }
 
 /**

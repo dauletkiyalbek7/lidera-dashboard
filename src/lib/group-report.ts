@@ -394,6 +394,18 @@ export type ReportBlock = {
   salesCurrency: string;
 };
 
+/**
+ * Подписи площадок в разбивке расхода.
+ *
+ * Google назван YouTube намеренно: на нём крутят только видео, и директор ищет
+ * в отчёте то слово, которым сам зовёт этот канал. Появится поиск — переименуем.
+ */
+const PLATFORM_LINE: Record<string, string> = {
+  google: 'YouTube',
+  tiktok: 'TikTok',
+  other: 'Другое',
+};
+
 /** Собрать отчёт по проекту. Отдельно от отправки — чтобы можно было проверить. */
 export async function buildReport(supabase: Admin, input: ReportInput): Promise<ReportBlock> {
   const { from, to } = periodRange(input.period, input.timezone);
@@ -401,11 +413,18 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   const has = (section: ReportSection) => input.sections.includes(section);
 
   const [metrics, leads, sales, campaigns, departments, creatives] = await Promise.all([
-    readAll<{ campaign_id: string | null; creative_id: string | null; spend: number; leads: number; conversations: number }>(
+    readAll<{
+      campaign_id: string | null;
+      creative_id: string | null;
+      platform: string | null;
+      spend: number;
+      leads: number;
+      conversations: number;
+    }>(
       (start, end) =>
         supabase
           .from('ad_metrics')
-          .select('campaign_id, creative_id, spend, leads, conversations')
+          .select('campaign_id, creative_id, platform, spend, leads, conversations')
           .eq('company_id', input.companyId)
           .gte('date', from)
           .lte('date', to)
@@ -414,13 +433,14 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
     readAll<{
       id: string;
       status: string;
+      platform: string | null;
       department_id: string | null;
       creative_id: string | null;
       assigned_to: string | null;
     }>((start, end) =>
         supabase
           .from('leads')
-          .select('id, status, department_id, creative_id, assigned_to')
+          .select('id, status, platform, department_id, creative_id, assigned_to')
           .eq('company_id', input.companyId)
           .gte('created_at', day.startsAt)
           .lt('created_at', day.endsBefore)
@@ -478,13 +498,31 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
   // живёт восточнее и закрывает день на час раньше нас. Кабинет показывает
   // цифры этот отчёт и сверяет глазами, поэтому здесь важнее совпасть с ним,
   // чем с Главной, где расход разложен по нашим суткам ради цены заявки.
-  const shownSpend = totals?.spend ?? spend;
+  // Площадки, которые статистику сами не отдают: у нас нет доступа к их
+  // кабинету, и цифры заводят руками. В ответе Meta их нет, поэтому к её
+  // расходу они прибавляются отдельно — иначе YouTube не виден в отчёте вовсе.
+  const handEntered = counted.filter((row) => row.platform && row.platform !== 'meta');
+  const handSpend = sum(handEntered, (row) => Number(row.spend));
+
+  const cabinetSpend =
+    totals?.spend ??
+    sum(
+      counted.filter((row) => !row.platform || row.platform === 'meta'),
+      (row) => Number(row.spend),
+    );
+
+  const shownSpend = cabinetSpend + handSpend;
 
   // Заявки — оттуда же, откуда деньги. Иначе в одной строке встретятся два
   // счёта: расход по кабинету и заявки по нашей базе, а цена заявки окажется
   // не той, что в Ads Manager. Свои цифры остаются в блоке «Заявки и статусы»,
   // где речь уже о работе отдела, а не о рекламе.
-  const shownLeads = totals?.leads ?? leads.length;
+  // Заявки этих площадок считает платформа: кабинет о них не спрашивают.
+  const handLeads = leads.filter((lead) => lead.platform && lead.platform !== 'meta');
+  const cabinetLeads =
+    totals?.leads ?? leads.filter((lead) => !lead.platform || lead.platform === 'meta').length;
+
+  const shownLeads = cabinetLeads + handLeads.length;
   const sign = currencySymbol(input.currency);
   const salesSign = currencySymbol(input.salesCurrency);
 
@@ -504,6 +542,36 @@ export async function buildReport(supabase: Admin, input: ReportInput): Promise<
           ? ` · цена заявки: <b>${money(shownSpend / shownLeads, 2)} ${sign}</b>`
           : ''),
     );
+    // Разбивка по площадкам — только когда их правда больше одной. Складывать
+    // Meta с YouTube в одну цену заявки нельзя: это разные каналы с разной
+    // ценой, и общее число не отвечает ни на один вопрос.
+    if (handSpend > 0 || handLeads.length > 0) {
+      const platformLine = (name: string, platformSpend: number, platformLeads: number) =>
+        `• ${name}: <b>${money(platformSpend, 2)} ${sign}</b> · заявок <b>${count(platformLeads)}</b>` +
+        (platformLeads && platformSpend
+          ? ` · по <b>${money(platformSpend / platformLeads, 2)} ${sign}</b>`
+          : '');
+
+      lines.push(platformLine('Meta', cabinetSpend, cabinetLeads));
+
+      const names = new Set(
+        [...handEntered, ...handLeads].map((row) => row.platform as string),
+      );
+
+      for (const name of names) {
+        lines.push(
+          platformLine(
+            PLATFORM_LINE[name] ?? name,
+            sum(
+              handEntered.filter((row) => row.platform === name),
+              (row) => Number(row.spend),
+            ),
+            handLeads.filter((lead) => lead.platform === name).length,
+          ),
+        );
+      }
+    }
+
     // Свой счёт Meta в отчёт не выносим: разрыв между её счётчиком и нашими
     // заявками объясняется настройкой выгрузки, а не работой отдела, и в
     // ежедневной сводке только сбивает. Разбираться с ним — отдельный разговор

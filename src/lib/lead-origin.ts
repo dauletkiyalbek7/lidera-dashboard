@@ -21,8 +21,8 @@ const UTM_LABELS: Record<string, string> = {
   meta: 'Meta',
   yt: 'YouTube',
   youtube: 'YouTube',
-  google: 'Google',
-  adwords: 'Google',
+  google: 'YouTube',
+  adwords: 'YouTube',
   tiktok: 'TikTok',
   tt: 'TikTok',
   whatsapp: 'WhatsApp',
@@ -32,7 +32,10 @@ const UTM_LABELS: Record<string, string> = {
 /** Площадки кабинетов — когда метки нет, но кабинет известен. */
 const PLATFORM_LABELS: Record<string, string> = {
   meta: 'Meta Ads',
-  google: 'Google Ads',
+  // Google здесь читается как YouTube: на нём крутят только видео, и человек
+  // в списке ищет то слово, которым сам зовёт этот канал. Появится поиск по
+  // Google — разведём по метке ссылки, она это уже умеет.
+  google: 'YouTube',
   tiktok: 'TikTok Ads',
   other: 'Другое',
 };

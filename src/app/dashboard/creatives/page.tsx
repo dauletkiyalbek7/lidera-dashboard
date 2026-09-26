@@ -130,6 +130,13 @@ export default async function CreativesPage({
       rows: shown.filter((card) => card.platform === platform),
     }));
 
+  // Кабинет подключён, а роликов нет — такое бывает, пока не прошла первая
+  // синхронизация. Молчать об этом нельзя: расход площадки уже виден в
+  // отчёте, и пустое место рядом читается как поломка платформы.
+  const awaiting = Array.from(accountNames.keys()).filter(
+    (platform) => !groups.some((group) => group.platform === platform),
+  );
+
   return (
     <>
       <PageHeader
@@ -286,6 +293,28 @@ export default async function CreativesPage({
                 })}
               </TableShell>
             </Card>
+            ))}
+
+            {awaiting.map((platform) => (
+              <Card key={platform} className="mt-4">
+                <CardHeader
+                  title={PLATFORM_TITLES[platform] ?? platform}
+                  subtitle={`Кабинет: ${accountNames.get(platform)}`}
+                />
+                <p className="p-5 text-[13px] leading-relaxed text-ink-soft sm:p-6">
+                  Роликов этой площадки платформа пока не знает. Они появятся после
+                  первой синхронизации кабинета — вместе с расходом по каждому ролику и
+                  привязкой заявок.{' '}
+                  {platform === 'tiktok' ? (
+                    <Link
+                      href="/dashboard/integrations/tiktok"
+                      className="text-lime hover:underline"
+                    >
+                      Подключить TikTok
+                    </Link>
+                  ) : null}
+                </p>
+              </Card>
             ))}
           </>
         )}

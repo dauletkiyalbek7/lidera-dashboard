@@ -53,9 +53,20 @@ export type LeadOrigin = {
   platform?: string | null;
   source?: string | null;
   utmSource?: string | null;
+  /** Название потока, которым заявка пришла: «TikTok сайт», «TikTok форма». */
+  sourceName?: string | null;
+  /** Площадка самого потока — не заявки. Общий поток сайта её не знает. */
+  sourcePlatform?: string | null;
 };
 
 export function originLabel(lead: LeadOrigin): string {
+  // Поток знает про заявку больше всех: он различает сайт и моментальную
+  // форму одной площадки, чего метка в ссылке не умеет. Но только когда он
+  // заведён под конкретный кабинет: общая «Форма на сайте» принимает рекламу
+  // всех площадок сразу и на вопрос «откуда человек» не отвечает.
+  const named = lead.sourcePlatform ? PLATFORM_LABELS[lead.sourcePlatform] : null;
+  if (named && lead.sourceName?.trim()) return lead.sourceName.trim();
+
   const utm = lead.utmSource?.trim().toLowerCase();
   if (utm && UTM_LABELS[utm]) return UTM_LABELS[utm];
 

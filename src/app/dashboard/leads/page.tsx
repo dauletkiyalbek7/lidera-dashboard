@@ -291,6 +291,8 @@ export default async function LeadsPage({
                           platform: lead.platform,
                           source: lead.source,
                           utmSource: lead.utmSource,
+                          sourceName: lead.sourceName,
+                          sourcePlatform: lead.sourcePlatform,
                         })}
                       </Td>
                       {showDepartment ? (

@@ -125,6 +125,8 @@ export function ClientSearchResults({
                     platform: match.platform,
                     source: match.source,
                     utmSource: match.utmSource,
+                    sourceName: match.sourceName,
+                    sourcePlatform: match.sourcePlatform,
                   })}
                 />
                 <Fact

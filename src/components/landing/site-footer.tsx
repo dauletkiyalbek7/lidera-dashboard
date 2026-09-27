@@ -8,6 +8,7 @@ const LINKS = [
   { href: '/#how', label: 'Как работает' },
   { href: '/contacts', label: 'Контакты' },
   { href: '/privacy', label: 'Политика конфиденциальности' },
+  { href: '/terms', label: 'Условия использования' },
 ];
 
 export function SiteFooter() {

@@ -181,6 +181,22 @@ async function fetchRows(key: string, since: string, until: string): Promise<Row
   return rows.filter((row) => row.date && row.campaign_id);
 }
 
+/**
+ * Имя ролика для списка.
+ *
+ * TikTok называет объявление датой создания — «Название рекламы2026-09-25
+ * 06:05:39». В кабинете это терпимо, а в списке роликов бессмысленно: рядом
+ * стоят два объявления с одинаковой строкой вместо имени. Подставляем имя
+ * кампании: она у каждого своя и человеку что-то говорит.
+ */
+function creativeName(row: Row): string {
+  const own = (row.ad_name ?? '').trim();
+  const auto = /^(название рекламы|ad name)\s*\d{4}-\d{2}-\d{2}/i.test(own);
+
+  if (own && !auto) return own;
+  return row.campaign?.trim() || own || 'Без названия';
+}
+
 /** Статус площадки словами платформы: у TikTok он приходит длинной строкой. */
 function statusOf(value?: string | null): 'active' | 'paused' {
   return value && /DISABLE|DELETE|SUSPEND|FROZEN/i.test(value) ? 'paused' : 'active';
@@ -275,7 +291,7 @@ async function syncCompany(
         Array.from(ads.values()).map((row) => ({
           company_id: connection.companyId,
           external_id: row.ad_id as string,
-          name: row.ad_name ?? 'Без названия',
+          name: creativeName(row),
           platform: 'tiktok' as const,
           status: statusOf(row.ad_status),
           format: row.video_id ? ('video' as const) : ('image' as const),

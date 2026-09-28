@@ -104,7 +104,14 @@ export default async function CreativesPage({
 
   // Показываем только то, что за период работало: тратило бюджет или приводило
   // людей. Креатив, который не крутился, в отчёте за этот период не при чём.
-  const working = cards.filter((card) => card.spend > 0 || card.conversions > 0);
+  //
+  // Заявки из CRM учитываем наравне с цифрами кабинета. У TikTok расход бывает
+  // виден на уровне объявления, а метка ролика приходит с заявкой: если судить
+  // по одному кабинету, ролик, который привёл шесть человек, пропадёт из списка
+  // как «не работавший».
+  const working = cards.filter(
+    (card) => card.spend > 0 || card.conversions > 0 || card.crmLeads > 0,
+  );
   const shown = platform ? working.filter((card) => card.platform === platform) : working;
 
   const conversions = shown.reduce((total, card) => total + card.conversions, 0);

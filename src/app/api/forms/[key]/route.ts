@@ -318,7 +318,10 @@ export async function leadFromPayload(
 
   // Объявление знает и свой креатив, и свою кампанию — заявка попадёт в оба
   // отчёта сразу.
-  const placement = await adPlacement(supabase, companyId, adExternalId);
+  const placement = await adPlacement(supabase, companyId, adExternalId, {
+    utmContent,
+    utmCampaign: pick(payload, ['utm_campaign']) ?? null,
+  });
   const arrived = arrivedAt(pick(payload, ['created_time']));
 
   return {
@@ -565,15 +568,77 @@ async function adPlacement(
   supabase: ReturnType<typeof createAdminSupabase>,
   companyId: string,
   adId: string | null,
+  label: { utmContent: string | null; utmCampaign: string | null },
 ): Promise<{ creativeId: string | null; campaignId: string | null }> {
-  if (!adId || !/^\d{5,25}$/.test(adId)) return { creativeId: null, campaignId: null };
+  if (adId && /^\d{5,25}$/.test(adId)) {
+    const { data } = await supabase
+      .from('ads')
+      .select('creative_id, campaign_id')
+      .eq('company_id', companyId)
+      .eq('external_id', adId)
+      .maybeSingle();
+
+    if (data) {
+      return { creativeId: data.creative_id ?? null, campaignId: data.campaign_id ?? null };
+    }
+  }
+
+  return byCreativeName(supabase, companyId, label);
+}
+
+/**
+ * Ролик по имени из метки — дорога TikTok.
+ *
+ * Meta подставляет в ссылку номер объявления, и его достаточно. TikTok кладёт
+ * туда имя ролика и через подчёркивание имя объявления:
+ * «Music_Refresh-6-2_Название рекламы2026-09-25 06:05:39». Номера в метке нет
+ * вовсе, поэтому ищем по имени — иначе колонка креатива у всех заявок с TikTok
+ * остаётся пустой.
+ *
+ * Один ролик крутится в нескольких кампаниях, и в названии платформа
+ * дописывает, в какой именно: «IMG_7124.MOV (QUIZ 2)». Когда таких несколько,
+ * выбираем по кампании из метки.
+ */
+async function byCreativeName(
+  supabase: ReturnType<typeof createAdminSupabase>,
+  companyId: string,
+  label: { utmContent: string | null; utmCampaign: string | null },
+): Promise<{ creativeId: string | null; campaignId: string | null }> {
+  const content = label.utmContent?.trim();
+
+  // Неподставленный макрос — это не имя ролика, а признак недонастроенной
+  // ссылки. Искать по нему нечего.
+  if (!content || content.startsWith('__') || content.length < 3) {
+    return { creativeId: null, campaignId: null };
+  }
 
   const { data } = await supabase
-    .from('ads')
-    .select('creative_id, campaign_id')
+    .from('creatives')
+    .select('id, name')
     .eq('company_id', companyId)
-    .eq('external_id', adId)
+    .eq('platform', 'tiktok');
+
+  const base = (name: string) => name.replace(/\s*\(([^)]*)\)\s*$/, '').trim();
+  const matches = (data ?? []).filter((row) => row.name && content.startsWith(base(row.name)));
+  if (matches.length === 0) return { creativeId: null, campaignId: null };
+
+  // Из нескольких одноимённых берём тот, чья кампания названа в метке.
+  const campaign = label.utmCampaign?.trim().toLowerCase() ?? '';
+  const best =
+    matches.find((row) => {
+      const hint = row.name.match(/\(([^)]*)\)\s*$/)?.[1]?.trim().toLowerCase();
+      return hint ? campaign.includes(hint) : false;
+    }) ??
+    // Длиннее совпавшее имя — точнее попадание: «Music_Refresh-6-2» побеждает
+    // «Music_Refresh-6».
+    [...matches].sort((a, b) => base(b.name).length - base(a.name).length)[0];
+
+  const { data: ad } = await supabase
+    .from('ads')
+    .select('campaign_id')
+    .eq('company_id', companyId)
+    .eq('creative_id', best.id)
     .maybeSingle();
 
-  return { creativeId: data?.creative_id ?? null, campaignId: data?.campaign_id ?? null };
+  return { creativeId: best.id, campaignId: ad?.campaign_id ?? null };
 }

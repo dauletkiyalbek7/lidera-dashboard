@@ -4,6 +4,7 @@ import { NextResponse } from 'next/server';
 
 import { isMetaConfigured, syncAllMetaAccounts } from '@/lib/meta-sync';
 import { isTikTokConfigured, syncAllTikTokAccounts } from '@/lib/tiktok-sync';
+import { isWindsorConfigured, syncAllWindsorAccounts } from '@/lib/windsor-sync';
 
 /**
  * Синхронизация рекламных кабинетов: каждые два часа, глубокая — раз в сутки.
@@ -59,7 +60,14 @@ export async function POST(request: Request) {
     ? await syncAllTikTokAccounts(windowDays ? { windowDays } : undefined)
     : null;
 
-  if (!meta && !tiktok) {
+  // Кабинеты без прямого токена идут через Windsor: расход тот же, подробность
+  // меньше. Компании с токеном эта ветка не трогает — иначе разбивка по роликам
+  // затиралась бы разбивкой по объявлениям.
+  const windsor = (await isWindsorConfigured())
+    ? await syncAllWindsorAccounts(windowDays ? { windowDays } : undefined)
+    : null;
+
+  if (!meta && !tiktok && !windsor) {
     return NextResponse.json(
       { error: 'ни один рекламный кабинет не подключён' },
       { status: 503 },
@@ -72,9 +80,11 @@ export async function POST(request: Request) {
     ok:
       (meta?.errors.length ?? 0) === 0 &&
       (meta?.skipped.length ?? 0) === 0 &&
-      (tiktok?.errors.length ?? 0) === 0,
+      (tiktok?.errors.length ?? 0) === 0 &&
+      (windsor?.errors.length ?? 0) === 0,
     window: deep ? 'full' : `${LIGHT_WINDOW_DAYS}d`,
     ...(meta ?? {}),
     ...(tiktok ? { tiktok } : {}),
+    ...(windsor ? { windsor } : {}),
   });
 }

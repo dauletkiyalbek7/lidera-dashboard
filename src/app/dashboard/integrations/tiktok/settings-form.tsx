@@ -21,11 +21,13 @@ export function TikTokSettingsForm({
   accountName,
   currency,
   hasToken,
+  hasWindsorKey,
 }: {
   advertiserId: string;
   accountName: string;
   currency: string;
   hasToken: boolean;
+  hasWindsorKey: boolean;
 }) {
   const [state, formAction] = useActionState(saveTikTokSettings, {} as TikTokState);
   const [syncState, setSyncState] = useState<TikTokState>({});
@@ -84,16 +86,37 @@ export function TikTokSettingsForm({
           }
         />
 
+        <Field
+          label={hasWindsorKey ? 'Новый ключ Windsor' : 'Ключ Windsor'}
+          name="windsorKey"
+          type="password"
+          autoComplete="off"
+          placeholder={hasWindsorKey ? 'Оставьте пустым, чтобы не менять' : 'API key'}
+          hint={
+            hasWindsorKey
+              ? 'Ключ сохранён и зашифрован. Заполняйте, только если меняете его.'
+              : 'Запасная дорога, пока TikTok проверяет приложение: onboard.windsor.ai → коннектор TikTok → вкладка API'
+          }
+        />
+
         <FormMessage error={state.error} success={state.success} />
         <SubmitButton />
       </form>
 
-      {hasToken ? (
+      {hasToken || hasWindsorKey ? (
         <div className="space-y-3 border-t border-line pt-4">
           <p className="text-[13px] text-ink-soft">
             Синхронизация идёт сама каждые два часа. Кнопка нужна в момент подключения —
             проверить, что ключи рабочие, не дожидаясь цикла.
           </p>
+
+          {!hasToken && hasWindsorKey ? (
+            <p className="text-[13px] text-ink-soft">
+              Сейчас данные идут через Windsor: он показывает рекламу на уровне
+              объявлений. Разбивку по роликам внутри объявления даёт только прямой
+              токен TikTok — добавьте его, когда площадка одобрит приложение.
+            </p>
+          ) : null}
 
           <FormMessage error={syncState.error} success={syncState.success} />
 

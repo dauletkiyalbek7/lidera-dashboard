@@ -7,6 +7,7 @@ import { requireCompanySession, VIEW_ONLY_ERROR } from '@/lib/auth';
 import { encryptSecret } from '@/lib/secrets';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { syncAllTikTokAccounts } from '@/lib/tiktok-sync';
+import { syncAllWindsorAccounts } from '@/lib/windsor-sync';
 
 /**
  * Подключение рекламного кабинета TikTok.
@@ -29,6 +30,12 @@ const settingsSchema = z.object({
   accountName: z.string().trim().min(1, 'Назовите кабинет').max(80),
   currency: z.enum(['KZT', 'USD', 'EUR', 'RUB']),
   token: z.string().trim().min(20, 'Токен слишком короткий').optional().or(z.literal('')),
+  windsorKey: z
+    .string()
+    .trim()
+    .min(10, 'Ключ Windsor слишком короткий')
+    .optional()
+    .or(z.literal('')),
 });
 
 export async function saveTikTokSettings(
@@ -43,6 +50,7 @@ export async function saveTikTokSettings(
     accountName: formData.get('accountName'),
     currency: formData.get('currency'),
     token: formData.get('token'),
+    windsorKey: formData.get('windsorKey'),
   });
 
   if (!parsed.success) {
@@ -58,12 +66,25 @@ export async function saveTikTokSettings(
     .eq('platform', 'tiktok')
     .maybeSingle();
 
-  const saved = (existing?.config ?? null) as { token_encrypted?: string } | null;
+  const saved = (existing?.config ?? null) as {
+    token_encrypted?: string;
+    windsor_key_encrypted?: string;
+  } | null;
 
-  // Пустое поле токена означает «оставить прежний» — иначе при каждой правке
-  // названия кабинета токен пришлось бы вводить заново.
-  if (!parsed.data.token && !saved?.token_encrypted) {
-    return { error: 'Для первого подключения нужен токен доступа.' };
+  // Пустое поле ключа означает «оставить прежний» — иначе при каждой правке
+  // названия кабинета ключи пришлось бы вводить заново.
+  const token = parsed.data.token
+    ? encryptSecret(parsed.data.token)
+    : (saved?.token_encrypted ?? null);
+
+  const windsorKey = parsed.data.windsorKey
+    ? encryptSecret(parsed.data.windsorKey)
+    : (saved?.windsor_key_encrypted ?? null);
+
+  // Дорог к кабинету две, и хватает любой: токен TikTok даёт разбивку по
+  // роликам, ключ Windsor — только по объявлениям, зато выдаётся сразу.
+  if (!token && !windsorKey) {
+    return { error: 'Нужен токен TikTok или ключ Windsor — хотя бы один.' };
   }
 
   const { error: integrationError } = await supabase.from('integrations').upsert(
@@ -73,9 +94,8 @@ export async function saveTikTokSettings(
       account_id: parsed.data.advertiserId,
       status: 'connected',
       config: {
-        token_encrypted: parsed.data.token
-          ? encryptSecret(parsed.data.token)
-          : saved!.token_encrypted,
+        ...(token ? { token_encrypted: token } : {}),
+        ...(windsorKey ? { windsor_key_encrypted: windsorKey } : {}),
       },
     } as never,
     { onConflict: 'company_id,platform' },
@@ -109,7 +129,11 @@ export async function saveTikTokSettings(
   revalidatePath('/dashboard/integrations/tiktok');
   revalidatePath('/dashboard/integrations');
 
-  return { success: 'Кабинет подключён. Первая загрузка пойдёт ближайшей синхронизацией.' };
+  return {
+    success: token
+      ? 'Кабинет подключён напрямую. Первая загрузка пойдёт ближайшей синхронизацией.'
+      : 'Кабинет подключён через Windsor. Первая загрузка пойдёт ближайшей синхронизацией.',
+  };
 }
 
 /**
@@ -122,17 +146,19 @@ export async function syncTikTokNow(): Promise<TikTokState> {
   const { readOnly } = await requireCompanySession();
   if (readOnly) return { error: VIEW_ONLY_ERROR };
 
-  const result = await syncAllTikTokAccounts({ windowDays: 7 });
+  // Прямой кабинет подробнее, поэтому он первый. Компании без токена уйдут в
+  // Windsor: он вернёт те же деньги, но на уровне объявлений.
+  const direct = await syncAllTikTokAccounts({ windowDays: 7 });
+  const windsor = await syncAllWindsorAccounts({ windowDays: 7 });
 
   revalidatePath('/dashboard/integrations/tiktok');
   revalidatePath('/dashboard/creatives');
   revalidatePath('/dashboard/ads');
 
-  if (result.errors.length > 0) {
-    return { error: `TikTok: ${result.errors[0].message}` };
-  }
+  const failure = direct.errors[0] ?? windsor.errors[0];
+  if (failure) return { error: `TikTok: ${failure.message}` };
 
-  const done = result.synced[0];
+  const done = direct.synced[0] ?? windsor.synced[0];
   if (!done) return { error: 'Подключённых кабинетов TikTok нет.' };
 
   return {

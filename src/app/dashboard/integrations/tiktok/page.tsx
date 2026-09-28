@@ -37,8 +37,13 @@ export default async function TikTokIntegrationPage() {
       .maybeSingle(),
   ]);
 
-  const config = (integration?.config ?? null) as { token_encrypted?: string } | null;
+  const config = (integration?.config ?? null) as {
+    token_encrypted?: string;
+    windsor_key_encrypted?: string;
+  } | null;
+
   const hasToken = Boolean(config?.token_encrypted);
+  const hasWindsorKey = Boolean(config?.windsor_key_encrypted);
 
   return (
     <>
@@ -54,9 +59,13 @@ export default async function TikTokIntegrationPage() {
               title="Подключение кабинета"
               subtitle="Ключи хранятся на сервере в зашифрованном виде и в браузер не передаются."
               action={
-                hasToken ? (
+                hasToken || hasWindsorKey ? (
                   <Badge tone={integration?.status === 'error' ? 'negative' : 'positive'}>
-                    {integration?.status === 'error' ? 'Ошибка' : 'Подключено'}
+                    {integration?.status === 'error'
+                      ? 'Ошибка'
+                      : hasToken
+                        ? 'Подключено'
+                        : 'Через Windsor'}
                   </Badge>
                 ) : (
                   <Badge tone="neutral">Не подключено</Badge>
@@ -69,6 +78,7 @@ export default async function TikTokIntegrationPage() {
               accountName={account?.account_name ?? ''}
               currency={account?.currency ?? 'KZT'}
               hasToken={hasToken}
+              hasWindsorKey={hasWindsorKey}
             />
           </Card>
 

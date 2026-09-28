@@ -50,6 +50,17 @@ export async function POST(request: Request) {
   const deep = new Date().getUTCHours() === 0;
   const windowDays = deep ? undefined : LIGHT_WINDOW_DAYS;
 
+  // Windsor идёт первым намеренно. У функции минута, Meta выбирает почти всю
+  // её целиком, и кабинет, стоящий за ней, до своей очереди не доживал: запуск
+  // обрывался по времени, а расход оставался вчерашним. Windsor — это один
+  // запрос, он пропускает Meta вперёд, ничего не теряя.
+  //
+  // Компании с прямым токеном TikTok эта ветка не трогает: Windsor видит
+  // рекламу на уровне объявлений, и его разбивка затёрла бы подробную.
+  const windsor = (await isWindsorConfigured())
+    ? await syncAllWindsorAccounts(windowDays ? { windowDays } : undefined)
+    : null;
+
   const meta = isMetaConfigured()
     ? await syncAllMetaAccounts(deep ? undefined : { windowDays: LIGHT_WINDOW_DAYS })
     : null;
@@ -58,13 +69,6 @@ export async function POST(request: Request) {
   // кабинетов — обычное дело, а не повод отменить весь запуск.
   const tiktok = (await isTikTokConfigured())
     ? await syncAllTikTokAccounts(windowDays ? { windowDays } : undefined)
-    : null;
-
-  // Кабинеты без прямого токена идут через Windsor: расход тот же, подробность
-  // меньше. Компании с токеном эта ветка не трогает — иначе разбивка по роликам
-  // затиралась бы разбивкой по объявлениям.
-  const windsor = (await isWindsorConfigured())
-    ? await syncAllWindsorAccounts(windowDays ? { windowDays } : undefined)
     : null;
 
   if (!meta && !tiktok && !windsor) {

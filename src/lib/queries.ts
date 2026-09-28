@@ -13,6 +13,7 @@ import {
   type PerformanceInput,
   type PerformanceSummary,
 } from '@/lib/metrics';
+import type { AdPlatform } from '@/lib/supabase/database.types';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 export { creativeLabel };
@@ -1041,6 +1042,13 @@ async function campaignsByIds(
   return rows;
 }
 
+/** Площадка из адреса — только если такая вообще есть у рекламных таблиц. */
+function adPlatform(value?: string | null): AdPlatform | null {
+  return value === 'meta' || value === 'tiktok' || value === 'google' || value === 'other'
+    ? value
+    : null;
+}
+
 export async function getAdBreakdown(
   companyId: string,
   from: string,
@@ -1061,7 +1069,11 @@ export async function getAdBreakdown(
 
     // Фильтруем по цифрам, а не по кампаниям: расход и так лежит с пометкой
     // площадки, и второй источник правды здесь только разошёлся бы с первым.
-    if (platform) query = query.eq('platform', platform);
+    //
+    // Площадка приходит из адреса строкой, поэтому сверяем её со списком: на
+    // `?platform=foo` раздел должен показать всё, а не упасть запросом.
+    const key = adPlatform(platform);
+    if (key) query = query.eq('platform', key);
     return query;
   });
 

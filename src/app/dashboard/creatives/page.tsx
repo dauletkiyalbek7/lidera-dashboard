@@ -102,17 +102,24 @@ export default async function CreativesPage({
 
   const activeDepartments = departments.filter((row) => row.status === 'active');
 
-  // Показываем только то, что за период работало: тратило бюджет или приводило
-  // людей. Креатив, который не крутился, в отчёте за этот период не при чём.
+  // «Работал» — тратил бюджет или приводил людей. По этому признаку список
+  // делится надвое, и он же считается в плитке наверху.
   //
   // Заявки из CRM учитываем наравне с цифрами кабинета. У TikTok расход бывает
   // виден на уровне объявления, а метка ролика приходит с заявкой: если судить
   // по одному кабинету, ролик, который привёл шесть человек, пропадёт из списка
   // как «не работавший».
-  const working = cards.filter(
-    (card) => card.spend > 0 || card.conversions > 0 || card.crmLeads > 0,
-  );
-  const shown = platform ? working.filter((card) => card.platform === platform) : working;
+  const worked = (card: (typeof cards)[number]) =>
+    card.spend > 0 || card.conversions > 0 || card.crmLeads > 0;
+
+  const working = cards.filter(worked);
+
+  // Показываем и те, что за период молчали. Владельцу нужен весь список
+  // запущенного: ролик без цифр — это тоже ответ, а не пустое место. Но
+  // сначала идут работавшие, иначе десяток полезных строк тонет в сотне
+  // нулевых.
+  const ordered = [...cards].sort((a, b) => Number(worked(b)) - Number(worked(a)));
+  const shown = platform ? ordered.filter((card) => card.platform === platform) : ordered;
 
   const conversions = shown.reduce((total, card) => total + card.conversions, 0);
   const cheapest = [...shown]
@@ -185,7 +192,11 @@ export default async function CreativesPage({
             <div className="mt-3 grid gap-3 sm:grid-cols-3">
               <StatTile
                 label="Креативов работало"
-                value={formatNumber(shown.length)}
+                value={formatNumber(
+                  platform
+                    ? working.filter((card) => card.platform === platform).length
+                    : working.length,
+                )}
                 hint={`Всего в кабинете: ${formatNumber(
                   platform
                     ? cards.filter((card) => card.platform === platform).length
@@ -221,8 +232,8 @@ export default async function CreativesPage({
                 title={group.title}
                 subtitle={
                   group.account
-                    ? `Кабинет: ${group.account} · по расходу за ${range.label}`
-                    : `Отсортированы по расходу за ${range.label}`
+                    ? `Кабинет: ${group.account} · работавшие за ${range.label} — сверху`
+                    : `Работавшие за ${range.label} — сверху`
                 }
                 action={
                   <span className="text-[12.5px] text-faint">

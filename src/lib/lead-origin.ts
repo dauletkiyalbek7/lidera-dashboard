@@ -40,6 +40,19 @@ const PLATFORM_LABELS: Record<string, string> = {
   other: 'Другое',
 };
 
+/**
+ * Как называть площадку, когда вид обращения известен из потока: «Мета сайт»,
+ * «TikTok форма». Коротко — потому что рядом стоит второе слово.
+ */
+const PLATFORM_PREFIX: Record<string, string> = {
+  meta: 'Мета',
+  tiktok: 'TikTok',
+  google: 'YouTube',
+};
+
+/** Вид обращения в названии потока: «TikTok сайт» → «сайт». */
+const STREAM_KIND = /(сайт|форма|квиз|лендинг|переписк\w*)/i;
+
 /** Потоки — самый грубый ответ, когда больше ничего не известно. */
 const SOURCE_LABELS: Record<string, string> = {
   site: 'Сайт',
@@ -65,7 +78,22 @@ export function originLabel(lead: LeadOrigin): string {
   // заведён под конкретный кабинет: общая «Форма на сайте» принимает рекламу
   // всех площадок сразу и на вопрос «откуда человек» не отвечает.
   const named = lead.sourcePlatform ? PLATFORM_LABELS[lead.sourcePlatform] : null;
-  if (named && lead.sourceName?.trim()) return lead.sourceName.trim();
+
+  if (named && lead.sourceName?.trim()) {
+    const stream = lead.sourceName.trim();
+    const own = lead.platform?.trim().toLowerCase();
+
+    // Один сайт принимает рекламу нескольких площадок: поток заведён под
+    // TikTok, а человек пришёл по метке Meta. Верить названию потока здесь
+    // нельзя — оно назовёт чужой кабинет. Площадку берём у самой заявки, а
+    // вид обращения оставляем из потока: «TikTok сайт» → «Мета сайт».
+    if (own && own !== lead.sourcePlatform && PLATFORM_PREFIX[own]) {
+      const kind = stream.match(STREAM_KIND)?.[1]?.toLowerCase();
+      return kind ? `${PLATFORM_PREFIX[own]} ${kind}` : PLATFORM_LABELS[own];
+    }
+
+    return stream;
+  }
 
   const utm = lead.utmSource?.trim().toLowerCase();
   if (utm && UTM_LABELS[utm]) return UTM_LABELS[utm];

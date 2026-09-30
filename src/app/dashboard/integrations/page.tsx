@@ -173,10 +173,19 @@ export default async function IntegrationsPage() {
                       {source.status === 'disabled' ? (
                         <Badge tone="negative">Отключён</Badge>
                       ) : null}
+                      {source.status !== 'disabled' && !source.distribute ? (
+                        <Badge tone="warning">Без раздачи</Badge>
+                      ) : null}
                     </div>
                     <code className="mt-1.5 block overflow-x-auto rounded-control border border-line bg-surface-2 px-3 py-2.5 text-[12.5px] text-ink">
                       {sourceUrl(source.webhookKey)}
                     </code>
+                    {source.status !== 'disabled' && !source.distribute ? (
+                      <p className="mt-1.5 text-[12px] leading-relaxed text-faint">
+                        Заявки сохраняются и видны в «Лидах», но менеджерам в Telegram не
+                        уходят — назначить их можно вручную.
+                      </p>
+                    ) : null}
                   </li>
                 ))}
               </ul>

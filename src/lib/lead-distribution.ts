@@ -224,6 +224,24 @@ function startOfToday(timeZone: string): string {
   return (start ?? new Date(`${today}T00:00:00Z`)).toISOString();
 }
 
+/**
+ * Потоки заявок, которые раздавать не велено.
+ *
+ * Поток заводят раньше людей, которые будут по нему звонить: заявки с TikTok
+ * уже собирают историю для сквозной аналитики, но менеджерам пока не нужны.
+ * Такой поток отмечен `distribute = false`, и его заявки лежат в «Лидах» без
+ * ответственного, пока директор не назначит их сам.
+ */
+async function mutedSources(supabase: Admin, companyId: string): Promise<string[]> {
+  const { data } = await supabase
+    .from('lead_sources')
+    .select('id')
+    .eq('company_id', companyId)
+    .eq('distribute', false);
+
+  return (data ?? []).map((row) => row.id);
+}
+
 /** Раздать всё, что лежит без ответственного. Порядок — от самых старых. */
 async function distributeQueue(supabase: Admin, company: CompanySettings) {
   let pending = supabase
@@ -237,6 +255,18 @@ async function distributeQueue(supabase: Admin, company: CompanySettings) {
   // человеку, открывшему смену, они упадут все разом как новая работа.
   if (company.distribute_from) {
     pending = pending.gte('created_at', company.distribute_from);
+  }
+
+  // Отсеиваем нераздаваемые потоки здесь, а не после выборки: иначе сотня
+  // таких заявок заняла бы весь предел запроса, и живая очередь встала бы.
+  //
+  // Проверка на пустой поток обязательна: `lead_source_id not in (...)` для
+  // заявки без потока даёт NULL, а не «истину», и все заявки с сайта, у
+  // которых потока нет, молча выпали бы из раздачи.
+  const muted = await mutedSources(supabase, company.id);
+  if (muted.length > 0) {
+    const ids = muted.map((id) => `"${id}"`).join(',');
+    pending = pending.or(`lead_source_id.is.null,lead_source_id.not.in.(${ids})`);
   }
 
   const { data: queue } = await pending

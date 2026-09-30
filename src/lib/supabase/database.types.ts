@@ -424,6 +424,8 @@ export type LeadSourceRow = Timestamps & {
   platform: 'meta' | 'tiktok' | 'google' | 'site' | 'whatsapp' | 'other';
   webhook_key: string;
   status: 'active' | 'disabled';
+  /** Отдавать ли заявки потока авто-раздаче. false — лид сохраняется, но не уходит менеджерам. */
+  distribute: boolean;
 }
 
 /** Сотрудник компании. Входа в кабинет у него нет — только Telegram-бот. */

@@ -2640,13 +2640,15 @@ export type LeadSourceItem = {
   webhookKey: string;
   departmentId: string | null;
   departmentName: string | null;
+  /** Уходят ли заявки потока менеджерам. false — лежат в «Лидах» без ответственного. */
+  distribute: boolean;
 };
 
 export async function getLeadSources(companyId: string): Promise<LeadSourceItem[]> {
   const supabase = await createServerSupabase();
   const { data } = await supabase
     .from('lead_sources')
-    .select('id, name, platform, status, webhook_key, department_id, departments(name)')
+    .select('id, name, platform, status, webhook_key, distribute, department_id, departments(name)')
     .eq('company_id', companyId)
     .order('name');
 
@@ -2660,6 +2662,7 @@ export async function getLeadSources(companyId: string): Promise<LeadSourceItem[
       webhookKey: row.webhook_key,
       departmentId: row.department_id,
       departmentName: department?.name ?? null,
+      distribute: row.distribute,
     };
   });
 }

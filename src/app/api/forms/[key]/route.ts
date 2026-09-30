@@ -595,9 +595,10 @@ async function adPlacement(
  * вовсе, поэтому ищем по имени — иначе колонка креатива у всех заявок с TikTok
  * остаётся пустой.
  *
- * Один ролик крутится в нескольких кампаниях, и в названии платформа
- * дописывает, в какой именно: «IMG_7124.MOV (QUIZ 2)». Когда таких несколько,
- * выбираем по кампании из метки.
+ * Один ролик крутится в нескольких кампаниях, и одноимённых объявлений столько
+ * же. Выбираем по кампании из метки: имя кампании целиком входит в `utm_campaign`
+ * — «Копия 1 объекта «SAIT QUIZ RUS 2»» содержит и «SAIT QUIZ RUS 2», поэтому
+ * из совпавших берём самое длинное имя, оно и есть точное.
  */
 async function byCreativeName(
   supabase: ReturnType<typeof createAdminSupabase>,
@@ -613,32 +614,37 @@ async function byCreativeName(
   }
 
   const { data } = await supabase
-    .from('creatives')
-    .select('id, name')
-    .eq('company_id', companyId)
-    .eq('platform', 'tiktok');
-
-  const base = (name: string) => name.replace(/\s*\(([^)]*)\)\s*$/, '').trim();
-  const matches = (data ?? []).filter((row) => row.name && content.startsWith(base(row.name)));
-  if (matches.length === 0) return { creativeId: null, campaignId: null };
-
-  // Из нескольких одноимённых берём тот, чья кампания названа в метке.
-  const campaign = label.utmCampaign?.trim().toLowerCase() ?? '';
-  const best =
-    matches.find((row) => {
-      const hint = row.name.match(/\(([^)]*)\)\s*$/)?.[1]?.trim().toLowerCase();
-      return hint ? campaign.includes(hint) : false;
-    }) ??
-    // Длиннее совпавшее имя — точнее попадание: «Music_Refresh-6-2» побеждает
-    // «Music_Refresh-6».
-    [...matches].sort((a, b) => base(b.name).length - base(a.name).length)[0];
-
-  const { data: ad } = await supabase
     .from('ads')
-    .select('campaign_id')
+    .select('creative_id, campaign_id, creatives(name, platform), campaigns(name)')
     .eq('company_id', companyId)
-    .eq('creative_id', best.id)
-    .maybeSingle();
+    .not('creative_id', 'is', null);
 
-  return { creativeId: best.id, campaignId: ad?.campaign_id ?? null };
+  type Row = {
+    creative_id: string | null;
+    campaign_id: string | null;
+    creatives: { name: string; platform: string } | null;
+    campaigns: { name: string } | null;
+  };
+
+  const campaign = label.utmCampaign?.trim().toLowerCase() ?? '';
+
+  const scored = ((data ?? []) as unknown as Row[])
+    .filter((row) => row.creatives?.platform === 'tiktok')
+    .filter((row) => row.creatives && content.startsWith(row.creatives.name))
+    .map((row) => {
+      const name = row.campaigns?.name?.trim().toLowerCase() ?? '';
+      return {
+        row,
+        // Кампания названа в метке — совпадение точное, и чем длиннее её имя,
+        // тем точнее: копия кампании содержит имя оригинала целиком.
+        campaignHit: name && campaign.includes(name) ? name.length : 0,
+        nameLength: row.creatives?.name.length ?? 0,
+      };
+    })
+    .sort((a, b) => b.campaignHit - a.campaignHit || b.nameLength - a.nameLength);
+
+  const best = scored[0]?.row;
+  if (!best) return { creativeId: null, campaignId: null };
+
+  return { creativeId: best.creative_id, campaignId: best.campaign_id };
 }

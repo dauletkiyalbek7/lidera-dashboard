@@ -70,6 +70,19 @@ export type PurchaseEvent = {
   /** Метки клика по объявлению из заявки — с ними атрибуция точная. */
   fbc: string | null;
   fbp: string | null;
+  /**
+   * Номер заявки из моментальной формы Meta.
+   *
+   * На моментальной форме человек не доходит до сайта, поэтому ни метки
+   * клика, ни куки пикселя у него нет — сопоставлять покупку не с чем, кроме
+   * телефона. По телефону Meta угадывает человека, но не объявление, которое
+   * его привело, и сквозная аналитика рассыпается.
+   *
+   * Этот номер Meta выдала сама, когда форму заполнили, и знает про него
+   * всё: объявление, группу, кампанию. С ним покупка садится ровно на ту
+   * заявку, из которой выросла.
+   */
+  leadgenId: string | null;
 };
 
 export type CapiResult = { ok: true; eventId: string } | { ok: false; error: string };
@@ -139,6 +152,9 @@ export async function sendPurchase(
   if (firstName) userData.fn = [hash(firstName)];
   if (event.fbc) userData.fbc = event.fbc;
   if (event.fbp) userData.fbp = event.fbp;
+  // Номер заявки Meta выдала сама и ждёт его как есть: хеширование здесь
+  // всё сломает — сравнивать его будут не с хешем, а со своей записью.
+  if (event.leadgenId) userData.lead_id = event.leadgenId;
 
   // Без единого совпадения Meta не с кем сопоставить покупку.
   if (Object.keys(userData).length === 0) {
@@ -396,13 +412,14 @@ export async function sendPurchaseForSale(
     email: string | null;
     fbc: string | null;
     fbp: string | null;
+    leadgen_id: string | null;
     whatsapp_number_id: string | null;
   } | null = null;
 
   if (sale.lead_id) {
     const { data } = await supabase
       .from('leads')
-      .select('name, phone, email, fbc, fbp, whatsapp_number_id')
+      .select('name, phone, email, fbc, fbp, leadgen_id, whatsapp_number_id')
       .eq('id', sale.lead_id)
       .maybeSingle();
     lead = data ?? null;
@@ -434,6 +451,7 @@ export async function sendPurchaseForSale(
     name: lead?.name ?? null,
     fbc: lead?.fbc ?? null,
     fbp: lead?.fbp ?? null,
+    leadgenId: lead?.leadgen_id ?? null,
   });
 }
 

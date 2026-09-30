@@ -631,6 +631,8 @@ export async function sendTestPurchase(
     name: 'Тест',
     fbc: null,
     fbp: null,
+    // Пробное событие ни из какой формы не выросло.
+    leadgenId: null,
   });
 
   revalidatePath(`/admin/companies/${companyId.data}`);

@@ -946,7 +946,7 @@ async function pullFromMeta(
     creativeRows.set(creative.id, {
       company_id: account.company_id,
       external_id: creative.id,
-      name: videoData?.title || linkData?.name || creative.name || ad.name,
+      name: creativeName(creative, videoData?.title ?? linkData?.name ?? null, ad.name),
       platform: 'meta' as const,
       format: videoId ? 'video' : 'image',
       status: adStatus(ad.status),
@@ -1286,6 +1286,35 @@ function round2(value: number): number {
 
 function round4(value: number): number {
   return Number(value.toFixed(4));
+}
+
+/**
+ * Читаемое имя креатива.
+ *
+ * У объявлений click-to-WhatsApp заголовок один на всех — «Напишите нам», — и
+ * десяток роликов в списке выглядит одной строкой: по имени не понять, какой
+ * из них привёл человека. Отличает их дата сборки, и она есть только в
+ * служебном имени из Ads Manager («Напишите нам 2026-09-11-4fb4…»).
+ *
+ * Дата здесь не украшение: ролик, собранный до переезда на новый номер
+ * WhatsApp, ведёт людей на старый — и в отчёте он выглядит дорогим, а не
+ * сломанным. С датой в имени это видно сразу.
+ */
+function creativeName(
+  creative: { name?: string },
+  headline: string | null,
+  adName: string | null,
+): string {
+  const base = headline?.trim() || creative.name?.trim() || adName?.trim() || 'Креатив';
+  const built = creative.name?.match(/\d{4}-(\d{2})-(\d{2})/);
+
+  if (!built) return base;
+
+  // Имя из Ads Manager уже содержит дату и случайный хвост: отрезаем их,
+  // иначе дата встанет в строку дважды.
+  const at = base.indexOf(built[0]);
+
+  return `${at > 0 ? base.slice(0, at).trim() : base} · ${built[2]}.${built[1]}`;
 }
 
 function campaignStatus(status: string): 'active' | 'paused' | 'archived' {

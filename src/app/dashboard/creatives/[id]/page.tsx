@@ -64,6 +64,22 @@ export default async function CreativePage({
       ? formatMoney(value, { currency: view.otherCurrency })
       : null;
 
+  /**
+   * Крупная цифра «Лиды» — это заявки в платформе, а не результат из кабинета.
+   *
+   * На переписках в WhatsApp кабинет считает вчетверо-впятеро больше, чем
+   * людей реально написало: он засчитывает всех, у кого открылся чат, даже
+   * если человек закрыл его, не отправив. Хуже того, ролик, уводящий на
+   * чужой номер, по этой цифре выглядит лучшим в проекте.
+   *
+   * Поэтому главной стоит заявка, которую мы видели своими глазами, а цифра
+   * кабинета остаётся подписью — расхождение само объясняет, что происходит.
+   */
+  const cabinetHint =
+    creative.conversions > creative.crmLeads
+      ? `В кабинете ${formatNumber(creative.conversions)} — он считает и тех, кто не написал`
+      : 'Заявки, дошедшие до платформы';
+
   const status =
     creative.status === 'active'
       ? { label: 'Активен', tone: 'positive' as const }
@@ -115,16 +131,14 @@ export default async function CreativePage({
               />
               <StatTile
                 label="Лиды"
-                value={formatNumber(creative.conversions)}
-                hint="Заявки и начатые переписки"
+                value={formatNumber(creative.crmLeads)}
+                hint={cabinetHint}
                 accent
               />
               <StatTile
                 label="Цена лида"
-                value={
-                  creative.conversions ? formatMoney(spend / creative.conversions, ad) : '—'
-                }
-                hint={also(per(otherSpend, creative.conversions))}
+                value={creative.crmLeads ? formatMoney(spend / creative.crmLeads, ad) : '—'}
+                hint={also(per(otherSpend, creative.crmLeads))}
               />
               <StatTile
                 label="Клики"
@@ -173,8 +187,8 @@ export default async function CreativePage({
               <StatTile
                 label="Из лида в клиента"
                 value={
-                  creative.conversions
-                    ? formatPercent((creative.sales / creative.conversions) * 100, 1)
+                  creative.crmLeads
+                    ? formatPercent((creative.sales / creative.crmLeads) * 100, 1)
                     : '—'
                 }
                 hint="Сколько обращений дошло до покупки"
@@ -184,8 +198,8 @@ export default async function CreativePage({
                   label={trialWords(company.trial_term).section}
                   value={formatNumber(creative.trials)}
                   hint={
-                    creative.conversions
-                      ? `Дошли до этого шага: ${formatPercent((creative.trials / creative.conversions) * 100, 1)}`
+                    creative.crmLeads
+                      ? `Дошли до этого шага: ${formatPercent((creative.trials / creative.crmLeads) * 100, 1)}`
                       : 'Состоявшиеся встречи по заявкам этого ролика'
                   }
                 />

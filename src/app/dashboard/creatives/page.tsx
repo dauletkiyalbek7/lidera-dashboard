@@ -121,10 +121,14 @@ export default async function CreativesPage({
   const ordered = [...cards].sort((a, b) => Number(worked(b)) - Number(worked(a)));
   const shown = platform ? ordered.filter((card) => card.platform === platform) : ordered;
 
-  const conversions = shown.reduce((total, card) => total + card.conversions, 0);
+  // Считаем по заявкам, дошедшим до платформы, а не по результату кабинета:
+  // на переписках в WhatsApp кабинет засчитывает и тех, у кого чат открылся,
+  // но кто ничего не отправил. По его цифре самым дешёвым роликом регулярно
+  // оказывается тот, что уводит людей на чужой номер и не приводит никого.
+  const conversions = shown.reduce((total, card) => total + card.crmLeads, 0);
   const cheapest = [...shown]
-    .filter((card) => card.conversions > 0)
-    .sort((a, b) => a.costPerConversion - b.costPerConversion)[0];
+    .filter((card) => card.crmLeads > 0)
+    .sort((a, b) => a.spend / a.crmLeads - b.spend / b.crmLeads)[0];
 
   // Расход в выбранной рекламной валюте, вторая — подписью рядом.
   const view = moneyView(company.currency, currency, accountCurrency);
@@ -216,7 +220,7 @@ export default async function CreativesPage({
                 label="Самый дешёвый"
                 value={
                   cheapest
-                    ? formatMoney(adMoney(cheapest) / cheapest.conversions, {
+                    ? formatMoney(adMoney(cheapest) / cheapest.crmLeads, {
                         currency: adCurrency,
                       })
                     : '—'
@@ -294,11 +298,11 @@ export default async function CreativesPage({
                         {formatPercent(card.ctr, 2)}
                       </Td>
                       <Td align="right" className="tabular font-medium text-lime">
-                        {formatNumber(card.conversions)}
+                        {formatNumber(card.crmLeads)}
                       </Td>
                       <Td align="right" className="tabular text-ink">
-                        {card.conversions
-                          ? formatNumber(adMoney(card) / card.conversions, 2)
+                        {card.crmLeads
+                          ? formatNumber(adMoney(card) / card.crmLeads, 2)
                           : '—'}
                       </Td>
                       {company.funnel_type === 'trial' ? (

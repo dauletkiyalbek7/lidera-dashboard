@@ -766,7 +766,20 @@ async function pullFromMeta(
     `${GRAPH}/${actId}/campaigns?fields=name,status,objective&limit=100&access_token=${token}`,
   );
 
-  const campaigns = pickCampaigns(allCampaigns, account.campaign_filter);
+  // Чтобы отдать проекту остаток кабинета, нужно знать, что уже разобрали
+  // соседи: один и тот же кабинет заведён у каждого проекта своей строкой.
+  const { data: siblings } = await supabase
+    .from('ad_accounts')
+    .select('campaign_filter')
+    .eq('platform', 'meta')
+    .eq('account_id', account.account_id)
+    .neq('id', account.id);
+
+  const claimedByOthers = (siblings ?? [])
+    .map((row) => row.campaign_filter)
+    .filter((filter): filter is string => Boolean(filter?.trim()));
+
+  const campaigns = pickCampaigns(allCampaigns, account.campaign_filter, claimedByOthers);
 
   // Дальше кампании проекта нужны Meta списком номеров: и группам
   // объявлений, и статистике. Пустой список означает «кабинет целиком».
@@ -1449,6 +1462,9 @@ async function assignDepartments(
 /** Сколько номеров кампаний влезает в один адрес запроса. */
 const CAMPAIGN_FILTER_CHUNK = 100;
 
+/** Фильтр берёт на себя остаток кабинета: звёздочка среди слов. */
+const REST_WORD = '*';
+
 /**
  * Кампании проекта.
  *
@@ -1456,18 +1472,45 @@ const CAMPAIGN_FILTER_CHUNK = 100;
  * только по названию кампании — другого признака Meta не даёт. Слова через
  * запятую, регистр не важен, достаточно одного совпадения. Пустой фильтр
  * означает «кабинет целиком»: так живут проекты с отдельным кабинетом.
+ *
+ * Звёздочка в фильтре означает «и всё остальное этого кабинета». Без неё
+ * кампания, названная без метки, не попадала никуда: её расход пропадал из
+ * отчётов, с «Главной» и из цены заявки — причём молча, потому что нигде не
+ * видно, что деньги ничьи. В одном кабинете так потерялось 216 долларов за
+ * шесть дней. Остаток отдаём тому проекту, который его забрал звёздочкой, а
+ * кампании, разобранные словами соседей, ему не отдаём — иначе один расход
+ * попал бы в два проекта.
  */
-function pickCampaigns<T extends { name: string }>(campaigns: T[], filter: string | null): T[] {
-  const words = (filter ?? '')
+function pickCampaigns<T extends { name: string }>(
+  campaigns: T[],
+  filter: string | null,
+  /** Фильтры других проектов того же кабинета — их добычу не трогаем. */
+  claimedByOthers: string[] = [],
+): T[] {
+  const parts = (filter ?? '')
     .split(',')
-    .map((word) => normalizeName(word.trim()))
+    .map((word) => word.trim())
     .filter(Boolean);
 
-  if (words.length === 0) return campaigns;
+  const takesRest = parts.includes(REST_WORD);
+  const words = parts
+    .filter((word) => word !== REST_WORD)
+    .map((word) => normalizeName(word))
+    .filter(Boolean);
+
+  if (words.length === 0 && !takesRest) return campaigns;
+
+  const claimed = claimedByOthers
+    .flatMap((row) => row.split(','))
+    .map((word) => word.trim())
+    .filter((word) => word && word !== REST_WORD)
+    .map((word) => normalizeName(word))
+    .filter(Boolean);
 
   return campaigns.filter((campaign) => {
     const name = normalizeName(campaign.name);
-    return words.some((word) => name.includes(word));
+    if (words.some((word) => name.includes(word))) return true;
+    return takesRest && !claimed.some((word) => name.includes(word));
   });
 }
 

@@ -137,6 +137,10 @@ export default async function LeadsPage({
   ]);
 
   const activeDepartments = departments.filter((row) => row.status === 'active');
+  // Название выбранного отдела — в карточку с итогом. Подсвеченная кнопка
+  // переключателя остаётся за кадром, стоит чуть пролистать список, а вопрос
+  // «чьи это заявки» возникает как раз над цифрами.
+  const departmentName = activeDepartments.find((row) => row.id === departmentId)?.name ?? null;
   const showDepartment = activeDepartments.length > 0;
   const leads = leadPage.items;
 
@@ -190,7 +194,7 @@ export default async function LeadsPage({
 
             <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
               <StatTile
-                label="Всего лидов"
+                label={departmentName ? `Лидов — отдел ${departmentName}` : 'Всего лидов'}
                 value={formatNumber(stats.total)}
                 hint={`${formatNumber(stats.attributed)} с привязкой к креативу`}
               />
@@ -274,13 +278,34 @@ export default async function LeadsPage({
                       >
                         {lead.name || 'Без имени'}
                         {/*
-                          На телефоне колонка с номером не помещается, а звонить
-                          и писать менеджер будет именно с телефона. Поэтому там
-                          номер идёт второй строкой под именем — и сразу ссылкой
-                          в WhatsApp, а не текстом, который надо копировать.
+                          Узкому экрану не хватает ширины на справочные колонки,
+                          и они уходят по одной: «Источник» с md, «Отдел» с xl,
+                          номер с lg. Без них список отдела Алибека и список
+                          отдела Куралай выглядят одинаково — отличить их нечем,
+                          и переключатель отделов кажется неработающим. Поэтому
+                          скрытое складываем второй строкой под именем: номер —
+                          сразу ссылкой в WhatsApp, с него менеджер и звонит.
                         */}
-                        <span className="mt-1 block text-[12.5px] font-normal lg:hidden">
-                          <PhoneCell phone={lead.phone} />
+                        <span
+                          className={`mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[12.5px] font-normal text-muted ${
+                            showDepartment ? 'xl:hidden' : 'lg:hidden'
+                          }`}
+                        >
+                          <span className="lg:hidden">
+                            <PhoneCell phone={lead.phone} />
+                          </span>
+                          <span className="md:hidden">
+                            {originLabel({
+                              platform: lead.platform,
+                              source: lead.source,
+                              utmSource: lead.utmSource,
+                              sourceName: lead.sourceName,
+                              sourcePlatform: lead.sourcePlatform,
+                            })}
+                          </span>
+                          {showDepartment && lead.departmentName ? (
+                            <span className="xl:hidden">{lead.departmentName}</span>
+                          ) : null}
                         </span>
                       </Td>
                       <Td showFrom="lg" className="tabular text-ink-soft">

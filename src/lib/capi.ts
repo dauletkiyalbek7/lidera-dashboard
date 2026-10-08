@@ -58,6 +58,15 @@ const MAX_ATTEMPTS = 3;
 /** Между попытками по одной продаже. */
 const RETRY_AFTER_MS = 6 * 60 * 60 * 1000;
 
+/** Досылка читает продажи страницами такого размера. */
+const PENDING_PAGE_SIZE = 100;
+
+/** Дальше не листаем: десять страниц покрывают шестьдесят дней с запасом. */
+const PENDING_PAGES = 10;
+
+/** Больше за один запуск не отправляем — у функции минута на всё. */
+const PENDING_SENDS = 40;
+
 export type PurchaseEvent = {
   saleId: string;
   value: number;
@@ -567,60 +576,78 @@ export async function reportPendingSales(): Promise<{ purchases: number }> {
   const since = new Date(Date.now() - OFFLINE_DAYS * 24 * 60 * 60 * 1000)
     .toISOString()
     .slice(0, 10);
-
-  const { data: sales } = await supabase
-    .from('sales')
-    .select('id, company_id, lead_id')
-    .eq('status', 'paid')
-    .in('company_id', connected)
-    .gte('sale_date', since)
-    .lte('created_at', new Date(Date.now() - QUALITY_GRACE_MS).toISOString())
-    .limit(100);
-
-  if (!sales || sales.length === 0) return { purchases: 0 };
-
-  const saleIds = sales.map((sale) => sale.id);
-
-  const { data: attempts } = await supabase
-    .from('capi_events')
-    .select('sale_id, status, created_at')
-    .in('sale_id', saleIds);
-
-  const done = new Set<string>();
-  const tries = new Map<string, number>();
-  const lastTry = new Map<string, number>();
-
-  for (const row of attempts ?? []) {
-    if (!row.sale_id) continue;
-    if (row.status === 'sent') done.add(row.sale_id);
-    tries.set(row.sale_id, (tries.get(row.sale_id) ?? 0) + 1);
-    lastTry.set(row.sale_id, Math.max(lastTry.get(row.sale_id) ?? 0, Date.parse(row.created_at)));
-  }
-
-  const leadIds = sales
-    .map((sale) => sale.lead_id)
-    .filter((id): id is string => Boolean(id));
-
-  const { data: leads } = leadIds.length
-    ? await supabase.from('leads').select('id, quality').in('id', leadIds)
-    : { data: [] as { id: string; quality: string | null }[] };
-
-  const cold = new Set(
-    (leads ?? []).filter((lead) => lead.quality === 'cold').map((lead) => lead.id),
-  );
+  const settledBefore = new Date(Date.now() - QUALITY_GRACE_MS).toISOString();
 
   let purchases = 0;
+  let attempted = 0;
 
-  for (const sale of sales) {
-    if (done.has(sale.id)) continue;
-    if (sale.lead_id && cold.has(sale.lead_id)) continue;
-    if ((tries.get(sale.id) ?? 0) >= MAX_ATTEMPTS) continue;
+  // Листаем страницами, от свежих к старым. Одной сотней без порядка очередь
+  // забивалась уже отправленными продажами: у двух проектов их набралось
+  // больше ста, и продажи третьего в выборку не попадали вовсе — молча.
+  for (let page = 0; page < PENDING_PAGES && attempted < PENDING_SENDS; page += 1) {
+    const { data: sales } = await supabase
+      .from('sales')
+      .select('id, company_id, lead_id')
+      .eq('status', 'paid')
+      .in('company_id', connected)
+      .gte('sale_date', since)
+      .lte('created_at', settledBefore)
+      .order('created_at', { ascending: false })
+      .order('id')
+      .range(page * PENDING_PAGE_SIZE, (page + 1) * PENDING_PAGE_SIZE - 1);
 
-    const previous = lastTry.get(sale.id);
-    if (previous && Date.now() - previous < RETRY_AFTER_MS) continue;
+    if (!sales || sales.length === 0) break;
 
-    const result = await reportSale(sale.company_id, sale.id);
-    if (result.ok) purchases += 1;
+    const saleIds = sales.map((sale) => sale.id);
+
+    const { data: attempts } = await supabase
+      .from('capi_events')
+      .select('sale_id, status, created_at')
+      .in('sale_id', saleIds);
+
+    const done = new Set<string>();
+    const tries = new Map<string, number>();
+    const lastTry = new Map<string, number>();
+
+    for (const row of attempts ?? []) {
+      if (!row.sale_id) continue;
+      if (row.status === 'sent') done.add(row.sale_id);
+      tries.set(row.sale_id, (tries.get(row.sale_id) ?? 0) + 1);
+      lastTry.set(
+        row.sale_id,
+        Math.max(lastTry.get(row.sale_id) ?? 0, Date.parse(row.created_at)),
+      );
+    }
+
+    const leadIds = sales
+      .map((sale) => sale.lead_id)
+      .filter((id): id is string => Boolean(id));
+
+    const { data: leads } = leadIds.length
+      ? await supabase.from('leads').select('id, quality').in('id', leadIds)
+      : { data: [] as { id: string; quality: string | null }[] };
+
+    const cold = new Set(
+      (leads ?? []).filter((lead) => lead.quality === 'cold').map((lead) => lead.id),
+    );
+
+    for (const sale of sales) {
+      if (attempted >= PENDING_SENDS) break;
+      if (done.has(sale.id)) continue;
+      // Чек без карточки лида: ни телефона, ни метки клика — отправлять нечего.
+      if (!sale.lead_id) continue;
+      if (cold.has(sale.lead_id)) continue;
+      if ((tries.get(sale.id) ?? 0) >= MAX_ATTEMPTS) continue;
+
+      const previous = lastTry.get(sale.id);
+      if (previous && Date.now() - previous < RETRY_AFTER_MS) continue;
+
+      attempted += 1;
+      const result = await reportSale(sale.company_id, sale.id);
+      if (result.ok) purchases += 1;
+    }
+
+    if (sales.length < PENDING_PAGE_SIZE) break;
   }
 
   return { purchases };

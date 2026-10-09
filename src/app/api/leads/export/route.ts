@@ -3,8 +3,10 @@ import { NextResponse } from 'next/server';
 import { requireCompanySession } from '@/lib/auth';
 import { resolveRange, zonedDayWindow } from '@/lib/period';
 import { creativeLabel } from '@/lib/creative-label';
+import { originLabel } from '@/lib/lead-origin';
 import { leadStatusLabel } from '@/lib/lead-status';
 import { PLATFORM_LABELS } from '@/lib/labels';
+import { streamOf } from '@/lib/queries';
 import { createServerSupabase } from '@/lib/supabase/server';
 
 /**
@@ -59,14 +61,24 @@ export async function GET(request: Request) {
   const employeeNames = new Map((employees ?? []).map((row) => [row.id, row.full_name]));
 
   const rows: string[][] = [
-    ['Имя', 'Телефон', 'Площадка', 'Отдел', 'Креатив', 'Статус', 'Ответственный', 'Получен'],
+    [
+      'Имя',
+      'Телефон',
+      'Площадка',
+      'Источник',
+      'Отдел',
+      'Креатив',
+      'Статус',
+      'Ответственный',
+      'Получен',
+    ],
   ];
 
   for (let start = 0; start < MAX_ROWS; start += PAGE_SIZE) {
     let query = supabase
       .from('leads')
       .select(
-        'name, phone, source, platform, status, created_at, creative_id, department_id, assigned_to',
+        'name, phone, source, platform, utm_source, status, created_at, creative_id, department_id, assigned_to, lead_sources(name, platform)',
       )
       .eq('company_id', company.id)
       .gte('created_at', day.startsAt)
@@ -83,6 +95,14 @@ export async function GET(request: Request) {
         lead.name ?? '',
         lead.phone ?? '',
         lead.platform ? (PLATFORM_LABELS[lead.platform] ?? lead.platform) : (lead.source ?? ''),
+        // Та же подпись, что в списке на экране: по ней отделяют пришедших с
+        // контента — из шапки профиля, сторис, канала — от рекламных.
+        originLabel({
+          platform: lead.platform,
+          source: lead.source,
+          utmSource: lead.utm_source,
+          ...streamOf(lead.lead_sources),
+        }),
         lead.department_id ? (departmentNames.get(lead.department_id) ?? '') : '',
         lead.creative_id ? (creativeNames.get(lead.creative_id) ?? '') : '',
         leadStatusLabel(lead.status, company.trial_term),

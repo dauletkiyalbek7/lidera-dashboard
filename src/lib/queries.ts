@@ -1307,7 +1307,7 @@ export async function getAdBreakdown(
  * PostgREST отдаёт связанную запись то объектом, то массивом — на разных
  * запросах по-разному, и разбирать это в каждом месте значит однажды забыть.
  */
-function streamOf(
+export function streamOf(
   raw: unknown,
 ): { sourceName: string | null; sourcePlatform: string | null } {
   const row = (Array.isArray(raw) ? raw[0] : raw) as

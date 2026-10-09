@@ -19,6 +19,8 @@ const TAIL = /\(([^()]{2,40})\)\s*$/;
  * узнаём. Пишут по-разному: «инста сторис», «stories», «сториз».
  */
 const TAGS: { key: string; words: string[] }[] = [
+  // Раньше шапки профиля: «(тикток био)» — это страница TikTok, а не Instagram.
+  { key: 'tiktok_page', words: ['тикток', 'тик', 'tiktok', 'tik', 'тт'] },
   { key: 'ig_stories', words: ['сторис', 'сториз', 'стори', 'stories', 'story'] },
   { key: 'ig_bio', words: ['био', 'bio', 'шапка'] },
   // Раньше канала: «(телеграм канал)» — это Telegram, а не канал WhatsApp.

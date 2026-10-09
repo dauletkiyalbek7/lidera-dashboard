@@ -32,6 +32,7 @@ const UTM_LABELS: Record<string, string> = {
   ig_bio: 'Инста био',
   wa_channel: 'WhatsApp канал',
   threads: 'Threads',
+  tiktok_page: 'TikTok страница',
 };
 
 /** Площадки кабинетов — когда метки нет, но кабинет известен. */

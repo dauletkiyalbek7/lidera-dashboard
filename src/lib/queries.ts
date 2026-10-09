@@ -2588,6 +2588,7 @@ export async function getReportSettings(
         .from('report_deliveries')
         .select('schedule_id')
         .eq('date', today)
+        .not('delivered_at', 'is', null)
         .in('schedule_id', ids)
     : { data: [] };
 

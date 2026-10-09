@@ -644,7 +644,12 @@ export type ReportDeliveryRow = {
   id: string;
   schedule_id: string;
   date: string;
+  /** Когда началась последняя попытка — не когда отчёт дошёл. */
   sent_at: string;
+  /** Когда Telegram принял отчёт. Пусто — попытка не завершилась. */
+  delivered_at: string | null;
+  attempts: number;
+  last_error: string | null;
 };
 
 type TableDef<Row, Required extends keyof Row> = {

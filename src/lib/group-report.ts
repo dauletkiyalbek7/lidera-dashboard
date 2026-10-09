@@ -9,7 +9,7 @@ import { adAccountTotals, refreshCompanyAds, type AdsFreshness } from '@/lib/met
 import { zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import type { Database } from '@/lib/supabase/database.types';
-import { sendMessage } from '@/lib/telegram';
+import { sendMessageDetailed } from '@/lib/telegram';
 import { escapeHtml } from '@/lib/telegram-lead-card';
 import { wasHeld } from '@/lib/trial-status';
 
@@ -21,9 +21,11 @@ import { wasHeld } from '@/lib/trial-status';
  * времена отправки задаются в настройках проекта, а планировщик, который и так
  * ходит раз в минуту, отправляет отчёт, когда время подошло.
  *
- * Один и тот же отчёт не должен уйти дважды: отметка в report_deliveries
- * ставится до отправки — лучше не получить отчёт, чем получить его шестьдесят
- * раз подряд.
+ * Один и тот же отчёт не должен уйти дважды, но и пропасть не должен. Поэтому
+ * отметка в report_deliveries двойная: попытку записываем до отправки, а
+ * «доставлено» — только когда Telegram принял сообщение. Раньше отметка была
+ * одна и ставилась заранее: стоило функции оборваться посередине, и группа
+ * оставалась без отчёта до завтра, а в базе он числился отправленным.
  */
 
 type Admin = SupabaseClient<Database>;
@@ -67,11 +69,25 @@ export const PERIOD_LABELS: Record<ReportPeriod, string> = {
  */
 const REQUEST_BUDGET_MS = 55_000;
 
-/** Сколько нужно, чтобы собрать отчёт и отправить его, не ходя в кабинет. */
-const SEND_RESERVE_MS = 12_000;
+/** Сколько уходит на сборку отчёта по одному проекту, с запасом. */
+const BUILD_RESERVE_MS = 4_000;
 
-/** Меньше этого запаса — за свежим расходом в Meta уже не идём. */
-const REFRESH_RESERVE_MS = 30_000;
+/** Сколько оставляем на саму отправку в Telegram. */
+const SEND_RESERVE_MS = 3_000;
+
+/** На меньший срок за свежим расходом в Meta не идём: всё равно не успеть. */
+const MIN_REFRESH_MS = 10_000;
+
+/**
+ * Через сколько незавершённую попытку считаем оборванной.
+ *
+ * Функцию обрывают на 60-й секунде, значит попытка старше этого срока уже
+ * точно никем не выполняется и отчёт можно отправлять заново.
+ */
+const ATTEMPT_LEASE_MS = 75_000;
+
+/** Больше стольких раз один отчёт не пробуем: дальше это уже не случайность. */
+const MAX_ATTEMPTS = 3;
 
 /** Сколько роликов показываем в разборе: длинный список в чате не читают. */
 const TOP_CREATIVES = 5;
@@ -97,6 +113,9 @@ export async function runGroupReports(requestStartedAt = Date.now()): Promise<Re
 
   /** Сколько миллисекунд осталось до того, как функцию оборвут. */
   const timeLeft = () => REQUEST_BUDGET_MS - (Date.now() - requestStartedAt);
+
+  /** Сколько времени нужно придержать под отчёт, в котором осталось столько проектов. */
+  const reserve = (projects: number) => SEND_RESERVE_MS + BUILD_RESERVE_MS * projects;
 
   const { data: schedules } = await supabase
     .from('report_schedules')
@@ -136,12 +155,6 @@ export async function runGroupReports(requestStartedAt = Date.now()): Promise<Re
   const refreshed = new Map<string, AdsFreshness>();
 
   for (const schedule of schedules) {
-    // Не берёмся за то, что не успеем закончить. Отметка об отправке ставится
-    // до самой отправки, и если функцию оборвут посередине, отметка останется,
-    // а группа не получит ничего — до завтра. Лучше отдать эту минуту
-    // следующему заходу: он начнётся с чистого запаса.
-    if (timeLeft() < SEND_RESERVE_MS) break;
-
     const chat = chatById.get(schedule.chat_id);
     if (!chat) continue;
 
@@ -171,53 +184,175 @@ export async function runGroupReports(requestStartedAt = Date.now()): Promise<Re
       createdToday &&
       minutesInZone(new Date(schedule.created_at), timezone) > timeToMinutes(schedule.send_at);
 
-    const { error } = await supabase
+    // Не берёмся за то, что не успеем закончить: сводному отчёту нужно время
+    // на каждый проект. Лучше отдать эту минуту следующему заходу — он начнётся
+    // с чистого запаса. Другое расписание может оказаться короче, поэтому идём
+    // дальше, а не выходим.
+    if (timeLeft() < reserve(targets.length)) continue;
+
+    const attempt = await claimDelivery(supabase, schedule.id, today);
+    if (!attempt) continue;
+
+    if (late) {
+      await supabase
+        .from('report_deliveries')
+        .update({ delivered_at: new Date().toISOString() })
+        .eq('id', attempt.id);
+      continue;
+    }
+
+    let delivered = false;
+    let failure: string | null = null;
+
+    try {
+      const blocks: ReportBlock[] = [];
+
+      for (const [index, company] of targets.entries()) {
+        // Расход берём не тот, что лежит с прошлой синхронизации, а спрашиваем
+        // кабинет заново: отчёт отправляют по часам и сверяют с Ads Manager, и
+        // расхождение в пару часов читается как ошибка платформы.
+        //
+        // Но синхронизация бывает долгой, а сами цифры отчёт всё равно
+        // спрашивает у Meta напрямую — она нужна кабинету платформы. Поэтому
+        // ждём её ровно столько, сколько остаётся сверх времени на отчёт, а
+        // при повторной попытке не идём вовсе: первая, скорее всего, на ней и
+        // оборвалась. Отправленный отчёт важнее обновлённой таблицы.
+        const spare = timeLeft() - reserve(targets.length - index);
+        const freshness =
+          refreshed.get(company.id) ??
+          (attempt.number > 1 || spare < MIN_REFRESH_MS
+            ? NOT_REFRESHED
+            : await withinTime(refreshCompanyAds(company.id), spare, NOT_REFRESHED));
+        refreshed.set(company.id, freshness);
+
+        blocks.push(
+          await buildReport(supabase, {
+            companyId: company.id,
+            companyName: company.name,
+            timezone: company.timezone ?? timezone,
+            currency: company.currency ?? 'USD',
+            salesCurrency: company.sales_currency ?? 'KZT',
+            period: schedule.period as ReportPeriod,
+            sections: schedule.sections as ReportSection[],
+            adsFreshness: freshness,
+          }),
+        );
+      }
+
+      const messages = reportMessages(blocks, title, schedule.sections as ReportSection[]);
+      const outcome = await deliver(chat.chat_id, messages);
+      delivered = outcome.delivered;
+      failure = outcome.failure;
+    } catch (error) {
+      failure = error instanceof Error ? error.message : 'неизвестная ошибка';
+    }
+
+    if (failure) console.error('group-report', schedule.id, failure);
+
+    // Незакрытая попытка останется в базе, и следующий заход её повторит.
+    await supabase
       .from('report_deliveries')
-      .insert({ schedule_id: schedule.id, date: today });
+      .update(
+        delivered
+          ? { delivered_at: new Date().toISOString(), last_error: failure }
+          : { last_error: failure },
+      )
+      .eq('id', attempt.id);
 
-    // Ошибка вставки — отчёт за этот день уже уходил.
-    if (error) continue;
-    if (late) continue;
-
-    const blocks: ReportBlock[] = [];
-
-    for (const company of targets) {
-      // Расход берём не тот, что лежит с прошлой синхронизации, а спрашиваем
-      // кабинет заново: отчёт отправляют по часам и сверяют с Ads Manager, и
-      // расхождение в пару часов читается как ошибка платформы.
-      //
-      // Если времени почти не осталось — не идём: сами цифры отчёт всё равно
-      // спрашивает у Meta напрямую, а эта синхронизация нужна кабинету
-      // платформы. Отправленный отчёт важнее обновлённой таблицы.
-      const freshness =
-        refreshed.get(company.id) ??
-        (timeLeft() < REFRESH_RESERVE_MS
-          ? ({ state: 'none', syncedAt: null } as AdsFreshness)
-          : await refreshCompanyAds(company.id));
-      refreshed.set(company.id, freshness);
-
-      blocks.push(
-        await buildReport(supabase, {
-          companyId: company.id,
-          companyName: company.name,
-          timezone: company.timezone ?? timezone,
-          currency: company.currency ?? 'USD',
-          salesCurrency: company.sales_currency ?? 'KZT',
-          period: schedule.period as ReportPeriod,
-          sections: schedule.sections as ReportSection[],
-          adsFreshness: freshness,
-        }),
-      );
-    }
-
-    for (const message of reportMessages(blocks, title, schedule.sections as ReportSection[])) {
-      await sendMessage(chat.chat_id, message);
-    }
-
-    sent += 1;
+    if (delivered) sent += 1;
   }
 
   return { sent };
+}
+
+/** Расход не обновляли: не успевали или не дождались. Приписки в отчёте нет. */
+const NOT_REFRESHED: AdsFreshness = { state: 'none', syncedAt: null };
+
+/** Дождаться результата, но не дольше срока: дальше берём запасное значение. */
+function withinTime<T>(work: Promise<T>, limitMs: number, fallback: T): Promise<T> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), limitMs);
+
+    work
+      .then(resolve, () => resolve(fallback))
+      .finally(() => clearTimeout(timer));
+  });
+}
+
+/**
+ * Занять отправку отчёта за этот день.
+ *
+ * Возвращает попытку, если отправлять должен этот заход, и null, если отчёт
+ * уже доставлен, его прямо сейчас отправляет другой заход или попытки вышли.
+ */
+async function claimDelivery(
+  supabase: Admin,
+  scheduleId: string,
+  date: string,
+): Promise<{ id: string; number: number } | null> {
+  const { data: existing } = await supabase
+    .from('report_deliveries')
+    .select('id, sent_at, delivered_at, attempts')
+    .eq('schedule_id', scheduleId)
+    .eq('date', date)
+    .maybeSingle();
+
+  if (!existing) {
+    const { data: created } = await supabase
+      .from('report_deliveries')
+      .insert({ schedule_id: scheduleId, date })
+      .select('id')
+      .maybeSingle();
+
+    // Вставка не прошла — соседний заход успел первым, отчёт за ним.
+    return created ? { id: created.id, number: 1 } : null;
+  }
+
+  if (existing.delivered_at) return null;
+  if (existing.attempts >= MAX_ATTEMPTS) return null;
+  if (Date.now() - new Date(existing.sent_at).getTime() < ATTEMPT_LEASE_MS) return null;
+
+  // Условие по счётчику — на случай двух заходов разом: попытку получит один.
+  const { data: taken } = await supabase
+    .from('report_deliveries')
+    .update({ sent_at: new Date().toISOString(), attempts: existing.attempts + 1 })
+    .eq('id', existing.id)
+    .eq('attempts', existing.attempts)
+    .is('delivered_at', null)
+    .select('id');
+
+  return taken && taken.length > 0 ? { id: existing.id, number: existing.attempts + 1 } : null;
+}
+
+/**
+ * Отправить сообщения отчёта в группу.
+ *
+ * Доставленным отчёт считается, как только Telegram принял первое сообщение:
+ * в нём общая строка и, почти всегда, весь отчёт целиком. Если не прошёл хвост,
+ * заново не шлём — группа получила бы начало второй раз.
+ */
+async function deliver(
+  chatId: number,
+  messages: string[],
+): Promise<{ delivered: boolean; failure: string | null }> {
+  let delivered = false;
+  let failure: string | null = null;
+
+  for (const message of messages) {
+    const { ok, description } = await sendMessageDetailed(chatId, message);
+
+    if (ok) {
+      delivered = true;
+      continue;
+    }
+
+    failure = `Telegram не принял сообщение: ${description}`;
+    if (!delivered) break;
+  }
+
+  if (messages.length === 0) failure = 'Отчёт получился пустым';
+
+  return { delivered, failure };
 }
 
 /** Отправить отчёт прямо сейчас — кнопкой из настроек. */
@@ -294,11 +429,12 @@ export async function sendReportNow(scheduleId: string): Promise<boolean> {
     );
   }
 
-  for (const message of reportMessages(blocks, title, schedule.sections as ReportSection[])) {
-    await sendMessage(chat.chat_id, message);
-  }
+  const messages = reportMessages(blocks, title, schedule.sections as ReportSection[]);
+  const { delivered, failure } = await deliver(chat.chat_id, messages);
 
-  return true;
+  if (failure) console.error('group-report', scheduleId, failure);
+
+  return delivered;
 }
 
 /** Сколько символов помещается в одно сообщение Telegram. */

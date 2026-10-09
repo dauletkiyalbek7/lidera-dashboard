@@ -97,6 +97,22 @@ export function sendMessage(
   return call('sendMessage', payload);
 }
 
+/**
+ * То же простое сообщение, но с ответом Telegram: отчёту в группу мало знать,
+ * что не вышло, — причину он записывает, чтобы отказ можно было разобрать.
+ */
+export function sendMessageDetailed(
+  chatId: number,
+  text: string,
+): Promise<{ ok: boolean; description: string }> {
+  return request('sendMessage', {
+    chat_id: chatId,
+    text,
+    parse_mode: 'HTML',
+    link_preview_options: { is_disabled: true },
+  });
+}
+
 export function answerCallback(callbackId: string, text?: string): Promise<boolean> {
   return call('answerCallbackQuery', { callback_query_id: callbackId, text });
 }

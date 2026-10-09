@@ -27,6 +27,11 @@ const UTM_LABELS: Record<string, string> = {
   tt: 'TikTok',
   whatsapp: 'WhatsApp',
   telegram: 'Telegram',
+  // Не из ссылки, а из готового сообщения WhatsApp: см. message-source.ts.
+  ig_stories: 'Инста сторис',
+  ig_bio: 'Инста био',
+  wa_channel: 'WhatsApp канал',
+  threads: 'Threads',
 };
 
 /** Площадки кабинетов — когда метки нет, но кабинет известен. */

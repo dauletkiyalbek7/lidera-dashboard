@@ -3,6 +3,7 @@ import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { minutesOfDay } from '@/lib/attendance';
+import { sourceTag } from '@/lib/message-source';
 import { decryptSecret } from '@/lib/secrets';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 
@@ -429,6 +430,7 @@ async function handleMessage(
     profileName,
     receivedAt,
     hasReferral: Boolean(message.referral?.ctwa_clid),
+    sourceTag: sourceTag(message.text?.body),
   });
 
   await recordReferral(supabase, target, lead, message.referral, receivedAt);
@@ -482,6 +484,8 @@ async function findOrCreateLead(
     profileName: string | null;
     receivedAt: Date;
     hasReferral: boolean;
+    /** Метка из готового сообщения: «(инста сторис)» → ig_stories. */
+    sourceTag: string | null;
   },
 ): Promise<{ lead: LeadRecord; isNew: boolean; silentSince: boolean }> {
   const { data: existing } = await supabase
@@ -510,6 +514,11 @@ async function findOrCreateLead(
       // Площадку ставим только тем, кто действительно пришёл с рекламы Meta.
       // Написавший по визитке рекламным лидом не является.
       platform: input.hasReferral ? 'meta' : null,
+      // Метка из готового сообщения отвечает на тот же вопрос для ссылок без
+      // рекламы — в шапке профиля, в сторис, в канале. Рекламному переходу она
+      // не нужна: про него Meta сообщает точнее. Ставим один раз, при первом
+      // обращении: дальше человек уже клиент, откуда бы ни написал снова.
+      utm_source: input.hasReferral ? null : input.sourceTag,
       status: 'new',
       last_inbound_at: input.receivedAt.toISOString(),
     })

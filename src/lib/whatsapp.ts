@@ -3,6 +3,7 @@ import 'server-only';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 import { minutesOfDay } from '@/lib/attendance';
+import { announceOrganicLead } from '@/lib/lead-chat';
 import { sourceTag } from '@/lib/message-source';
 import { decryptSecret } from '@/lib/secrets';
 import { createAdminSupabase } from '@/lib/supabase/admin';
@@ -425,12 +426,15 @@ async function handleMessage(
     ? new Date(Number(message.timestamp) * 1000)
     : new Date();
 
+  const hasReferral = Boolean(message.referral?.ctwa_clid);
+  const tag = sourceTag(message.text?.body);
+
   const { lead, isNew, silentSince } = await findOrCreateLead(supabase, target, {
     digits,
     profileName,
     receivedAt,
-    hasReferral: Boolean(message.referral?.ctwa_clid),
-    sourceTag: sourceTag(message.text?.body),
+    hasReferral,
+    sourceTag: tag,
   });
 
   await recordReferral(supabase, target, lead, message.referral, receivedAt);
@@ -462,6 +466,21 @@ async function handleMessage(
     .from('whatsapp_numbers')
     .update({ last_message_at: receivedAt.toISOString(), last_error: null })
     .eq('id', target.id);
+
+  // Новый клиент не с рекламы — карточкой в общую группу проекта, если она
+  // привязана. Сбой Telegram приём не роняет: сообщение уже сохранено.
+  if (isNew && !hasReferral) {
+    try {
+      await announceOrganicLead(supabase, target.companyId, {
+        name: profileName?.trim() || 'Клиент WhatsApp',
+        phone: `+${digits}`,
+        utmSource: tag,
+        text: message.text?.body ?? null,
+      });
+    } catch (error) {
+      console.error('whatsapp lead chat', error);
+    }
+  }
 
   // Автоответ уходит новому клиенту и вернувшемуся после суток тишины:
   // писать его на каждое сообщение внутри живого разговора — навязчиво.

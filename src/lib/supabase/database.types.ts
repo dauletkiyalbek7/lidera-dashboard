@@ -55,6 +55,11 @@ export type CompanyRow = Timestamps & {
   auto_assign: boolean;
   /** Заявки старше этого момента авто-раздаче не подлежат. null — раздавать все. */
   distribute_from: string | null;
+  /** Группа Telegram для клиентов, написавших в WhatsApp не с рекламы. */
+  lead_chat_id: number | null;
+  lead_chat_title: string | null;
+  /** Отдавать ли таких клиентов авто-раздаче. false — только в группу. */
+  organic_handout: boolean;
   /** Режим смены и геолокация офиса. */
   shift_mode: ShiftMode;
   office_lat: number | null;

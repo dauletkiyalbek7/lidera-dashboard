@@ -142,6 +142,9 @@ function commandOf(text: string): { name: string; argument: string } {
 
 const BIND_COMMANDS = ['/отчёт', '/отчет', '/report'];
 const UNBIND_COMMANDS = ['/отвязать', '/unbind'];
+/** Группа для клиентов, написавших в WhatsApp не с рекламы: см. lead-chat.ts. */
+const LEAD_CHAT_COMMANDS = ['/leads', '/лиды'];
+const LEAD_CHAT_OFF = ['off', 'стоп', 'stop', 'выкл'];
 
 /**
  * Привязка группы к проекту.
@@ -161,6 +164,8 @@ async function handleGroupCommand(message: TelegramMessage, text: string) {
       'Отчёты в эту группу больше не приходят. Чтобы вернуть — снова отправьте команду с кодом проекта.',
     );
   }
+
+  if (LEAD_CHAT_COMMANDS.includes(name)) return handleLeadChatCommand(message, argument);
 
   if (!BIND_COMMANDS.includes(name)) return;
 
@@ -220,6 +225,69 @@ async function handleGroupCommand(message: TelegramMessage, text: string) {
     `Готово: группа привязана к ${label}.\n\n` +
       'Отчёты будут приходить сюда по расписанию из кабинета. ' +
       'Чтобы отключить — отправьте <code>/отвязать</code>.',
+  );
+}
+
+/**
+ * Привязка группы для клиентов не с рекламы.
+ *
+ * Код тот же, что у отчётов: это код проекта, а не отдельный секрет. Группа у
+ * проекта одна — команда в другом чате переносит поток туда, а не раздваивает
+ * его: два чата с одними и теми же клиентами значат, что каждому напишут
+ * дважды.
+ */
+async function handleLeadChatCommand(message: TelegramMessage, argument: string) {
+  const chatId = message.chat.id;
+  const supabase = createAdminSupabase();
+  const word = argument.split(/\s+/)[0]?.toLowerCase() ?? '';
+
+  if (LEAD_CHAT_OFF.includes(word)) {
+    await supabase
+      .from('companies')
+      .update({ lead_chat_id: null, lead_chat_title: null })
+      .eq('lead_chat_id', chatId);
+
+    return sendMessage(
+      chatId,
+      'Клиенты в эту группу больше не приходят. Чтобы вернуть — снова отправьте <code>/leads КОД</code>.',
+    );
+  }
+
+  if (!word) {
+    return sendMessage(
+      chatId,
+      'Нужен код проекта: <code>/leads КОД</code>. Код лежит в кабинете, в «Настройках» проекта.',
+    );
+  }
+
+  const { data: company } = await supabase
+    .from('companies')
+    .select('id, name')
+    .eq('report_code', word)
+    .maybeSingle();
+
+  if (!company) {
+    return sendMessage(
+      chatId,
+      'Такого кода проекта нет. Сводный код отчёта сюда не подходит — нужен код самого проекта из «Настроек».',
+    );
+  }
+
+  const { error } = await supabase
+    .from('companies')
+    .update({ lead_chat_id: chatId, lead_chat_title: message.chat.title ?? null })
+    .eq('id', company.id);
+
+  if (error) {
+    console.error('telegram bind lead chat', error);
+    return sendMessage(chatId, 'Не получилось привязать группу. Попробуйте ещё раз.');
+  }
+
+  return sendMessage(
+    chatId,
+    `Готово: сюда будут приходить клиенты проекта <b>${escapeHtml(company.name)}</b>, ` +
+      'которые написали в WhatsApp не с рекламы — из шапки профиля, сторис, канала или сами.\n\n' +
+      'Чтобы отключить — отправьте <code>/leads off</code>.',
   );
 }
 

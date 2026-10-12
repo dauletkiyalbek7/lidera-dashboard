@@ -60,7 +60,7 @@ export async function runDistribution(companyId: string): Promise<DistributionRe
   const { data: company } = await supabase
     .from('companies')
     .select(
-      'id, funnel_type, trial_term, auto_assign, distribute_from, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
+      'id, funnel_type, trial_term, auto_assign, distribute_from, organic_handout, shift_mode, timezone, work_start_time, work_end_time, work_days, late_grace_minutes',
     )
     .eq('id', companyId)
     .maybeSingle();
@@ -98,6 +98,8 @@ type CompanySettings = {
   funnel_type: string;
   /** Заявки старше этого момента не раздаются. null — раздавать все. */
   distribute_from: string | null;
+  /** Раздавать ли написавших в WhatsApp не с рекламы. false — они только в группе. */
+  organic_handout: boolean;
   /** Как компания зовёт промежуточный шаг: пробный урок или вебинар. */
   trial_term: string;
   shift_mode: string;
@@ -255,6 +257,14 @@ async function distributeQueue(supabase: Admin, company: CompanySettings) {
   // человеку, открывшему смену, они упадут все разом как новая работа.
   if (company.distribute_from) {
     pending = pending.gte('created_at', company.distribute_from);
+  }
+
+  // Написавшие не с рекламы могут идти только в общую группу. Рекламный
+  // переход ставит площадку, поэтому «WhatsApp без площадки» — это они.
+  if (!company.organic_handout) {
+    // Пустой источник проверяем отдельно: сравнение с NULL истины не даёт,
+    // и заявка без источника выпала бы из раздачи вместе с ними.
+    pending = pending.or('source.is.null,source.neq.whatsapp,platform.not.is.null');
   }
 
   // Отсеиваем нераздаваемые потоки здесь, а не после выборки: иначе сотня

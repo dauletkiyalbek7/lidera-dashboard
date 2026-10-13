@@ -133,8 +133,11 @@ function adLeadValue(actions: { action_type: string; value: string }[] | undefin
  * и всё, где эти три буквы встретились случайно. Название вида «vac angl
  * mugalim» остаётся в своём проекте, но в деньги курса не идёт: набор учителей
  * не должен портить цену заявки.
+ *
+ * «вкан» и «вакнс» — те же вакансии с опечаткой, как их набирают в кабинете
+ * Amor: «Вкан Алматы», «Вакнсия Нур». «HR» — тоже целым словом.
  */
-const HIRING_NAME = /вакан|vakan|vacan|hiring|recruit|\bvac\b/i;
+const HIRING_NAME = /вакан|вакнс|вкан|vakan|vacan|hiring|recruit|\bvac\b|\bhr\b/i;
 
 function isHiringCampaign(name: string): boolean {
   return HIRING_NAME.test(name);
@@ -935,7 +938,9 @@ async function pullFromMeta(
     actId,
     workingAdIds,
     'name,status,campaign_id,' +
-      'creative{id,name,object_type,video_id,image_url,thumbnail_url,object_story_spec}',
+      // Размер обложки задаём явно: без него Meta отдаёт превью 64×64.
+      'creative.thumbnail_width(720).thumbnail_height(900)' +
+      '{id,name,object_type,video_id,image_url,thumbnail_url,object_story_spec}',
     token,
   );
 
@@ -968,8 +973,16 @@ async function pullFromMeta(
       body: videoData?.message ?? linkData?.message ?? null,
       // Обложка — полноразмерный кадр объявления, а не превью 64×64,
       // которое Meta обрезает по центру и режет людям лица.
+      //
+      // У рекламы из поста страницы описания объявления нет вовсе — есть
+      // только ссылка на пост, и кадр взять неоткуда. Тогда берём обложку
+      // самого креатива: без неё карточка в списке оставалась пустой.
       thumbnail_url:
-        videoData?.image_url ?? linkData?.picture ?? creative.image_url ?? null,
+        videoData?.image_url ??
+        linkData?.picture ??
+        creative.image_url ??
+        creative.thumbnail_url ??
+        null,
     });
   }
 

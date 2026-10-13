@@ -29,7 +29,7 @@ const API = 'https://connectors.windsor.ai/tiktok';
 const DEFAULT_WINDOW_DAYS = 30;
 
 /** Кампании найма в отчёты не берём: соискатель — не клиент. */
-const HIRING_NAME = /вакан|vakan|vacan|hiring|recruit|\bvac\b/i;
+const HIRING_NAME = /вакан|вакнс|вкан|vakan|vacan|hiring|recruit|\bvac\b|\bhr\b/i;
 
 /**
  * Поля запроса. Windsor отдаёт плоскую таблицу: строка — это «объявление в

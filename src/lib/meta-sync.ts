@@ -63,11 +63,16 @@ const ACCOUNT_CONCURRENCY = 2;
 /**
  * Сколько времени готовы потратить на кабинеты.
  *
+ * Функции синхронизации отведено пять минут (maxDuration в cron/meta-sync):
+ * полная синхронизация русского в кабинете «123» — пятьсот кампаний за
+ * тридцать дней — сама идёт около ста секунд, и в прежнюю минуту не влезала.
+ * Новый кабинет начинаем, только если до лимита остаётся больше двух минут.
+ *
  * Остаток — запас на ответ. Если запустить кабинет впритык к лимиту функции,
  * его убьют посреди записи: часть таблиц обновится, часть нет, и в отчёте о
  * запуске об этом не будет ни слова. Лучше честно отложить до следующего раза.
  */
-const TIME_BUDGET_MS = 40_000;
+const TIME_BUDGET_MS = 180_000;
 
 /**
  * Обращения из переписок — по порядку предпочтения, берём первое найденное.
@@ -875,6 +880,29 @@ async function pullFromMeta(
     await assignDepartments(supabase, account, campaigns, known, campaignIdByExternal);
   }
 
+  // Кампания, ушедшая к соседу. Проект со звёздочкой забирает остаток
+  // кабинета, и кампания без метки сначала достаётся ему. Когда её
+  // переименовывают под соседа («Новая кампания…» → «angl 20wp»), строка у
+  // первого проекта остаётся — и отчёт, который спрашивает Meta по списку
+  // кампаний проекта, считал её расход дважды: в русском и в английском.
+  // Такую строку выключаем из отчёта; её статистика уже пишется соседу.
+  if (account.campaign_filter?.trim()) {
+    const picked = new Set(campaigns.map((campaign) => campaign.id));
+    const departed = allCampaigns
+      .map((campaign) => campaign.id)
+      .filter((id) => !picked.has(id));
+
+    for (const chunk of chunked(departed, CAMPAIGN_FILTER_CHUNK)) {
+      await supabase
+        .from('campaigns')
+        .update({ counted: false })
+        .eq('company_id', account.company_id)
+        .eq('ad_account_id', account.id)
+        .eq('counted', true)
+        .in('external_id', chunk);
+    }
+  }
+
   // --- 3. Статистика по объявлениям ---------------------------------------
   // Идём на уровень объявления: только там видно, какой креатив принёс
   // переписки. Период режем неделями, а если и неделя не проходит —
@@ -1142,21 +1170,22 @@ async function pullFromMeta(
   // Стираем только кампании своего кабинета. Раньше удаление шло по всей
   // компании, и у проекта с двумя кабинетами второй уносил цифры первого:
   // в отчёте оставался расход того, кто синхронизировался последним.
+  //
+  // Стирание и вставка идут одной транзакцией в базе (replace_ad_metrics).
+  // Раньше это были два запроса, и функцию обрывали между ними: ночная
+  // синхронизация крупного кабинета не укладывалась в минуту, дни оставались
+  // стёртыми, а следующие запуски возвращали только последние трое суток.
   if (rows.length > 0) {
     const ourCampaigns = await accountCampaignIds(supabase, account);
 
-    for (const chunk of chunked(ourCampaigns, CAMPAIGN_FILTER_CHUNK)) {
-      await supabase
-        .from('ad_metrics')
-        .delete()
-        .eq('company_id', account.company_id)
-        .eq('platform', 'meta')
-        .gte('date', since)
-        .lte('date', until)
-        .in('campaign_id', chunk);
-    }
-
-    const { error } = await supabase.from('ad_metrics').insert(rows);
+    const { error } = await supabase.rpc('replace_ad_metrics', {
+      p_company_id: account.company_id,
+      p_platform: 'meta',
+      p_since: since,
+      p_until: until,
+      p_campaign_ids: ourCampaigns,
+      p_rows: rows,
+    });
     if (error) throw new Error(`не удалось сохранить метрики: ${error.message}`);
   }
 

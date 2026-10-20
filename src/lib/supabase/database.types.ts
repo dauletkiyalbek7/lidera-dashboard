@@ -730,6 +730,21 @@ export type Database = {
         Args: { sale: string; refund: number; reason?: string | null };
         Returns: string;
       };
+      /**
+       * Перезапись окна статистики кабинета одной транзакцией: стереть дни
+       * своих кампаний и вставить новые строки. Только для сервисного ключа.
+       */
+      replace_ad_metrics: {
+        Args: {
+          p_company_id: string;
+          p_platform: string;
+          p_since: string;
+          p_until: string;
+          p_campaign_ids: string[];
+          p_rows: unknown;
+        };
+        Returns: number;
+      };
     };
     Enums: Record<never, never>;
     CompositeTypes: Record<never, never>;

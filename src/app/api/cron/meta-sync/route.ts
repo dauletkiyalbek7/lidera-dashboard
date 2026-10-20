@@ -31,7 +31,9 @@ import { isWindsorConfigured, syncAllWindsorAccounts } from '@/lib/windsor-sync'
 const LIGHT_WINDOW_DAYS = 3;
 
 export const dynamic = 'force-dynamic';
-export const maxDuration = 60;
+// Пять минут: полная ночная синхронизация крупного кабинета идёт около ста
+// секунд, и в минуту её обрывало. См. TIME_BUDGET_MS в meta-sync.
+export const maxDuration = 300;
 
 export async function POST(request: Request) {
   const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;

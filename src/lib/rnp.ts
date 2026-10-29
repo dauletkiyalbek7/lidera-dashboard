@@ -1,5 +1,7 @@
 import 'server-only';
 
+import { createHmac, timingSafeEqual } from 'node:crypto';
+
 import { createRateLookup } from '@/lib/currency';
 import { eachDay, zonedDayWindow, zonedIsoDate } from '@/lib/period';
 import { createAdminSupabase } from '@/lib/supabase/admin';
@@ -68,6 +70,56 @@ export const emptyDay = (): RnpDay => ({
   platformLeads: 0,
   sales: 0,
 });
+
+const TRANSLIT: Record<string, string> = {
+  а: 'a', б: 'b', в: 'v', г: 'g', д: 'd', е: 'e', ё: 'e', ж: 'zh', з: 'z', и: 'i', й: 'i',
+  к: 'k', л: 'l', м: 'm', н: 'n', о: 'o', п: 'p', р: 'r', с: 's', т: 't', у: 'u', ф: 'f',
+  х: 'h', ц: 'ts', ч: 'ch', ш: 'sh', щ: 'sch', ъ: '', ы: 'y', ь: '', э: 'e', ю: 'yu', я: 'ya',
+  ә: 'a', ғ: 'g', қ: 'k', ң: 'n', ө: 'o', ұ: 'u', ү: 'u', һ: 'h', і: 'i',
+};
+
+/** Название проекта для адреса: «Вакансии» → vakansii, «bilimdibol.kz» → bilimdibol-kz. */
+export function projectSlug(name: string): string {
+  return [...name.toLowerCase()]
+    .map((char) => TRANSLIT[char] ?? char)
+    .join('')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+/**
+ * Секрет открытой ссылки на РНП — подпись номера проекта сервисным ключом.
+ *
+ * Название в адресе только для глаз: его легко угадать, а платформа общая на
+ * многих клиентов. Без подписи любой подставил бы чужое название и увидел
+ * чужую рекламу. Хранить ничего не нужно; смена сервисного ключа отзывает все
+ * ссылки разом.
+ */
+export function rnpKey(companyId: string): string | null {
+  const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!secret) return null;
+  return createHmac('sha256', secret).update(`rnp-page:${companyId}`).digest('hex').slice(0, 24);
+}
+
+/** Проект открытой ссылки: название совпало и ключ подписан его номером. */
+export async function findSharedProject(slug: string, key: string | undefined) {
+  if (!key) return null;
+
+  const supabase = createAdminSupabase();
+  const { data } = await supabase.from('companies').select('id, name, timezone, currency');
+
+  return (
+    (data ?? []).find((company) => {
+      if (projectSlug(company.name) !== slug) return false;
+      const expected = rnpKey(company.id);
+      return (
+        expected !== null &&
+        key.length === expected.length &&
+        timingSafeEqual(Buffer.from(key), Buffer.from(expected))
+      );
+    }) ?? null
+  );
+}
 
 /** Месяц из адреса, если он есть и не в будущем; иначе — текущий. */
 export function resolveMonth(requested: string | undefined, timeZone: string): string {

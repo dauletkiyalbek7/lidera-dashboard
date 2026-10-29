@@ -59,6 +59,14 @@ const COMPANY_NAV: NavGroup[] = [
         staff: true,
         onlyRole: 'targetolog',
       },
+      // РНП по месяцам: все проекты директора рядом, дни в колонках.
+      {
+        href: '/dashboard/rnp',
+        label: 'РНП',
+        icon: IconReports,
+        staff: true,
+        onlyRole: 'targetolog',
+      },
       {
         href: '/dashboard/creatives',
         label: 'Креативы',

@@ -43,6 +43,17 @@
   --color-series-revenue: #7b9e1f;
   --color-series-spend: #3987e5;
 
+  /*
+   * Типы показателей в РНП: одинаковое — одним цветом, чтобы проценты,
+   * деньги и количество различались с одного взгляда.
+   */
+  --color-kind-count: #60a5fa;
+  --color-kind-money: #34d399;
+  --color-kind-cost: #fbbf24;
+  --color-kind-percent: #c4a5ff;
+  --color-table-head: #1b1f23;
+  --color-table-head-ink: #f4f6f7;
+
   /* Типографика */
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
 
@@ -57,6 +68,37 @@
 
 :root {
   color-scheme: dark;
+}
+
+/*
+ * Светлая тема для открытых страниц (РНП по ссылке). Их смотрят с телефона
+ * и пересылают в чаты, где светлая таблица читается лучше. Токены те же —
+ * компоненты кабинета перекрашиваются без единой правки.
+ */
+.theme-light {
+  color-scheme: light;
+  --color-base: #f7f8fa;
+  --color-surface: #ffffff;
+  --color-surface-2: #f3f5f8;
+  --color-surface-3: #e9edf2;
+  --color-line: #e5e9f0;
+  --color-line-strong: #d3dae3;
+  --color-ink: #0f172a;
+  --color-ink-soft: #334155;
+  --color-muted: #64748b;
+  --color-faint: #8a96a8;
+  /* Фирменный зелёный, чуть темнее для текста на белом. */
+  --color-lime: #07b57c;
+  --color-lime-strong: #059669;
+  --color-on-lime: #ffffff;
+  --color-negative: #e5484d;
+  --color-kind-count: #2563eb;
+  --color-kind-money: #059669;
+  --color-kind-cost: #d97706;
+  --color-kind-percent: #7c3aed;
+  --color-table-head: #0f172a;
+  --color-table-head-ink: #ffffff;
+  color: var(--color-ink);
 }
 
 html {

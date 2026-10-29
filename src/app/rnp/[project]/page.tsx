@@ -53,7 +53,7 @@ export default async function SharedRnpPage({
     `/rnp/${slug}?${new URLSearchParams({ key: key ?? '', month: target })}`;
 
   return (
-    <div className="min-h-dvh bg-base">
+    <div className="theme-light min-h-dvh bg-base">
       <div className="border-b border-line px-5 py-4 sm:px-8">
         <Logo href="/" />
       </div>

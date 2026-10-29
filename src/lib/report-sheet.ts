@@ -11,8 +11,8 @@ import { createAdminSupabase } from '@/lib/supabase/admin';
  *
  * Таблица сама забирает их формулой IMPORTDATA по секретной ссылке: так
  * платформе не нужны ни ключи Google, ни доступ к чужому диску, а таблица
- * обновляется без нашего участия. Проекты те же, что у сводного кода отчёта в
- * Telegram, — читающий видит в таблице и в группе одну и ту же картину.
+ * обновляется без нашего участия. Ссылка ведёт либо на сводный код отчёта —
+ * тогда проекты те же, что в группе Telegram, — либо на один проект.
  *
  * Цифры берём из базы, а не у Meta: Google перечитывает ссылку когда захочет,
  * и каждый такой заход в кабинет быстро упёрся бы в ограничение частоты.
@@ -35,19 +35,22 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 export type SheetView = 'days' | 'campaigns';
 
 /**
- * Секрет ссылки — подпись номера кода сервисным ключом.
+ * Секрет ссылки — подпись номера кода или проекта сервисным ключом.
+ *
+ * Номера уникальны, поэтому ключ одного проекта не откроет ни соседний
+ * проект, ни код, в который тот входит.
  *
  * Хранить отдельно ничего не нужно: кто знает ключ, тот получит ту же подпись,
  * а без ключа её не подобрать. Смена сервисного ключа отзывает все ссылки.
  */
-export function sheetKey(codeId: string): string | null {
+export function sheetKey(scopeId: string): string | null {
   const secret = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!secret) return null;
-  return createHmac('sha256', secret).update(`report-sheet:${codeId}`).digest('hex').slice(0, 32);
+  return createHmac('sha256', secret).update(`report-sheet:${scopeId}`).digest('hex').slice(0, 32);
 }
 
-export function isSheetKeyValid(codeId: string, key: string | null): boolean {
-  const expected = sheetKey(codeId);
+export function isSheetKeyValid(scopeId: string, key: string | null): boolean {
+  const expected = sheetKey(scopeId);
   if (!expected || !key || key.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(key), Buffer.from(expected));
 }
@@ -62,9 +65,9 @@ type Totals = {
 
 const emptyTotals = (): Totals => ({ spendUsd: 0, spendKzt: 0, results: 0, impressions: 0, clicks: 0 });
 
-/** Строки CSV для таблицы; null — кода нет. */
+/** Строки CSV для таблицы; null — нет ни такого кода, ни такого проекта. */
 export async function buildReportSheet(
-  codeId: string,
+  scopeId: string,
   view: SheetView,
   requestedFrom: string | null,
 ): Promise<string[][] | null> {
@@ -73,14 +76,14 @@ export async function buildReportSheet(
   const { data: links } = await supabase
     .from('report_code_companies')
     .select('company_id')
-    .eq('code_id', codeId);
+    .eq('code_id', scopeId);
 
-  const companyIds = (links ?? []).map((row) => row.company_id);
-  if (companyIds.length === 0) return null;
+  // Не код — значит, ссылка на один проект; есть ли он, покажет выборка ниже.
+  const companyIds = links && links.length > 0 ? links.map((row) => row.company_id) : [scopeId];
 
   const { data: companyRows } = await supabase
     .from('companies')
-    .select('id, name, timezone, currency, sales_currency')
+    .select('id, name, timezone, currency')
     .in('id', companyIds);
 
   const companies = (companyRows ?? []).sort((a, b) => a.name.localeCompare(b.name));
@@ -141,7 +144,7 @@ export async function buildReportSheet(
     selectAll((start, end) =>
       supabase
         .from('sales')
-        .select('company_id, sale_date, amount')
+        .select('company_id, sale_date')
         .in('company_id', companyIds)
         .eq('status', 'paid')
         .gte('sale_date', from)
@@ -229,23 +232,22 @@ export async function buildReportSheet(
     platformLeads.set(key, (platformLeads.get(key) ?? 0) + 1);
   }
 
-  const salesByDay = new Map<string, { count: number; kzt: number }>();
-  const salesCurrency = new Map(companies.map((row) => [row.id, row.sales_currency ?? 'KZT']));
+  // Сумму продаж в таблицу не отдаём, только их число.
+  const salesByDay = new Map<string, number>();
   for (const sale of sales) {
-    const entry = getOr(salesByDay, `${sale.sale_date}|${sale.company_id}`, () => ({ count: 0, kzt: 0 }));
-    entry.count += 1;
-    entry.kzt += rate.convert(Number(sale.amount ?? 0), salesCurrency.get(sale.company_id) ?? 'KZT', 'KZT', sale.sale_date);
+    const key = `${sale.sale_date}|${sale.company_id}`;
+    salesByDay.set(key, (salesByDay.get(key) ?? 0) + 1);
   }
 
   const rows: string[][] = [
-    ['Дата', 'Проект', 'Расход $', 'Расход ₸', 'Лиды (кабинет)', 'Цена лида ₸', 'Лиды в платформе', 'Показы', 'Клики', 'CTR %', 'CPC ₸', 'CPM ₸', 'Продажи', 'Касса ₸', 'CAC ₸'],
+    ['Дата', 'Проект', 'Расход $', 'Расход ₸', 'Лиды (кабинет)', 'Цена лида ₸', 'Лиды в платформе', 'Показы', 'Клики', 'CTR %', 'CPC ₸', 'CPM ₸', 'Продажи', 'CAC ₸'],
   ];
 
   for (const day of days) {
     for (const company of companies) {
       const key = `${day}|${company.id}`;
       const totals = byDay.get(key) ?? emptyTotals();
-      const sold = salesByDay.get(key) ?? { count: 0, kzt: 0 };
+      const sold = salesByDay.get(key) ?? 0;
 
       rows.push([
         day,
@@ -260,9 +262,8 @@ export async function buildReportSheet(
         percent(totals.clicks, totals.impressions),
         ratio(totals.spendKzt, totals.clicks),
         totals.impressions ? money((totals.spendKzt / totals.impressions) * 1000) : '',
-        String(sold.count),
-        money(sold.kzt),
-        ratio(totals.spendKzt, sold.count),
+        String(sold),
+        ratio(totals.spendKzt, sold),
       ]);
     }
   }

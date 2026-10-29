@@ -3,13 +3,13 @@ import { NextResponse } from 'next/server';
 import { buildReportSheet, isSheetKeyValid, toCsv, type SheetView } from '@/lib/report-sheet';
 
 /**
- * Сводный отчёт для Google Таблицы: CSV по секретной ссылке.
+ * Отчёт для Google Таблицы: CSV по секретной ссылке — на сводный код или один проект.
  *
  * В ячейке таблицы стоит формула вида
  *   =IMPORTDATA("https://…/api/sheets/<код>?key=…&from=2026-10-01"; ","; "en_US")
  * и Google сам перечитывает её примерно раз в час. Вход в платформу здесь не
- * нужен: доступ даёт подпись в ссылке, и открывает она только проекты этого
- * кода (см. report-sheet.ts).
+ * нужен: доступ даёт подпись в ссылке, и открывает она только тот код или
+ * проект, номер которого подписан (см. report-sheet.ts).
  *
  * view=days — день × проект, view=campaigns — день × кампания.
  */
@@ -33,7 +33,7 @@ export async function GET(
   const view: SheetView = url.searchParams.get('view') === 'campaigns' ? 'campaigns' : 'days';
   const rows = await buildReportSheet(code, view, url.searchParams.get('from'));
 
-  if (!rows) return NextResponse.json({ error: 'у кода нет проектов' }, { status: 404 });
+  if (!rows) return NextResponse.json({ error: 'нет такого кода или проекта' }, { status: 404 });
 
   return new NextResponse(toCsv(rows), {
     headers: {

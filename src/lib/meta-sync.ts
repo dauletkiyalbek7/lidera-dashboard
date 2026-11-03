@@ -866,8 +866,14 @@ async function pullFromMeta(
     // Кампании найма выключаем из отчётов — но только новые: директор мог
     // выключить кампанию руками, и синхронизация не вправе включать её
     // обратно каждую ночь. Отдельным запросом, чтобы не ломать пачку выше.
+    // Проект, который сам забирает из кабинета кампании найма («Вакансии»),
+    // правило не трогает: там найм — и есть его реклама.
+    const hiringProject = isHiringCampaign(account.campaign_filter ?? '');
     const hiring = campaigns
-      .filter((campaign) => !known.has(campaign.id) && isHiringCampaign(campaign.name))
+      .filter(
+        (campaign) =>
+          !hiringProject && !known.has(campaign.id) && isHiringCampaign(campaign.name),
+      )
       .map((campaign) => campaignIdByExternal.get(campaign.id))
       .filter(Boolean) as string[];
 

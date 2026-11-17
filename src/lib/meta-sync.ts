@@ -1091,6 +1091,20 @@ async function pullFromMeta(
     return fresh;
   };
 
+  // Сколько часы набрали за сутки кабинета по каждому объявлению. Нужно, чтобы
+  // заметить, что Meta отдала часы не все: у «123» за 15 ноября пришли только
+  // четыре утренних часа на $38 из $214, за 16-е — ни одного, и расход дня в
+  // отчётах просел до нуля. Дневная строка при этом полная.
+  const hourlyTotals = new Map<string, { spend: number; impressions: number; clicks: number }>();
+  for (const row of insights) {
+    const key = `${row.ad_id ?? ''}|${row.date_start}`;
+    const total = hourlyTotals.get(key) ?? { spend: 0, impressions: 0, clicks: 0 };
+    total.spend += Number(row.spend ?? 0);
+    total.impressions += Number(row.impressions ?? 0);
+    total.clicks += Number(row.clicks ?? 0);
+    hourlyTotals.set(key, total);
+  }
+
   for (const row of insights) {
     const campaignId = row.campaign_id ? campaignIdByExternal.get(row.campaign_id) : null;
     if (!campaignId) continue;
@@ -1149,6 +1163,18 @@ async function pullFromMeta(
       current.conversations += firstActionValue(row.actions, CONVERSATION_ACTIONS);
     } else {
       current.leads += adLeadValue(row.actions);
+    }
+
+    // Часов не хватило — добираем недостающее из дневной строки и кладём на
+    // одноимённый день, как охват. Сдвиг на час здесь меньшая беда, чем
+    // пропавший расход: Telegram-отчёт берёт сутки из кабинета целиком, и без
+    // этого он расходился с РНП на сотни долларов.
+    const hourly = hourlyTotals.get(`${row.ad_id ?? ''}|${row.date_start}`);
+    const missingSpend = Number(row.spend ?? 0) - (hourly?.spend ?? 0);
+    if (missingSpend > 0.01) {
+      current.spend += missingSpend;
+      current.impressions += Math.max(0, Number(row.impressions ?? 0) - (hourly?.impressions ?? 0));
+      current.clicks += Math.max(0, Number(row.clicks ?? 0) - (hourly?.clicks ?? 0));
     }
 
     current.reach += Number(row.reach ?? 0);
